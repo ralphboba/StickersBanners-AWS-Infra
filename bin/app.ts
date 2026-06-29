@@ -8,6 +8,7 @@ import { BillingStack } from '../lib/stacks/billing-stack';
 import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
 import { DatabaseStack } from '../lib/stacks/database-stack';
+import { QueueStack } from '../lib/stacks/queue-stack';
 
 const app = new cdk.App();
 
@@ -81,6 +82,17 @@ const databaseStack = new DatabaseStack(app, `${config.prefix}-database`, {
   description: `StickersBanners DynamoDB layer (${config.env})`,
 });
 
+// SQS queues (Week 4B). Real durable/retry-prone queues only (intake/ftp/
+// notify) + DLQs; schedulers and orchestration come later via EventBridge /
+// Step Functions. Free tier => $0. Compute roles get least-privilege access.
+const queueStack = new QueueStack(app, `${config.prefix}-queues`, {
+  env,
+  config,
+  lambdaRole: iamStack.lambdaExecutionRole,
+  ecsTaskRole: iamStack.ecsTaskRole,
+  description: `StickersBanners SQS queues (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -93,3 +105,4 @@ void billingStack;
 void iamStack;
 void storageStack;
 void databaseStack;
+void queueStack;

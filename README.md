@@ -29,6 +29,7 @@ lib/stacks/
   network-stack.ts      VPC, subnets, NAT/IGW, security groups, VPC endpoints
   storage-stack.ts      S3 buckets (uploads/processed/finished/dzi/invoices)
   database-stack.ts     DynamoDB jobs table (Redis jobData replacement)
+  queue-stack.ts        SQS FIFO queues + DLQs (intake/ftp/notify)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -77,6 +78,15 @@ DynamoDB table `sb-<env>-jobs`. Single-table design keyed by
 a `GSI1` status-lookup index, `expiresAt` TTL, and on-demand billing (**$0**
 while idle). PITR backups on in prod. Compute roles get least-privilege
 read/write. See [`docs/database.md`](docs/database.md).
+
+### Queue stack (`sb-<env>-queues`)
+
+Replaces the legacy BullMQ queues — but not one-for-one. Schedulers
+(`mainQueue`/`autoQueue`) move to EventBridge and the resize/finish/proof
+orchestration moves to Step Functions (later weeks); only genuinely durable,
+retry-prone work stays as SQS: `intake`, `ftp`, `notify`. All are FIFO with a
+dedicated DLQ (`maxReceiveCount=5`), SQS-managed SSE, and least-privilege
+grants. Free tier => **$0**. See [`docs/queues.md`](docs/queues.md).
 
 ## Secrets & IAM
 
