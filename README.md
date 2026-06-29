@@ -56,6 +56,16 @@ npx cdk deploy --context env=prod
   Redis ingress on 6379 is restricted to the Lambda and ECS SGs.
 - VPC endpoints: S3 + DynamoDB (gateway), Secrets Manager + SQS (interface).
 
+## CI/CD (GitHub Actions + OIDC)
+
+GitHub Actions connects to AWS via OIDC (no long-lived keys). On every push/PR
+it runs **build + test + `cdk synth`**; on PRs it runs **`cdk diff`** and posts
+the result as a comment. **Deploys are manual** — see the docs.
+
+- One-time setup: [`docs/github-aws-oidc-setup.md`](docs/github-aws-oidc-setup.md)
+- OIDC trust stack: `sb-github-oidc` (deployed once per account)
+- Workflow: `.github/workflows/ci.yml`
+
 ## Common commands
 
 ```bash
