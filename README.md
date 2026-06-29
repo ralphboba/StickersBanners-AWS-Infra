@@ -28,6 +28,7 @@ lib/config/             Environment configuration (dev / prod)
 lib/stacks/
   network-stack.ts      VPC, subnets, NAT/IGW, security groups, VPC endpoints
   storage-stack.ts      S3 buckets (uploads/processed/finished/dzi/invoices)
+  database-stack.ts     DynamoDB jobs table (Redis jobData replacement)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -67,6 +68,15 @@ browser uploads. dev buckets are destroyed with the stack; prod buckets are
 retained. Compute roles get least-privilege access (Lambda owns the API
 surface, ECS Fargate does image processing). Empty buckets are **$0** under
 the free tier. See [`docs/storage.md`](docs/storage.md).
+
+### Database stack (`sb-<env>-database`)
+
+Replaces the legacy Redis `jobData` store with a single, durable, serverless
+DynamoDB table `sb-<env>-jobs`. Single-table design keyed by
+`PK=ORDER#<shopify-name>` (e.g. `ORDER#S42166`) / `SK=META|STEP#<stage>`, with
+a `GSI1` status-lookup index, `expiresAt` TTL, and on-demand billing (**$0**
+while idle). PITR backups on in prod. Compute roles get least-privilege
+read/write. See [`docs/database.md`](docs/database.md).
 
 ## Secrets & IAM
 

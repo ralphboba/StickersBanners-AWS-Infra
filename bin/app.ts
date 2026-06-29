@@ -7,6 +7,7 @@ import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
 import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
+import { DatabaseStack } from '../lib/stacks/database-stack';
 
 const app = new cdk.App();
 
@@ -70,6 +71,16 @@ const storageStack = new StorageStack(app, `${config.prefix}-storage`, {
   description: `StickersBanners S3 storage layer (${config.env})`,
 });
 
+// DynamoDB job-state table (Week 4A). Replaces Redis jobData. $0 while idle
+// (on-demand). Compute roles get least-privilege read/write here.
+const databaseStack = new DatabaseStack(app, `${config.prefix}-database`, {
+  env,
+  config,
+  lambdaRole: iamStack.lambdaExecutionRole,
+  ecsTaskRole: iamStack.ecsTaskRole,
+  description: `StickersBanners DynamoDB layer (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -81,3 +92,4 @@ void githubOidcStack;
 void billingStack;
 void iamStack;
 void storageStack;
+void databaseStack;
