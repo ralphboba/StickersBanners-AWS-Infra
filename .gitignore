@@ -6,3 +6,11 @@ node_modules
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+
+# Local credential value files for seed-parameters.sh — NEVER commit these
+scripts/parameters.*.env
+!scripts/parameters.example.env
+
+# Google service account key files
+*service_account*.json
+*service-account*.json

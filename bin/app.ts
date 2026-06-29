@@ -5,6 +5,7 @@ import { getConfig } from '../lib/config/environments';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
+import { IamStack } from '../lib/stacks/iam-stack';
 
 const app = new cdk.App();
 
@@ -51,6 +52,13 @@ const networkStack = new NetworkStack(app, `${config.prefix}-network`, {
   description: `StickersBanners network layer (${config.env})`,
 });
 
+// IAM roles + Parameter Store read access (Week 2). Free to deploy.
+const iamStack = new IamStack(app, `${config.prefix}-iam`, {
+  env,
+  config,
+  description: `StickersBanners IAM roles (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -60,3 +68,4 @@ for (const [key, value] of Object.entries(config.tags)) {
 void networkStack;
 void githubOidcStack;
 void billingStack;
+void iamStack;

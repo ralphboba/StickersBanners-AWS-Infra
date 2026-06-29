@@ -56,6 +56,22 @@ npx cdk deploy --context env=prod
   Redis ingress on 6379 is restricted to the Lambda and ECS SGs.
 - VPC endpoints: S3 + DynamoDB (gateway), Secrets Manager + SQS (interface).
 
+## Secrets & IAM
+
+Credentials are stored as **free** SSM Parameter Store SecureString parameters
+under `/sb/<env>/<group>/<key>`; values are seeded out-of-band and never
+committed. IAM roles (`sb-<env>-iam`) grant least-privilege read access. See
+[`docs/secrets-and-iam.md`](docs/secrets-and-iam.md). Code wrappers:
+`src/shared/secrets.mjs` (Node) and `src/shared/secrets.py` (Python).
+
+## Cost guardrail
+
+`sb-billing` deploys a free monthly AWS Budget that emails the owner the moment
+any real charge appears. The steady-state footprint (IAM, OIDC, empty buckets,
+SSM standard params) is **$0** under the free tier. The only cost driver is the
+NAT Gateway in `sb-<env>-network`, which is intentionally **not deployed** until
+needed.
+
 ## CI/CD (GitHub Actions + OIDC)
 
 GitHub Actions connects to AWS via OIDC (no long-lived keys). On every push/PR
