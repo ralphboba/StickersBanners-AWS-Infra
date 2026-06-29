@@ -4,6 +4,7 @@ import { Tags } from 'aws-cdk-lib/core';
 import { getConfig } from '../lib/config/environments';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
+import { BillingStack } from '../lib/stacks/billing-stack';
 
 const app = new cdk.App();
 
@@ -33,6 +34,17 @@ const githubOidcStack = new GithubOidcStack(app, 'sb-github-oidc', {
   description: 'StickersBanners GitHub Actions OIDC trust (account-level)',
 });
 
+// Account-level cost guardrail. Free (first two budgets per account) and
+// deployed once. Alerts the owner the moment any real AWS charge appears.
+const billingStack = new BillingStack(app, 'sb-billing', {
+  env,
+  alertEmail:
+    (app.node.tryGetContext('alertEmail') as string | undefined) ??
+    'timothy@stickersbanners.com',
+  monthlyLimitUsd: Number(app.node.tryGetContext('monthlyLimitUsd') ?? 5),
+  description: 'StickersBanners AWS cost guardrail (account-level)',
+});
+
 const networkStack = new NetworkStack(app, `${config.prefix}-network`, {
   env,
   config,
@@ -47,3 +59,4 @@ for (const [key, value] of Object.entries(config.tags)) {
 // Silence unused-var lint until later stacks consume these stack outputs.
 void networkStack;
 void githubOidcStack;
+void billingStack;
