@@ -6,6 +6,7 @@ import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
 import { IamStack } from '../lib/stacks/iam-stack';
+import { StorageStack } from '../lib/stacks/storage-stack';
 
 const app = new cdk.App();
 
@@ -59,6 +60,16 @@ const iamStack = new IamStack(app, `${config.prefix}-iam`, {
   description: `StickersBanners IAM roles (${config.env})`,
 });
 
+// S3 storage layer (Week 3). Empty buckets are $0 under the free tier; the
+// compute roles get least-privilege access wired here.
+const storageStack = new StorageStack(app, `${config.prefix}-storage`, {
+  env,
+  config,
+  lambdaRole: iamStack.lambdaExecutionRole,
+  ecsTaskRole: iamStack.ecsTaskRole,
+  description: `StickersBanners S3 storage layer (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -69,3 +80,4 @@ void networkStack;
 void githubOidcStack;
 void billingStack;
 void iamStack;
+void storageStack;

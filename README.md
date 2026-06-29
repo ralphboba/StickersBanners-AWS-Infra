@@ -27,6 +27,7 @@ lib/config/             Environment configuration (dev / prod)
   environments.ts       Per-environment values + getConfig()
 lib/stacks/
   network-stack.ts      VPC, subnets, NAT/IGW, security groups, VPC endpoints
+  storage-stack.ts      S3 buckets (uploads/processed/finished/dzi/invoices)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -55,6 +56,17 @@ npx cdk deploy --context env=prod
 - Security groups: Lambda, ECS Fargate, ElastiCache Redis, VPC endpoints.
   Redis ingress on 6379 is restricted to the Lambda and ECS SGs.
 - VPC endpoints: S3 + DynamoDB (gateway), Secrets Manager + SQS (interface).
+
+### Storage stack (`sb-<env>-storage`)
+
+Replaces the legacy local disk (C:/D:/E:) with five S3 buckets:
+`uploads`, `processed`, `finished`, `dzi`, `invoices`. All buckets are
+SSE-S3 encrypted, block all public access, enforce TLS, and abort abandoned
+multipart uploads after 7 days. The `uploads` bucket has CORS for presigned
+browser uploads. dev buckets are destroyed with the stack; prod buckets are
+retained. Compute roles get least-privilege access (Lambda owns the API
+surface, ECS Fargate does image processing). Empty buckets are **$0** under
+the free tier. See [`docs/storage.md`](docs/storage.md).
 
 ## Secrets & IAM
 
