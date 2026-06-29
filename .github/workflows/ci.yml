@@ -1,0 +1,97 @@
+name: CDK CI
+
+# Build + test on every push/PR. Run `cdk diff` on PRs and post the result as a
+# PR comment. This workflow NEVER deploys — deploys are done manually.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Required for OIDC: the job requests a short-lived token from GitHub that AWS
+# trusts. `contents: read` to checkout, `pull-requests: write` to comment diffs.
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-test:
+    name: Build, test, synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: CDK synth (dev)
+        run: npx cdk synth --context env=dev
+
+  diff:
+    name: CDK diff (dev)
+    runs-on: ubuntu-latest
+    needs: build-test
+    # Only diff on PRs, and only when the OIDC role ARN is configured.
+    if: github.event_name == 'pull_request' && vars.AWS_ROLE_ARN != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK diff
+        id: diff
+        run: |
+          {
+            echo 'diff<<EOF'
+            npx cdk diff --context env=dev 2>&1 || true
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment diff on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `### \`cdk diff\` (dev)\n\n<details><summary>Show diff</summary>\n\n\`\`\`\n${{ steps.diff.outputs.diff }}\n\`\`\`\n\n</details>`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const marker = '### `cdk diff` (dev)';
+            const existing = comments.find(c => c.body && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
