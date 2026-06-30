@@ -11,6 +11,8 @@ import { DatabaseStack } from '../lib/stacks/database-stack';
 import { QueueStack } from '../lib/stacks/queue-stack';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 import { EcsStack } from '../lib/stacks/ecs-stack';
+import { AuthStack } from '../lib/stacks/auth-stack';
+import { ApiStack } from '../lib/stacks/api-stack';
 
 const app = new cdk.App();
 
@@ -116,6 +118,25 @@ const ecsStack = new EcsStack(app, `${config.prefix}-ecs`, {
   description: `StickersBanners ECS Fargate compute (${config.env})`,
 });
 
+// Cognito authentication (Week 6). Free up to 50k MAU => $0.
+const authStack = new AuthStack(app, `${config.prefix}-auth`, {
+  env,
+  config,
+  description: `StickersBanners Cognito auth (${config.env})`,
+});
+
+// HTTP API front door (Week 6): public OrderDesk webhook + Cognito-protected
+// order status. Free tier => $0.
+const apiStack = new ApiStack(app, `${config.prefix}-api`, {
+  env,
+  config,
+  webhookFn: computeStack.webhook,
+  orderApiFn: computeStack.orderApi,
+  userPool: authStack.userPool,
+  userPoolClient: authStack.userPoolClient,
+  description: `StickersBanners HTTP API (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -131,3 +152,5 @@ void databaseStack;
 void queueStack;
 void computeStack;
 void ecsStack;
+void authStack;
+void apiStack;

@@ -31,6 +31,7 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   // OrderDesk API (order polling + record sync)
   { group: 'orderdesk', key: 'api-key', description: 'OrderDesk API key' },
   { group: 'orderdesk', key: 'store-id', description: 'OrderDesk store id' },
+  { group: 'orderdesk', key: 'webhook-secret', description: 'Shared secret OrderDesk sends with each webhook (validated by the webhook Lambda)' },
 
   // Zendesk (support ticket integration)
   { group: 'zendesk', key: 'subdomain', description: 'Zendesk subdomain (e.g. stickersbanners)' },

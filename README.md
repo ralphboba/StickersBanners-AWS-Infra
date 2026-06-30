@@ -30,9 +30,12 @@ lib/stacks/
   storage-stack.ts      S3 buckets (uploads/processed/finished/dzi/invoices)
   database-stack.ts     DynamoDB jobs table (Redis jobData replacement)
   queue-stack.ts        SQS FIFO queues + DLQs (intake/ftp/notify)
-  compute-stack.ts      Lambda functions (poller/notify-consumer/order-api)
+  compute-stack.ts      Lambda functions (poller/notify/order-api/webhook)
   ecs-stack.ts          ECS Fargate cluster + ECR + task defs (no running svc)
+  auth-stack.ts         Cognito user pool + app client
+  api-stack.ts          HTTP API (OrderDesk webhook + Cognito-protected status)
 src/functions/          Lambda handler code (Node 22, .mjs)
+src/shared/             Shared helpers (secrets, facility routing)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -104,6 +107,21 @@ The tiers that run the pipeline, split by weight (see
   `proof`/`ftp`): cluster + ECR repo + log group + Fargate task definition per
   service, but **no running service**, so idle cost is **$0**. Tasks run on
   demand (Step Functions, Week 10).
+
+### API & auth stacks (`sb-<env>-api`, `sb-<env>-auth`)
+
+The HTTP front door (see [`docs/api-and-auth.md`](docs/api-and-auth.md)):
+
+- **HTTP API** (`sb-<env>-api`) with two routes: `POST /webhook/orderdesk`
+  (OrderDesk push; the `webhook` Lambda validates a shared secret header) and
+  `GET /orders/{name}` (staff status lookup, protected by a Cognito JWT
+  authorizer). OrderDesk now pushes orders instead of being polled.
+- **Cognito** (`sb-<env>-auth`): user pool (email sign-in, self-signup off,
+  strong password policy) + public app client issuing JWTs.
+
+Both free-tier => **$0** (HTTP API 1M req/month, Cognito 50k MAU). Facility
+routing in `src/shared/routing.mjs` is data-driven (zip dictionaries seeded
+later, no code change).
 
 ## Secrets & IAM
 

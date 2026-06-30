@@ -17,7 +17,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly notifyQueue: sqs.IQueue;
 }
 
-const SRC = path.join(__dirname, '..', '..', 'src', 'functions');
+const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
+const SRC = path.join(SRC_ROOT, 'functions');
 
 /**
  * Lambda compute layer (Week 5A).
@@ -39,6 +40,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly poller: lambda.Function;
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
+  public readonly webhook: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -91,9 +93,28 @@ export class ComputeStack extends cdk.Stack {
     });
     jobsTable.grantReadData(this.orderApi);
 
+    // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
+    // Bundles src/shared (secrets + routing helpers), so its asset is src root.
+    this.webhook = new lambda.Function(this, 'Webhook', {
+      ...base,
+      functionName: `${config.prefix}-webhook`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/webhook/index.handler',
+      environment: {
+        INTAKE_QUEUE_URL: intakeQueue.queueUrl,
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+      },
+      description: 'Receive OrderDesk webhooks, clean + enqueue intake',
+    });
+    intakeQueue.grantSendMessages(this.webhook);
+    jobsTable.grantWriteData(this.webhook);
+    this.grantSecretsRead(this.webhook, config);
+
     new cdk.CfnOutput(this, 'PollerName', { value: this.poller.functionName });
     new cdk.CfnOutput(this, 'NotifyConsumerName', { value: this.notifyConsumer.functionName });
     new cdk.CfnOutput(this, 'OrderApiName', { value: this.orderApi.functionName });
+    new cdk.CfnOutput(this, 'WebhookName', { value: this.webhook.functionName });
   }
 
   /** Read this env's SecureString params + decrypt via the SSM-managed key. */
