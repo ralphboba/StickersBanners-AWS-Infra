@@ -9,6 +9,8 @@ import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
 import { DatabaseStack } from '../lib/stacks/database-stack';
 import { QueueStack } from '../lib/stacks/queue-stack';
+import { ComputeStack } from '../lib/stacks/compute-stack';
+import { EcsStack } from '../lib/stacks/ecs-stack';
 
 const app = new cdk.App();
 
@@ -93,6 +95,27 @@ const queueStack = new QueueStack(app, `${config.prefix}-queues`, {
   description: `StickersBanners SQS queues (${config.env})`,
 });
 
+// Lambda compute layer (Week 5A). Runs outside the VPC; free tier => $0.
+// Wires the poller/notify/api functions to the queues + jobs table.
+const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
+  env,
+  config,
+  jobsTable: databaseStack.jobsTable,
+  intakeQueue: queueStack.queues['intake'],
+  notifyQueue: queueStack.queues['notify'],
+  description: `StickersBanners Lambda compute (${config.env})`,
+});
+
+// ECS Fargate layer (Week 5B). Cluster + ECR + task definitions only (no
+// running service) => $0 idle. Tasks run on demand via Step Functions (Week 10).
+const ecsStack = new EcsStack(app, `${config.prefix}-ecs`, {
+  env,
+  config,
+  vpc: networkStack.vpc,
+  taskRole: iamStack.ecsTaskRole,
+  description: `StickersBanners ECS Fargate compute (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -106,3 +129,5 @@ void iamStack;
 void storageStack;
 void databaseStack;
 void queueStack;
+void computeStack;
+void ecsStack;

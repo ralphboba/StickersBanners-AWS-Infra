@@ -30,6 +30,9 @@ lib/stacks/
   storage-stack.ts      S3 buckets (uploads/processed/finished/dzi/invoices)
   database-stack.ts     DynamoDB jobs table (Redis jobData replacement)
   queue-stack.ts        SQS FIFO queues + DLQs (intake/ftp/notify)
+  compute-stack.ts      Lambda functions (poller/notify-consumer/order-api)
+  ecs-stack.ts          ECS Fargate cluster + ECR + task defs (no running svc)
+src/functions/          Lambda handler code (Node 22, .mjs)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -87,6 +90,20 @@ orchestration moves to Step Functions (later weeks); only genuinely durable,
 retry-prone work stays as SQS: `intake`, `ftp`, `notify`. All are FIFO with a
 dedicated DLQ (`maxReceiveCount=5`), SQS-managed SSE, and least-privilege
 grants. Free tier => **$0**. See [`docs/queues.md`](docs/queues.md).
+
+### Compute stacks (`sb-<env>-compute`, `sb-<env>-ecs`)
+
+The tiers that run the pipeline, split by weight (see
+[`docs/compute.md`](docs/compute.md)):
+
+- **Lambda** (`sb-<env>-compute`) — light work: `poller` (OrderDesk → clean →
+  enqueue `intake` + record in DynamoDB), `notify-consumer` (drains the notify
+  queue), `order-api` (read-only status). Runs **outside the VPC** (no NAT),
+  per-function least-privilege roles. Free tier => **$0**.
+- **ECS Fargate** (`sb-<env>-ecs`) — heavy image processing (`resize`/`finish`/
+  `proof`/`ftp`): cluster + ECR repo + log group + Fargate task definition per
+  service, but **no running service**, so idle cost is **$0**. Tasks run on
+  demand (Step Functions, Week 10).
 
 ## Secrets & IAM
 
