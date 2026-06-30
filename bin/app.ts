@@ -13,6 +13,7 @@ import { ComputeStack } from '../lib/stacks/compute-stack';
 import { EcsStack } from '../lib/stacks/ecs-stack';
 import { AuthStack } from '../lib/stacks/auth-stack';
 import { ApiStack } from '../lib/stacks/api-stack';
+import { WorkflowStack } from '../lib/stacks/workflow-stack';
 
 const app = new cdk.App();
 
@@ -137,6 +138,23 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   description: `StickersBanners HTTP API (${config.env})`,
 });
 
+// Order pipeline orchestration (Week 7): Step Functions Standard state machine
+// wiring intake -> resize/finish/proof -> approval -> transfer/notify. ~$3/mo
+// at 9k orders; ECS runs on demand (no idle cost).
+const workflowStack = new WorkflowStack(app, `${config.prefix}-workflow`, {
+  env,
+  config,
+  cluster: ecsStack.cluster,
+  vpc: networkStack.vpc,
+  securityGroup: networkStack.ecsSecurityGroup,
+  taskDefinitions: ecsStack.taskDefinitions,
+  jobsTable: databaseStack.jobsTable,
+  intakeQueue: queueStack.queues['intake'],
+  ftpQueue: queueStack.queues['ftp'],
+  notifyQueue: queueStack.queues['notify'],
+  description: `StickersBanners order pipeline (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -154,3 +172,4 @@ void computeStack;
 void ecsStack;
 void authStack;
 void apiStack;
+void workflowStack;

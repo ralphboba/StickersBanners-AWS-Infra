@@ -34,6 +34,7 @@ lib/stacks/
   ecs-stack.ts          ECS Fargate cluster + ECR + task defs (no running svc)
   auth-stack.ts         Cognito user pool + app client
   api-stack.ts          HTTP API (OrderDesk webhook + Cognito-protected status)
+  workflow-stack.ts     Step Functions order pipeline + starter Lambda
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
 test/                   Jest unit tests (cdk assertions)
@@ -122,6 +123,24 @@ The HTTP front door (see [`docs/api-and-auth.md`](docs/api-and-auth.md)):
 Both free-tier => **$0** (HTTP API 1M req/month, Cognito 50k MAU). Facility
 routing in `src/shared/routing.mjs` is data-driven (zip dictionaries seeded
 later, no code change).
+
+### Workflow stack (`sb-<env>-workflow`)
+
+The order pipeline conductor — a Step Functions **Standard** state machine (see
+[`docs/workflow.md`](docs/workflow.md)):
+
+```
+MarkProcessing → Resize → Finish → NeedsProof?
+   yes → Proof → WaitForApproval (human, waitForTaskToken) ─┐
+   no  ─────────────────────────────────────────────────────┤
+   → Route? transport → SendToTransfer → Notify → MarkDone
+            else      → MarkHeld (manual assignment)
+   any failure → MarkFailed → NotifyFailure → Fail
+```
+
+ECS steps run on demand (`.sync`), with retries + a catch path. An
+`intake.fifo` → `pipeline-starter` Lambda → `StartExecution` trigger drives it.
+~$3/month at 9k orders; ECS bills only while processing.
 
 ## Secrets & IAM
 
