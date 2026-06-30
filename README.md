@@ -115,8 +115,9 @@ The HTTP front door (see [`docs/api-and-auth.md`](docs/api-and-auth.md)):
 
 - **HTTP API** (`sb-<env>-api`) with two routes: `POST /webhook/orderdesk`
   (OrderDesk push; the `webhook` Lambda validates a shared secret header) and
-  `GET /orders/{name}` (staff status lookup, protected by a Cognito JWT
-  authorizer). OrderDesk now pushes orders instead of being polled.
+  `GET /orders/{name}` (staff status lookup) and `POST /orders/{name}/approve`
+  | `/reject` (proof review — resumes the paused pipeline), all protected by a
+  Cognito JWT authorizer. OrderDesk now pushes orders instead of being polled.
 - **Cognito** (`sb-<env>-auth`): user pool (email sign-in, self-signup off,
   strong password policy) + public app client issuing JWTs.
 

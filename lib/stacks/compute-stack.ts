@@ -41,6 +41,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
   public readonly webhook: lambda.Function;
+  public readonly approval: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -111,10 +112,29 @@ export class ComputeStack extends cdk.Stack {
     jobsTable.grantWriteData(this.webhook);
     this.grantSecretsRead(this.webhook, config);
 
+    // --- approval: resume the paused pipeline on proof approve/reject ---
+    this.approval = new lambda.Function(this, 'Approval', {
+      ...base,
+      functionName: `${config.prefix}-approval`,
+      code: lambda.Code.fromAsset(path.join(SRC, 'approval')),
+      environment: { JOBS_TABLE: jobsTable.tableName },
+      description: 'Proof approve/reject -> resume Step Functions task token',
+    });
+    jobsTable.grantReadWriteData(this.approval);
+    // SendTaskSuccess/Failure aren't resource-scoped to a state machine.
+    this.approval.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ResumeWorkflow',
+        actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'],
+        resources: ['*'],
+      }),
+    );
+
     new cdk.CfnOutput(this, 'PollerName', { value: this.poller.functionName });
     new cdk.CfnOutput(this, 'NotifyConsumerName', { value: this.notifyConsumer.functionName });
     new cdk.CfnOutput(this, 'OrderApiName', { value: this.orderApi.functionName });
     new cdk.CfnOutput(this, 'WebhookName', { value: this.webhook.functionName });
+    new cdk.CfnOutput(this, 'ApprovalName', { value: this.approval.functionName });
   }
 
   /** Read this env's SecureString params + decrypt via the SSM-managed key. */

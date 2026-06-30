@@ -113,14 +113,37 @@ export class WorkflowStack extends cdk.Stack {
     const finish = runTask('Finish', 'finish');
     const proof = runTask('Proof', 'proof');
 
-    const waitForApproval = new tasks.SqsSendMessage(this, 'WaitForApproval', {
+    // Tell the reviewer a proof is ready (no token; just a ping).
+    const notifyProofReady = new tasks.SqsSendMessage(this, 'NotifyProofReady', {
       queue: notifyQueue,
-      integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-      messageGroupId: 'approval',
+      messageGroupId: 'notify',
       messageBody: sfn.TaskInput.fromObject({
-        type: 'proof-approval',
+        type: 'proof-ready',
         orderName: sfn.JsonPath.stringAt('$.orderName'),
+      }),
+      resultPath: sfn.JsonPath.DISCARD,
+    });
+
+    // Pause for human approval: the request-approval Lambda stores the task
+    // token against the order; the approval API later resumes via
+    // SendTaskSuccess (approve) or SendTaskFailure (reject -> caught below).
+    const requestApproval = new lambda.Function(this, 'RequestApproval', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'src', 'functions', 'request-approval')),
+      memorySize: 128,
+      timeout: Duration.seconds(30),
+      environment: { JOBS_TABLE: jobsTable.tableName },
+      description: 'Persist the proof-approval task token for the order',
+    });
+    jobsTable.grantWriteData(requestApproval);
+
+    const waitForApproval = new tasks.LambdaInvoke(this, 'WaitForApproval', {
+      lambdaFunction: requestApproval,
+      integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+      payload: sfn.TaskInput.fromObject({
         taskToken: sfn.JsonPath.taskToken,
+        orderName: sfn.JsonPath.stringAt('$.orderName'),
       }),
       resultPath: sfn.JsonPath.DISCARD,
     });
@@ -164,7 +187,7 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.isPresent('$.needsProof'),
           sfn.Condition.booleanEquals('$.needsProof', true),
         ),
-        proof.next(waitForApproval).next(route),
+        proof.next(notifyProofReady).next(waitForApproval).next(route),
       )
       .otherwise(route);
 

@@ -56,14 +56,15 @@ describe('WorkflowStack', () => {
 
   test('starter Lambda is wired to the intake queue', () => {
     const template = build();
-    template.resourceCountIs('AWS::Lambda::Function', 1);
+    // starter + request-approval
+    template.resourceCountIs('AWS::Lambda::Function', 2);
     template.resourceCountIs('AWS::Lambda::EventSourceMapping', 1);
   });
 
   test('definition runs ECS tasks synchronously and waits for human approval', () => {
     const json = JSON.stringify(build().toJSON());
     expect(json).toContain('ecs:runTask.sync');
-    expect(json).toContain('sqs:sendMessage.waitForTaskToken');
+    expect(json).toContain('lambda:invoke.waitForTaskToken');
     expect(json).toContain('dynamodb:updateItem');
   });
 

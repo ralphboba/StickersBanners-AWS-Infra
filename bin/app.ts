@@ -133,6 +133,7 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   config,
   webhookFn: computeStack.webhook,
   orderApiFn: computeStack.orderApi,
+  approvalFn: computeStack.approval,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,
   description: `StickersBanners HTTP API (${config.env})`,

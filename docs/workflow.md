@@ -38,9 +38,11 @@ Any failure ─▶ MarkFailed ─▶ NotifyFailure ─▶ Fail
   Fargate task on demand and waits for it to finish. The cleaned job is passed
   to the container via `ORDER_NAME` and a JSON `JOB` env var. Each has 3 retries
   with backoff and a catch to the failure path.
-- **WaitForApproval** sends the proof-approval request (with a `taskToken`) to
-  the notify queue and pauses. An approver later calls `SendTaskSuccess` with
-  that token to resume (the approval API endpoint is Week 8).
+- **WaitForApproval** invokes the `request-approval` Lambda with the task token
+  (`lambda:invoke.waitForTaskToken`); the Lambda stores the token on the order
+  (`SK=APPROVAL`, status `pending`) and the workflow pauses. The reviewer is
+  pinged separately via `NotifyProofReady`. The approval API (Week 8) resumes it
+  — see [`docs/api-and-auth.md`](api-and-auth.md#proof-approval-week-8).
 - **RouteChoice** only ships when a facility/transport was resolved; otherwise
   the order is parked in `manual_hold` rather than sent to the wrong place
   (recall facility routing is data-driven and the zip dictionaries are seeded

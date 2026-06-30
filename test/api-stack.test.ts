@@ -25,6 +25,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     env: { account: '123456789012', region: config.region },
     webhookFn: fn('Webhook'),
     orderApiFn: fn('OrderApi'),
+    approvalFn: fn('Approval'),
     userPool,
     userPoolClient,
   });
@@ -32,10 +33,21 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
 }
 
 describe('ApiStack', () => {
-  test('creates one HTTP API with two routes', () => {
+  test('creates one HTTP API with four routes', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 2);
+    // webhook, order status, approve, reject
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
+  });
+
+  test('approve and reject routes exist and require auth', () => {
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const byKey = Object.fromEntries(
+      Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
+    );
+    expect(byKey['POST /orders/{name}/approve'].AuthorizationType).toBe('JWT');
+    expect(byKey['POST /orders/{name}/reject'].AuthorizationType).toBe('JWT');
   });
 
   test('has a JWT (Cognito) authorizer', () => {
@@ -54,9 +66,10 @@ describe('ApiStack', () => {
     expect(byKey['GET /orders/{name}'].AuthorizationType).toBe('JWT');
   });
 
-  test('both routes integrate with a Lambda', () => {
+  test('routes integrate with a Lambda', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 2);
+    // webhook + order-api + one shared approval integration (approve & reject)
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 3);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

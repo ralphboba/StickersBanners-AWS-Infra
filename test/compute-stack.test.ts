@@ -30,8 +30,8 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
 }
 
 describe('ComputeStack', () => {
-  test('creates four Lambda functions (poller, notify, order-api, webhook)', () => {
-    synth().resourceCountIs('AWS::Lambda::Function', 4);
+  test('creates five Lambda functions (poller, notify, order-api, webhook, approval)', () => {
+    synth().resourceCountIs('AWS::Lambda::Function', 5);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {

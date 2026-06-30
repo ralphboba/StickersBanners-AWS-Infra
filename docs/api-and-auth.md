@@ -21,6 +21,8 @@ Cognito-protected API.
 | --- | --- | --- | --- |
 | `POST /webhook/orderdesk` | OrderDesk | **shared secret header** (checked in the Lambda) | `webhook` |
 | `GET /orders/{name}` | staff / web | **Cognito JWT** authorizer | `order-api` |
+| `POST /orders/{name}/approve` | reviewer | **Cognito JWT** authorizer | `approval` |
+| `POST /orders/{name}/reject` | reviewer | **Cognito JWT** authorizer | `approval` |
 
 Why the split: OrderDesk is a third-party server and can't hold a Cognito JWT,
 so its route is unauthenticated *at the gateway* and the `webhook` Lambda
@@ -56,6 +58,26 @@ NV/CA come from seeded zip dictionaries; GA/NJ/TX rules are filled in later with
 `/sb/<env>/orderdesk/webhook-secret` — the shared secret OrderDesk sends with
 each webhook. Seed it (and configure the same value in OrderDesk's webhook
 settings) the same way as the other credentials; the repo never holds the value.
+
+## Proof approval (Week 8)
+
+When an order needs a proof, the Step Functions pipeline pauses at
+`WaitForApproval` and the `request-approval` Lambda stores the task token on the
+order (`SK=APPROVAL`). A reviewer then resumes it:
+
+```
+reviewer ──POST /orders/{name}/approve|reject (JWT)──▶ [Lambda: approval]
+   1. read the order's APPROVAL token from DynamoDB
+   2. approve -> SendTaskSuccess(token)   pipeline continues to transfer/notify
+      reject  -> SendTaskFailure(token)   pipeline takes its failure path
+   3. mark APPROVAL status approved/rejected
+```
+
+Two routes (not one `/review` with a body) keep intent explicit in the URL and
+leave room for per-route authorization later (e.g. reject restricted to a
+Cognito group). `SendTaskSuccess`/`SendTaskFailure` aren't resource-scoped, so
+the `approval` Lambda holds those actions on `*` plus DynamoDB read/write.
+Already-decided or expired tokens return `409`/`410`.
 
 ## Auth (`sb-<env>-auth`, Cognito)
 

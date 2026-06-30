@@ -13,6 +13,8 @@ export interface ApiStackProps extends cdk.StackProps {
   readonly webhookFn: lambda.IFunction;
   /** Read-only order status lookups (protected by Cognito JWT). */
   readonly orderApiFn: lambda.IFunction;
+  /** Proof approve/reject — resumes the paused pipeline (Cognito JWT). */
+  readonly approvalFn: lambda.IFunction;
   readonly userPool: cognito.IUserPool;
   readonly userPoolClient: cognito.IUserPoolClient;
 }
@@ -35,7 +37,7 @@ export class ApiStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    const { config, webhookFn, orderApiFn, userPool, userPoolClient } = props;
+    const { config, webhookFn, orderApiFn, approvalFn, userPool, userPoolClient } = props;
 
     this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
       apiName: `${config.prefix}-api`,
@@ -59,6 +61,18 @@ export class ApiStack extends cdk.Stack {
       integration: new HttpLambdaIntegration('OrderApiIntegration', orderApiFn),
       authorizer,
     });
+
+    // Proof review: separate approve/reject routes (clear intent + room for
+    // per-route authorization later). Both resume the paused pipeline.
+    const approvalIntegration = new HttpLambdaIntegration('ApprovalIntegration', approvalFn);
+    for (const action of ['approve', 'reject']) {
+      this.httpApi.addRoutes({
+        path: `/orders/{name}/${action}`,
+        methods: [apigw.HttpMethod.POST],
+        integration: approvalIntegration,
+        authorizer,
+      });
+    }
 
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: this.httpApi.apiEndpoint,
