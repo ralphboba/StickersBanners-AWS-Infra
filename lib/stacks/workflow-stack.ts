@@ -9,6 +9,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { EnvironmentConfig } from '../config/types';
 
@@ -198,6 +199,17 @@ export class WorkflowStack extends cdk.Stack {
       stateMachineType: sfn.StateMachineType.STANDARD,
       definitionBody: sfn.DefinitionBody.fromChainable(definition),
       timeout: Duration.days(7), // generous: covers the human proof wait
+      // Observability (Week 9): X-Ray tracing + error-level execution logs.
+      tracingEnabled: true,
+      logs: {
+        destination: new logs.LogGroup(this, 'PipelineLogs', {
+          logGroupName: `/sb/${config.env}/states/pipeline`,
+          retention: logs.RetentionDays.ONE_WEEK,
+          removalPolicy: cdk.RemovalPolicy.DESTROY,
+        }),
+        level: sfn.LogLevel.ERROR,
+        includeExecutionData: true,
+      },
     });
 
     // --- trigger: intake.fifo -> starter Lambda -> StartExecution ---

@@ -14,6 +14,7 @@ import { EcsStack } from '../lib/stacks/ecs-stack';
 import { AuthStack } from '../lib/stacks/auth-stack';
 import { ApiStack } from '../lib/stacks/api-stack';
 import { WorkflowStack } from '../lib/stacks/workflow-stack';
+import { ObservabilityStack } from '../lib/stacks/observability-stack';
 
 const app = new cdk.App();
 
@@ -156,6 +157,22 @@ const workflowStack = new WorkflowStack(app, `${config.prefix}-workflow`, {
   description: `StickersBanners order pipeline (${config.env})`,
 });
 
+// Observability (Week 9): alarms + dashboard + X-Ray. Alarms notify an SNS
+// topic with no subscription yet (owner attaches email/Discord later). $0.
+const observabilityStack = new ObservabilityStack(app, `${config.prefix}-observability`, {
+  env,
+  config,
+  deadLetterQueues: queueStack.deadLetterQueues,
+  intakeQueue: queueStack.queues['intake'],
+  lambdas: {
+    webhook: computeStack.webhook,
+    poller: computeStack.poller,
+    approval: computeStack.approval,
+  },
+  stateMachine: workflowStack.stateMachine,
+  description: `StickersBanners observability (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -174,3 +191,4 @@ void ecsStack;
 void authStack;
 void apiStack;
 void workflowStack;
+void observabilityStack;

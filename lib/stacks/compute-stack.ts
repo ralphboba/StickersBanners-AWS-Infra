@@ -53,6 +53,9 @@ export class ComputeStack extends cdk.Stack {
       handler: 'index.handler',
       memorySize: 256,
       timeout: Duration.seconds(30),
+      // X-Ray tracing (Week 9): trace requests across Lambda -> SQS/DDB. CDK
+      // adds the X-Ray write permissions to each function role automatically.
+      tracing: lambda.Tracing.ACTIVE,
     };
 
     // --- poller: enqueue intake + write order state, reads OrderDesk secrets ---

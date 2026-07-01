@@ -35,6 +35,7 @@ lib/stacks/
   auth-stack.ts         Cognito user pool + app client
   api-stack.ts          HTTP API (OrderDesk webhook + Cognito-protected status)
   workflow-stack.ts     Step Functions order pipeline + starter Lambda
+  observability-stack.ts CloudWatch alarms + dashboard + SNS ops topic
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
 test/                   Jest unit tests (cdk assertions)
@@ -142,6 +143,14 @@ MarkProcessing → Resize → Finish → NeedsProof?
 ECS steps run on demand (`.sync`), with retries + a catch path. An
 `intake.fifo` → `pipeline-starter` Lambda → `StartExecution` trigger drives it.
 ~$3/month at 9k orders; ECS bills only while processing.
+
+### Observability stack (`sb-<env>-observability`)
+
+The pipeline's eyes (see [`docs/observability.md`](docs/observability.md)):
+CloudWatch **alarms** (DLQ depth, Lambda errors, Step Functions failures,
+intake backlog) → an SNS **ops topic** (`sb-<env>-ops-alerts`, no subscription
+yet — attach email/Discord later), a **dashboard** (`sb-<env>-pipeline`), and
+**X-Ray tracing** on the Lambdas + state machine. Within the free tier => **$0**.
 
 ## Secrets & IAM
 
