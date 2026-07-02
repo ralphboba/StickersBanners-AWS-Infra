@@ -37,6 +37,7 @@ lib/stacks/
   workflow-stack.ts     Step Functions order pipeline + starter Lambda
   observability-stack.ts CloudWatch alarms + dashboard + SNS ops topic
   scheduler-stack.ts    EventBridge Scheduler fallback poll (ships DISABLED)
+  cdn-stack.ts          CloudFront (OAC) in front of the dzi proof tiles
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
 test/                   Jest unit tests (cdk assertions)
@@ -161,6 +162,15 @@ EventBridge Scheduler replacing the legacy BullMQ schedulers (see
 for webhook-missed orders; the legacy 10-min `autoQueue` is obsolete (routing is
 inline now). **Ships DISABLED** — enable after the poller logic + OrderDesk
 credentials are ready. Free tier => **$0**.
+
+### CDN stack (`sb-<env>-cdn`)
+
+CloudFront in front of the private `dzi` bucket so the proof viewer loads Deep
+Zoom tiles fast (see [`docs/cdn.md`](docs/cdn.md)). Origin Access Control keeps
+the bucket private (only this distribution may read); `REDIRECT_TO_HTTPS`,
+long-TTL caching, CORS, `PRICE_CLASS_100`. The cross-stack OAC cycle is avoided
+by referencing the bucket by deterministic name and attaching the read policy in
+the storage stack. CloudFront "Always Free" (1 TB + 10M req/mo) => **$0**.
 
 ## Secrets & IAM
 

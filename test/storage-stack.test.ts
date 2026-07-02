@@ -18,6 +18,29 @@ describe('StorageStack', () => {
     synth().resourceCountIs('AWS::S3::Bucket', 5);
   });
 
+  test('grants CloudFront OAC read on dzi when a distribution ARN is given', () => {
+    const app = new cdk.App();
+    const config = getConfig('dev');
+    const stack = new StorageStack(app, 'sb-dev-storage', {
+      config,
+      env: { account: '123456789012', region: config.region },
+      dziDistributionArn: 'arn:aws:cloudfront::123456789012:distribution/E123',
+    });
+    Template.fromStack(stack).hasResourceProperties('AWS::S3::BucketPolicy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Principal: { Service: 'cloudfront.amazonaws.com' },
+            Action: 's3:GetObject',
+            Condition: {
+              StringEquals: { 'AWS:SourceArn': 'arn:aws:cloudfront::123456789012:distribution/E123' },
+            },
+          }),
+        ]),
+      }),
+    });
+  });
+
   test('every bucket blocks all public access', () => {
     const template = synth();
     const buckets = template.findResources('AWS::S3::Bucket');

@@ -16,6 +16,7 @@ import { ApiStack } from '../lib/stacks/api-stack';
 import { WorkflowStack } from '../lib/stacks/workflow-stack';
 import { ObservabilityStack } from '../lib/stacks/observability-stack';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
+import { CdnStack } from '../lib/stacks/cdn-stack';
 
 const app = new cdk.App();
 
@@ -69,6 +70,15 @@ const iamStack = new IamStack(app, `${config.prefix}-iam`, {
   description: `StickersBanners IAM roles (${config.env})`,
 });
 
+// CDN (Week 11): CloudFront in front of the private dzi bucket (OAC). Created
+// before storage so its ARN can be granted read on the bucket without a cycle;
+// it references the bucket by deterministic name, so it has no dep on storage.
+const cdnStack = new CdnStack(app, `${config.prefix}-cdn`, {
+  env,
+  config,
+  description: `StickersBanners DZI CDN (${config.env})`,
+});
+
 // S3 storage layer (Week 3). Empty buckets are $0 under the free tier; the
 // compute roles get least-privilege access wired here.
 const storageStack = new StorageStack(app, `${config.prefix}-storage`, {
@@ -76,6 +86,7 @@ const storageStack = new StorageStack(app, `${config.prefix}-storage`, {
   config,
   lambdaRole: iamStack.lambdaExecutionRole,
   ecsTaskRole: iamStack.ecsTaskRole,
+  dziDistributionArn: cdnStack.distribution.distributionArn,
   description: `StickersBanners S3 storage layer (${config.env})`,
 });
 
@@ -203,3 +214,4 @@ void apiStack;
 void workflowStack;
 void observabilityStack;
 void schedulerStack;
+void cdnStack;

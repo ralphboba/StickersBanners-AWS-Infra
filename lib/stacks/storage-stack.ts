@@ -13,6 +13,13 @@ export interface StorageStackProps extends cdk.StackProps {
    */
   readonly lambdaRole?: iam.IRole;
   readonly ecsTaskRole?: iam.IRole;
+  /**
+   * CloudFront distribution ARN (from the CDN stack) allowed to read the `dzi`
+   * bucket via Origin Access Control. Set out-of-band here (not in the CDN
+   * stack) so the OAC bucket-policy dependency points storage -> cdn only,
+   * avoiding a cross-stack cycle.
+   */
+  readonly dziDistributionArn?: string;
 }
 
 /** Access level a role gets on a bucket. */
@@ -147,6 +154,20 @@ export class StorageStack extends cdk.Stack {
         description: spec.purpose,
         exportName: `${config.prefix}-${spec.key}-bucket`,
       });
+    }
+
+    // CloudFront (Week 11) reads the dzi proof tiles via OAC. The bucket stays
+    // private; only the named distribution may GetObject.
+    if (props.dziDistributionArn) {
+      this.buckets['dzi'].addToResourcePolicy(
+        new iam.PolicyStatement({
+          sid: 'AllowCloudFrontOACRead',
+          principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+          actions: ['s3:GetObject'],
+          resources: [this.buckets['dzi'].arnForObjects('*')],
+          conditions: { StringEquals: { 'AWS:SourceArn': props.dziDistributionArn } },
+        }),
+      );
     }
   }
 }
