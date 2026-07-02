@@ -36,6 +36,7 @@ lib/stacks/
   api-stack.ts          HTTP API (OrderDesk webhook + Cognito-protected status)
   workflow-stack.ts     Step Functions order pipeline + starter Lambda
   observability-stack.ts CloudWatch alarms + dashboard + SNS ops topic
+  scheduler-stack.ts    EventBridge Scheduler fallback poll (ships DISABLED)
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
 test/                   Jest unit tests (cdk assertions)
@@ -151,6 +152,15 @@ CloudWatch **alarms** (DLQ depth, Lambda errors, Step Functions failures,
 intake backlog) → an SNS **ops topic** (`sb-<env>-ops-alerts`, no subscription
 yet — attach email/Discord later), a **dashboard** (`sb-<env>-pipeline`), and
 **X-Ray tracing** on the Lambdas + state machine. Within the free tier => **$0**.
+
+### Scheduler stack (`sb-<env>-scheduler`)
+
+EventBridge Scheduler replacing the legacy BullMQ schedulers (see
+[`docs/scheduler.md`](docs/scheduler.md)). One `poller-fallback` schedule
+(`rate(15 minutes)`, configurable) invokes the `poller` Lambda as a safety net
+for webhook-missed orders; the legacy 10-min `autoQueue` is obsolete (routing is
+inline now). **Ships DISABLED** — enable after the poller logic + OrderDesk
+credentials are ready. Free tier => **$0**.
 
 ## Secrets & IAM
 

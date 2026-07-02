@@ -15,6 +15,7 @@ import { AuthStack } from '../lib/stacks/auth-stack';
 import { ApiStack } from '../lib/stacks/api-stack';
 import { WorkflowStack } from '../lib/stacks/workflow-stack';
 import { ObservabilityStack } from '../lib/stacks/observability-stack';
+import { SchedulerStack } from '../lib/stacks/scheduler-stack';
 
 const app = new cdk.App();
 
@@ -173,6 +174,15 @@ const observabilityStack = new ObservabilityStack(app, `${config.prefix}-observa
   description: `StickersBanners observability (${config.env})`,
 });
 
+// Scheduling (Week 10): EventBridge Scheduler fallback poll. Ships DISABLED
+// (poller logic is still a skeleton); flip on after seeding credentials. $0.
+const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
+  env,
+  config,
+  pollerFn: computeStack.poller,
+  description: `StickersBanners schedules (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -192,3 +202,4 @@ void authStack;
 void apiStack;
 void workflowStack;
 void observabilityStack;
+void schedulerStack;
