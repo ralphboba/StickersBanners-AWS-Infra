@@ -1,22 +1,69 @@
 # StickersBanners AWS Infrastructure (CDK)
 
 Infrastructure-as-code for migrating StickersBanners' single-PC order pipeline
-(SBBotExpress + SBImageProcessor) to AWS. Written in AWS CDK (TypeScript).
+(SBBotExpress + SBImageProcessor) to AWS. Written in AWS CDK v2 (TypeScript,
+Node 22). Read this file top-to-bottom and you'll understand the whole system.
 
-## Target architecture
+## Status
 
-| Legacy component | AWS replacement |
-| --- | --- |
-| Express routes | Lambda (Node.js 22) + API Gateway |
-| FastAPI image services | ECS Fargate (resize / finish / proof / ftp) |
-| BullMQ (8 queues) | SQS FIFO + DLQ |
-| Local disk (C:/D:/E:) | S3 (uploads/processed/finished/dzi/invoices) |
-| Redis jobData | DynamoDB |
-| Redis cache/session | ElastiCache Redis + Cognito |
-| Hardcoded credentials | Secrets Manager |
-| BullMQ schedulers | EventBridge |
-| Job orchestration | Step Functions |
-| DZI tile serving | CloudFront |
+- **15 CDK stacks**, **78 unit tests passing**, `cdk synth` clean for `dev` and `prod`.
+- **Nothing is deployed yet** — deploys are manual and staged (see [Deploy order](#deploy-order)).
+- Steady-state footprint is **$0** under the AWS free tier (the only real cost
+  drivers — NAT Gateway, ECS while processing — are off/undeployed).
+- Business logic (OrderDesk calls, image code) and secret values are
+  intentionally left as skeletons/placeholders — see
+  [What still needs filling in](#what-still-needs-filling-in).
+
+## How an order flows end to end
+
+```
+OrderDesk ──webhook (push)──▶ API Gateway ──▶ [Lambda: webhook]
+   (a customer places an order)                 │ validate shared secret
+                                                 │ clean order JSON → job
+                                                 │ decide facility (zip → GA/NJ/TX/NV/CA)
+                                                 ▼
+                              DynamoDB (record) + SQS intake.fifo (enqueue)
+                                                 │
+                                    [Lambda: pipeline-starter]
+                                                 ▼
+                              Step Functions state machine (the conductor)
+   MarkProcessing → Resize → Finish → NeedsProof?
+        yes → Proof → WAIT for human approval  ◀── reviewer hits
+        no  ───────────────────────────────┐        POST /orders/{name}/approve|reject
+                                            ▼        (Cognito-protected API)
+                       Route → SendToTransfer (SQS) → Notify → MarkDone
+                              │ FTP (GA/NJ/TX/NV) or Google Drive (CA)
+                              └ Discord / email
+   any failure → MarkFailed → Notify → Fail
+
+Fallback: EventBridge Scheduler pokes [Lambda: poller] every 15 min to catch
+          orders a webhook missed (ships DISABLED).
+Proof viewing: CloudFront serves the DZI tiles from the private dzi bucket.
+Observability: CloudWatch alarms + dashboard + X-Ray watch the whole path.
+```
+
+The design rule throughout: **right tool for the job, least privilege, $0 while
+idle, and no secrets in a public repo.**
+
+## Target architecture (legacy → AWS, as built)
+
+| Legacy component | AWS replacement | Stack |
+| --- | --- | --- |
+| Express routes | Lambda (Node 22) + API Gateway HTTP API | compute, api |
+| FastAPI image services | ECS Fargate (resize/finish/proof/ftp) | ecs |
+| BullMQ (8 queues) | SQS FIFO + DLQ (intake/ftp/notify) + Step Functions | queues, workflow |
+| BullMQ schedulers | EventBridge Scheduler | scheduler |
+| Local disk (C:/D:/E:) | S3 (uploads/processed/finished/dzi/invoices) | storage |
+| Redis `jobData` | DynamoDB (single-table) | database |
+| Redis session / bcrypt auth | Cognito (JWT) | auth |
+| Hardcoded credentials | SSM Parameter Store SecureString (**not** Secrets Manager — $0) | iam + `src/shared/secrets` |
+| Job orchestration | Step Functions (Standard, with human proof gate) | workflow |
+| DZI tile serving | CloudFront (OAC) | cdn |
+| Monitoring | CloudWatch alarms/dashboard + X-Ray | observability |
+
+> Redis `cache/session` → an ElastiCache cluster was scoped in the network
+> stack but **not built**: `jobData` moved to DynamoDB and sessions to Cognito,
+> so a Redis cache wasn't needed. Add it later if a hot cache is required.
 
 ## Project layout
 
@@ -58,6 +105,24 @@ npx cdk deploy --context env=prod
 | VPC CIDR | 10.10.0.0/16 | 10.20.0.0/16 |
 | AZs | 2 | 2 |
 | NAT Gateways | 1 (cost) | 2 (HA) |
+
+## Deploy order
+
+Deploys are manual and staged. CDK resolves dependencies, but the natural order
+(and what's safe to skip to stay at $0) is:
+
+1. **Account-level, once:** `sb-github-oidc`, `sb-billing`.
+2. **Foundation:** `sb-<env>-iam`, `sb-<env>-cdn` (needed by storage's OAC),
+   `sb-<env>-storage`, `sb-<env>-database`, `sb-<env>-queues`, `sb-<env>-auth`.
+3. **Compute + wiring:** `sb-<env>-ecs`, `sb-<env>-compute`, `sb-<env>-api`,
+   `sb-<env>-workflow`, `sb-<env>-observability`, `sb-<env>-scheduler`.
+4. **Skip until needed (cost):** `sb-<env>-network` (NAT Gateway ~$45/mo). ECS
+   tasks in private subnets need this (or VPC endpoints for ECR/logs).
+
+```bash
+npx cdk synth --context env=dev        # validate everything, no deploy
+npx cdk deploy sb-dev-iam --context env=dev   # then proceed stack by stack
+```
 
 ## Stacks
 
@@ -110,7 +175,7 @@ The tiers that run the pipeline, split by weight (see
 - **ECS Fargate** (`sb-<env>-ecs`) — heavy image processing (`resize`/`finish`/
   `proof`/`ftp`): cluster + ECR repo + log group + Fargate task definition per
   service, but **no running service**, so idle cost is **$0**. Tasks run on
-  demand (Step Functions, Week 10).
+  demand via the Step Functions workflow.
 
 ### API & auth stacks (`sb-<env>-api`, `sb-<env>-auth`)
 
@@ -198,14 +263,38 @@ the result as a comment. **Deploys are manual** — see the docs.
 - OIDC trust stack: `sb-github-oidc` (deployed once per account)
 - Workflow: `.github/workflows/ci.yml`
 
+## What still needs filling in
+
+The infrastructure is complete; these are the values/code and go-live steps left
+(all deliberately deferred so the repo could stay public and $0):
+
+- [ ] **Seed credentials** into SSM (git-ignored `scripts/parameters.dev.env` →
+  `scripts/seed-parameters.sh dev`): OrderDesk api-key/store-id/**webhook-secret**,
+  FTP, Discord, Gmail, Google service account.
+- [ ] **Seed the zip routing dictionaries** (NV/CA) used by
+  `src/shared/routing.mjs`; define the GA/NJ/TX rule.
+- [ ] **Fill the OrderDesk call logic** in `src/functions/poller` and
+  `src/functions/webhook` (field paths are best-effort until verified live).
+- [ ] **Build + push the ECS container images** (resize/finish/proof/ftp) to the
+  ECR repos; replace the placeholder `latest` tag.
+- [ ] **Enable the scheduler** (`sb-<env>-poller-fallback` ships DISABLED) once
+  the poller logic is ready.
+- [ ] **Subscribe a destination** (email/Discord) to the `sb-<env>-ops-alerts`
+  SNS topic.
+- [ ] Set the GitHub Actions **`AWS_ROLE_ARN`** variable to enable `cdk diff` on PRs.
+- [ ] **Rotate/delete** any AWS access key that was ever pasted into a chat.
+- [ ] For real ECS runs in private subnets: deploy `sb-<env>-network` **or** add
+  ECR/logs VPC endpoints.
+
 ## Common commands
 
 ```bash
 npm install        # install dependencies
 npm run build      # tsc compile
 npm test           # jest unit tests
-npx cdk synth      # synthesize CloudFormation
-npx cdk diff       # diff against deployed stack
+npx cdk synth --context env=dev   # synthesize CloudFormation (no deploy)
+npx cdk ls   --context env=dev    # list stacks
+npx cdk diff --context env=dev    # diff against deployed stack
 ```
 
 ## Prerequisites
