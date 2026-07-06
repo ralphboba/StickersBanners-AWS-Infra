@@ -17,6 +17,7 @@ import { WorkflowStack } from '../lib/stacks/workflow-stack';
 import { ObservabilityStack } from '../lib/stacks/observability-stack';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
 import { CdnStack } from '../lib/stacks/cdn-stack';
+import { WebappStack } from '../lib/stacks/webapp-stack';
 
 const app = new cdk.App();
 
@@ -194,6 +195,17 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   description: `StickersBanners schedules (${config.env})`,
 });
 
+// Staff dashboard hosting: serves web/index.html on CloudFront with its config
+// generated at deploy time, so non-technical staff just visit a URL and sign in.
+const webappStack = new WebappStack(app, `${config.prefix}-webapp`, {
+  env,
+  config,
+  apiBase: apiStack.httpApi.apiEndpoint,
+  userPoolClientId: authStack.userPoolClient.userPoolClientId,
+  cdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
+  description: `StickersBanners staff dashboard hosting (${config.env})`,
+});
+
 // Apply environment tags to every resource in the app.
 for (const [key, value] of Object.entries(config.tags)) {
   Tags.of(app).add(key, value);
@@ -215,3 +227,4 @@ void workflowStack;
 void observabilityStack;
 void schedulerStack;
 void cdnStack;
+void webappStack;

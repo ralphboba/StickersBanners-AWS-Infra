@@ -85,6 +85,7 @@ lib/stacks/
   observability-stack.ts CloudWatch alarms + dashboard + SNS ops topic
   scheduler-stack.ts    EventBridge Scheduler fallback poll (ships DISABLED)
   cdn-stack.ts          CloudFront (OAC) in front of the dzi proof tiles
+  webapp-stack.ts       Hosts the staff dashboard on CloudFront (auto-config)
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
 web/index.html          Staff dashboard (single file, no build step)
@@ -194,14 +195,16 @@ Both free-tier => **$0** (HTTP API 1M req/month, Cognito 50k MAU). Facility
 routing in `src/shared/routing.mjs` is data-driven (zip dictionaries seeded
 later, no code change).
 
-### Staff dashboard (`web/index.html`)
+### Staff dashboard (`web/index.html` + `sb-<env>-webapp`)
 
 How staff actually *use* the system (see [`docs/dashboard.md`](docs/dashboard.md)):
-a single-file, no-build web page. Sign in with Cognito → browse orders by
-status tab (received/processing/manual_hold/done/failed via `GET /orders`) →
-open an order for customer/shipping/routing/items → **Approve / Reject** proofs
-(resumes the paused pipeline). Fill in the `CONFIG` block with the deployed
-stack outputs; host it anywhere static (or open locally — the API has CORS).
+a single-file, no-build web page **hosted on CloudFront** by the
+`sb-<env>-webapp` stack. Staff just open the `DashboardUrl` and sign in with
+Cognito → browse orders by status tab (received/processing/manual_hold/done/
+failed via `GET /orders`) → open an order for customer/shipping/routing/items →
+**Approve / Reject** proofs (resumes the paused pipeline). The page's settings
+(`config.json`) are **generated at deploy time** from the API/Cognito/CDN
+outputs, so there is nothing for staff to configure. Free tier => **$0**.
 
 ### Workflow stack (`sb-<env>-workflow`)
 
@@ -291,8 +294,9 @@ The infrastructure is complete; these are the values/code and go-live steps left
   the poller logic is ready.
 - [ ] **Subscribe a destination** (email/Discord) to the `sb-<env>-ops-alerts`
   SNS topic.
-- [ ] **Dashboard**: fill `web/index.html`'s `CONFIG` with the deployed API /
-  Cognito / CDN outputs, and create staff accounts (`admin-create-user`).
+- [ ] **Dashboard**: deploy `sb-<env>-webapp`, hand staff the `DashboardUrl`
+  output, and create their accounts (`admin-create-user`). Config is generated
+  automatically — nothing to hand-edit.
 - [ ] Set the GitHub Actions **`AWS_ROLE_ARN`** variable to enable `cdk diff` on PRs.
 - [ ] **Rotate/delete** any AWS access key that was ever pasted into a chat.
 - [ ] For real ECS runs in private subnets: deploy `sb-<env>-network` **or** add

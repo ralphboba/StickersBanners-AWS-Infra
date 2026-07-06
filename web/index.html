@@ -65,16 +65,12 @@
 </head>
 <body>
 
-<!-- ===================== CONFIG — fill in after deploy ===================== -->
+<!-- CONFIG is loaded from config.json, which is generated automatically at
+     deploy time (webapp stack). Staff never edit anything — they just visit
+     the hosted URL. Falls back to empty when opened as a bare file. -->
 <script>
-const CONFIG = {
-  region:      'us-east-1',
-  apiBase:     '',   // e.g. 'https://abc123.execute-api.us-east-1.amazonaws.com'
-  userPoolClientId: '',   // sb-<env>-auth output: UserPoolClientId
-  cdnBase:     '',   // e.g. 'https://dxxxx.cloudfront.net'  (proof tiles, optional)
-};
+let CONFIG = { region: 'us-east-1', apiBase: '', userPoolClientId: '', cdnBase: '' };
 </script>
-<!-- ======================================================================== -->
 
 <header hidden id="topbar">
   <h1>StickersBanners Orders</h1>
@@ -226,9 +222,17 @@ $('signin').onclick = async () => {
 $('password').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').click(); });
 $('signout').onclick = () => location.reload();
 
-if (!CONFIG.apiBase || !CONFIG.userPoolClientId) {
-  $('loginErr').textContent = 'CONFIG is empty — fill in apiBase & userPoolClientId (see docs/dashboard.md).';
-}
+// Load deploy-time config, then unlock the sign-in form.
+(async function init() {
+  try {
+    const r = await fetch('config.json', { cache: 'no-store' });
+    if (r.ok) CONFIG = { ...CONFIG, ...(await r.json()) };
+  } catch { /* opened as a bare file — CONFIG stays empty */ }
+  if (!CONFIG.apiBase || !CONFIG.userPoolClientId) {
+    $('loginErr').textContent = 'Not configured yet — this page must be served by the deployed webapp stack.';
+    $('signin').disabled = true;
+  }
+})();
 </script>
 </body>
 </html>

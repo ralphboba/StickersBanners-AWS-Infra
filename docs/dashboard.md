@@ -17,17 +17,27 @@ scripts — one HTML file that talks to the HTTP API.
    the paused Step Functions pipeline; Reject sends it down the failure path.
    A proof-viewer link is shown when the CDN base URL is configured.
 
-## Setup (after deploying the stacks)
+## Staff just get a URL
 
-Open `web/index.html` and fill in the `CONFIG` block at the top:
+The dashboard is **hosted for you** by the `sb-<env>-webapp` stack: a private
+S3 bucket behind CloudFront. Deploy it and hand staff the `DashboardUrl` output
+— nothing to install, download, or configure. Staff open the URL and sign in.
 
-| Field | Where to get it |
-| --- | --- |
-| `apiBase` | `sb-<env>-api` stack output `ApiEndpoint` |
-| `userPoolClientId` | `sb-<env>-auth` stack output `UserPoolClientId` |
-| `cdnBase` | `sb-<env>-cdn` output `DistributionDomainName` (optional, proof links) |
+```bash
+npx cdk deploy sb-dev-webapp --context env=dev
+# -> Outputs: sb-dev-webapp.DashboardUrl = https://xxxx.cloudfront.net
+```
 
-Create staff accounts (self-signup is disabled):
+### No hand-editing of config
+
+`web/index.html` reads its settings from `config.json`, which the webapp stack
+**generates at deploy time** from the other stacks' outputs (API URL, Cognito
+client id, CDN domain) and uploads next to the page. Redeploy and it stays in
+sync; nobody edits the HTML.
+
+## Create staff accounts
+
+Self-signup is disabled, so an admin creates each account once:
 
 ```bash
 aws cognito-idp admin-create-user --user-pool-id <UserPoolId> \
@@ -35,16 +45,6 @@ aws cognito-idp admin-create-user --user-pool-id <UserPoolId> \
 aws cognito-idp admin-set-user-password --user-pool-id <UserPoolId> \
   --username staff@stickersbanners.com --password '<StrongPassw0rd!>' --permanent
 ```
-
-## Hosting
-
-The file is fully static. Options, simplest first:
-
-1. **Open locally** — double-click the file; it calls the API cross-origin
-   (CORS is enabled on the HTTP API).
-2. **S3 static hosting / existing CloudFront** — upload `web/index.html` to a
-   bucket and serve it; then tighten the API's `corsPreflight.allowOrigins` to
-   that origin.
 
 ## How it works (technical)
 
