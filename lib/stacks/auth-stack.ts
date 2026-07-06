@@ -49,7 +49,9 @@ export class AuthStack extends cdk.Stack {
     this.userPoolClient = this.userPool.addClient('WebClient', {
       userPoolClientName: `${config.prefix}-web`,
       generateSecret: false,
-      authFlows: { userSrp: true },
+      // userPassword: lets the dashboard log in with a plain fetch call (no SDK
+      // bundle). Credentials only ever travel over HTTPS to Cognito.
+      authFlows: { userSrp: true, userPassword: true },
       accessTokenValidity: Duration.hours(1),
       idTokenValidity: Duration.hours(1),
       refreshTokenValidity: Duration.days(30),

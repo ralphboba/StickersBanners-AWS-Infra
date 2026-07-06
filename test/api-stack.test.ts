@@ -33,11 +33,28 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
 }
 
 describe('ApiStack', () => {
-  test('creates one HTTP API with four routes', () => {
+  test('creates one HTTP API with five routes', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
-    // webhook, order status, approve, reject
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 4);
+    // webhook, orders list, order status, approve, reject
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 5);
+  });
+
+  test('orders list route exists and requires auth', () => {
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const byKey = Object.fromEntries(
+      Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
+    );
+    expect(byKey['GET /orders'].AuthorizationType).toBe('JWT');
+  });
+
+  test('CORS is enabled for the dashboard', () => {
+    synth().hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      CorsConfiguration: Match.objectLike({
+        AllowMethods: Match.arrayWith(['GET', 'POST']),
+      }),
+    });
   });
 
   test('approve and reject routes exist and require auth', () => {

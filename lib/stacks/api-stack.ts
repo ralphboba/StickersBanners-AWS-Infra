@@ -42,6 +42,14 @@ export class ApiStack extends cdk.Stack {
     this.httpApi = new apigw.HttpApi(this, 'HttpApi', {
       apiName: `${config.prefix}-api`,
       description: `StickersBanners HTTP API (${config.env})`,
+      // CORS for the staff dashboard (web/index.html). Tighten allowOrigins to
+      // the real dashboard origin once it has a fixed URL.
+      corsPreflight: {
+        allowOrigins: ['*'],
+        allowMethods: [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST],
+        allowHeaders: ['authorization', 'content-type'],
+        maxAge: cdk.Duration.hours(1),
+      },
     });
 
     // Public webhook route — auth handled inside the Lambda (shared secret).
@@ -55,10 +63,18 @@ export class ApiStack extends cdk.Stack {
     const authorizer = new HttpUserPoolAuthorizer('CognitoAuthorizer', userPool, {
       userPoolClients: [userPoolClient],
     });
+    const orderApiIntegration = new HttpLambdaIntegration('OrderApiIntegration', orderApiFn);
+    // List orders by status (dashboard) + single-order lookup.
+    this.httpApi.addRoutes({
+      path: '/orders',
+      methods: [apigw.HttpMethod.GET],
+      integration: orderApiIntegration,
+      authorizer,
+    });
     this.httpApi.addRoutes({
       path: '/orders/{name}',
       methods: [apigw.HttpMethod.GET],
-      integration: new HttpLambdaIntegration('OrderApiIntegration', orderApiFn),
+      integration: orderApiIntegration,
       authorizer,
     });
 

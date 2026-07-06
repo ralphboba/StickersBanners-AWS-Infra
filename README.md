@@ -87,6 +87,7 @@ lib/stacks/
   cdn-stack.ts          CloudFront (OAC) in front of the dzi proof tiles
 src/functions/          Lambda handler code (Node 22, .mjs)
 src/shared/             Shared helpers (secrets, facility routing)
+web/index.html          Staff dashboard (single file, no build step)
 test/                   Jest unit tests (cdk assertions)
 ```
 
@@ -193,6 +194,15 @@ Both free-tier => **$0** (HTTP API 1M req/month, Cognito 50k MAU). Facility
 routing in `src/shared/routing.mjs` is data-driven (zip dictionaries seeded
 later, no code change).
 
+### Staff dashboard (`web/index.html`)
+
+How staff actually *use* the system (see [`docs/dashboard.md`](docs/dashboard.md)):
+a single-file, no-build web page. Sign in with Cognito → browse orders by
+status tab (received/processing/manual_hold/done/failed via `GET /orders`) →
+open an order for customer/shipping/routing/items → **Approve / Reject** proofs
+(resumes the paused pipeline). Fill in the `CONFIG` block with the deployed
+stack outputs; host it anywhere static (or open locally — the API has CORS).
+
 ### Workflow stack (`sb-<env>-workflow`)
 
 The order pipeline conductor — a Step Functions **Standard** state machine (see
@@ -281,6 +291,8 @@ The infrastructure is complete; these are the values/code and go-live steps left
   the poller logic is ready.
 - [ ] **Subscribe a destination** (email/Discord) to the `sb-<env>-ops-alerts`
   SNS topic.
+- [ ] **Dashboard**: fill `web/index.html`'s `CONFIG` with the deployed API /
+  Cognito / CDN outputs, and create staff accounts (`admin-create-user`).
 - [ ] Set the GitHub Actions **`AWS_ROLE_ARN`** variable to enable `cdk diff` on PRs.
 - [ ] **Rotate/delete** any AWS access key that was ever pasted into a chat.
 - [ ] For real ECS runs in private subnets: deploy `sb-<env>-network` **or** add
