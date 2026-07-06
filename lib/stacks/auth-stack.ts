@@ -29,17 +29,29 @@ export class AuthStack extends cdk.Stack {
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: `${config.prefix}-users`,
       selfSignUpEnabled: false, // admins create staff accounts
-      signInAliases: { email: true },
+      // Sign in with a plain username (e.g. "kai"); email is a profile attribute.
+      signInAliases: { username: true },
       autoVerify: { email: true },
       standardAttributes: { email: { required: true, mutable: true } },
-      passwordPolicy: {
-        minLength: 12,
-        requireLowercase: true,
-        requireUppercase: true,
-        requireDigits: true,
-        requireSymbols: true,
-        tempPasswordValidity: Duration.days(3),
-      },
+      // prod enforces strong passwords; dev is relaxed for testing convenience
+      // (Cognito's hard minimum is 6 chars — a 4-digit password is impossible).
+      passwordPolicy: isProd
+        ? {
+            minLength: 12,
+            requireLowercase: true,
+            requireUppercase: true,
+            requireDigits: true,
+            requireSymbols: true,
+            tempPasswordValidity: Duration.days(3),
+          }
+        : {
+            minLength: 6,
+            requireLowercase: false,
+            requireUppercase: false,
+            requireDigits: false,
+            requireSymbols: false,
+            tempPasswordValidity: Duration.days(7),
+          },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       // Keep the staff directory on prod stack deletion; dev is disposable.
       removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,

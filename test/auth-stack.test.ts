@@ -26,8 +26,8 @@ describe('AuthStack', () => {
     });
   });
 
-  test('enforces a strong password policy (>= 12, all classes)', () => {
-    synth().hasResourceProperties('AWS::Cognito::UserPool', {
+  test('prod enforces a strong password policy (>= 12, all classes)', () => {
+    synth('prod').hasResourceProperties('AWS::Cognito::UserPool', {
       Policies: {
         PasswordPolicy: {
           MinimumLength: 12,
@@ -38,6 +38,18 @@ describe('AuthStack', () => {
         },
       },
     });
+  });
+
+  test('dev relaxes the policy for testing (6 chars, no complexity)', () => {
+    synth('dev').hasResourceProperties('AWS::Cognito::UserPool', {
+      Policies: { PasswordPolicy: Match.objectLike({ MinimumLength: 6, RequireSymbols: false }) },
+    });
+  });
+
+  test('signs in by username (not email)', () => {
+    // username sign-in => UsernameAttributes is not set to email
+    const pool = Object.values(synth().findResources('AWS::Cognito::UserPool'))[0];
+    expect(pool.Properties.UsernameAttributes ?? []).not.toContain('email');
   });
 
   test('app client has no secret (public SPA client)', () => {
