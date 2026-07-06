@@ -26,7 +26,9 @@ export class AuthStack extends cdk.Stack {
     const { config } = props;
     const isProd = config.env === 'prod';
 
-    this.userPool = new cognito.UserPool(this, 'UserPool', {
+    // NB: sign-in method is immutable on an existing pool, so switching to
+    // username sign-in requires a *new* pool — hence the versioned construct id.
+    this.userPool = new cognito.UserPool(this, 'UserPoolV2', {
       userPoolName: `${config.prefix}-users`,
       selfSignUpEnabled: false, // admins create staff accounts
       // Sign in with a plain username (e.g. "kai"); email is a profile attribute.
