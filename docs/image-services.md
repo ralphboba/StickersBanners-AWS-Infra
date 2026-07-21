@@ -10,7 +10,7 @@ server -> run-to-completion container); the image logic itself is preserved.
 | Service | Legacy source | Status |
 | --- | --- | --- |
 | `resize` | worker/imageConverter + utils | ✅ ported |
-| `finish` | finisher/{finisher,grommets,polePockets} | ⬜ next |
+| `finish` | finisher/{finisher,grommets,polePockets} + FINISHINGCONFIG | ✅ ported |
 | `proof` (DZI) | dzi/dziConverter | ⬜ pending |
 | `ftp` | ftpWorker + stpWorker (Drive) | ⬜ pending |
 
@@ -34,6 +34,28 @@ Preserved legacy logic:
 - **AI**: header sniff — `%PDF` -> PDF path; `%!PS` -> Ghostscript (`gs` on
   Linux; the legacy called Windows `gswin64c.exe`).
 - **PSD**: `psd_tools` composite.
+
+## finish (`src/services/finish/`)
+
+Same run contract (`ORDER_NAME` + `JOB`; env `PROCESSED_BUCKET`,
+`FINISHED_BUCKET`, `JOBS_TABLE`). Reads `processed/{order}/{itemNo}v1.tif`,
+writes proofs + finals to the finished bucket, records `STEP#finish`.
+
+Preserved legacy logic:
+- **D. Grommets** (`grommets.py`, verbatim port): corner inset `0.75*72 = 54px`;
+  each mark = three concentric ellipses (black border r7 / white outline r6 /
+  red fill r4); sides with >2 grommets spaced `(len - 2*inset)/(count-1)`;
+  corner dedupe; saved @72dpi.
+- **E. Pole pockets** (`pole_pockets.py`): pocket `4.5in*72 = 324px`; canvas
+  grows per mode (PPTB +2x, PPTO/PPBO +1x height, PPL/PPR +1x, PPS +2x width,
+  RET fixed 80in height + 3in spacing); white canvas, black 2px fold stroke,
+  artwork pasted at offset; TIFF 72dpi lzw.
+- **F. Order of operations** (`main.py`): proof thumbnail (300px, CMYK->RGB) ->
+  plain copy when no finishing -> grommets (output feeds next step) -> pole
+  pockets -> rename `{orderId}-{itemNo} {descSuf}[ qty N].tif`.
+- **G. FINISHINGCONFIG mapping** (`finishing_config.py`): OrderDesk text ->
+  finishing object ("Hem Grommets" -> 4-side grommets, "Pole Pocket Top Only"
+  -> PPTO, "Hem Only"/"Cut Only" -> desc suffix), `NOFINISHSKU` skip list.
 
 Build & push (once per change):
 
