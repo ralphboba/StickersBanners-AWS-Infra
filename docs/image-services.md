@@ -11,7 +11,7 @@ server -> run-to-completion container); the image logic itself is preserved.
 | --- | --- | --- |
 | `resize` | worker/imageConverter + utils | ✅ ported |
 | `finish` | finisher/{finisher,grommets,polePockets} + FINISHINGCONFIG | ✅ ported |
-| `proof` (DZI) | dzi/dziConverter | ⬜ pending |
+| `proof` (DZI) | dzi/dziConverter | ✅ ported |
 | `ftp` | ftpWorker + stpWorker (Drive) | ⬜ pending |
 
 ## resize (`src/services/resize/`)
@@ -56,6 +56,20 @@ Preserved legacy logic:
 - **G. FINISHINGCONFIG mapping** (`finishing_config.py`): OrderDesk text ->
   finishing object ("Hem Grommets" -> 4-side grommets, "Pole Pocket Top Only"
   -> PPTO, "Hem Only"/"Cut Only" -> desc suffix), `NOFINISHSKU` skip list.
+
+## proof (`src/services/proof/`)
+
+Same run contract (`ORDER_NAME` + `JOB`; env `PROCESSED_BUCKET`, `DZI_BUCKET`,
+`JOBS_TABLE`). Reads `processed/{order}/{itemNo}v1.tif`, writes the deep-zoom
+tree to `dzi/{order}/...` (served by the Week 11 CloudFront distribution),
+records `STEP#proof`.
+
+Preserved legacy logic (H):
+- **DZI tiling**: pyvips `dzsave` — `tile_size=256, overlap=1, suffix=.jpg,
+  layout=dz` — full-resolution zooming in the proof viewer.
+- **Derivatives**: thumbnail 300px / bleed 600px / review 800px / proof 500px,
+  all CMYK->RGB with LANCZOS.
+- Dockerfile installs `libvips` for pyvips.
 
 Build & push (once per change):
 
