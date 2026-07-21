@@ -12,7 +12,7 @@ server -> run-to-completion container); the image logic itself is preserved.
 | `resize` | worker/imageConverter + utils | ✅ ported |
 | `finish` | finisher/{finisher,grommets,polePockets} + FINISHINGCONFIG | ✅ ported |
 | `proof` (DZI) | dzi/dziConverter | ✅ ported |
-| `ftp` | ftpWorker + stpWorker (Drive) | ⬜ pending |
+| `ftp` | ftpWorker + stpWorker (Drive) | ✅ ported |
 
 ## resize (`src/services/resize/`)
 
@@ -70,6 +70,24 @@ Preserved legacy logic (H):
 - **Derivatives**: thumbnail 300px / bleed 600px / review 800px / proof 500px,
   all CMYK->RGB with LANCZOS.
 - Dockerfile installs `libvips` for pyvips.
+
+## ftp (`src/services/ftp/`)
+
+Same run contract (`ORDER_NAME` + `JOB`; env `FINISHED_BUCKET`, `JOBS_TABLE`,
+`SB_ENV`). Downloads `finished/{order}/*`, transfers to the facility, records
+`STEP#transfer`.
+
+Preserved legacy logic (I):
+- facility must be one of **GA/NJ/TX/NV/CA** (from `job.routing.facility`).
+- **GA/NJ/TX/NV -> FTP** (`ftputil`), recursive upload to `/{facility}/{orderId}`;
+  proof/invoice jpgs uploaded to FTP `/proof` first; optional `renameDict`
+  proof renames (not-found / target-exists guarded, as legacy).
+- **CA -> Google Drive** (`drive_helper.py`, ported from stpWorker): service
+  account -> create order folder under `CA_DRIVE_ID` -> concurrent upload
+  (4 workers) -> fails the task if any file failed.
+- Credentials now come from SSM: `/sb/<env>/ftp/{host,user,password}`,
+  `/sb/<env>/google/{service-account-json,ca-drive-id}` (new `ca-drive-id`
+  param added to `lib/config/secrets.ts`).
 
 Build & push (once per change):
 

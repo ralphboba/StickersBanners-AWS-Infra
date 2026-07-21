@@ -52,6 +52,7 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
 
   // Google service account (CA facility Google Drive uploads)
   { group: 'google', key: 'service-account-json', description: 'Google service account JSON (full file contents)' },
+  { group: 'google', key: 'ca-drive-id', description: 'Google Drive folder id that receives CA facility uploads' },
 ] as const;
 
 /** Path prefix for an environment, e.g. `/sb/dev`. */
