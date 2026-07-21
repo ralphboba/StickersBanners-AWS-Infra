@@ -92,7 +92,16 @@ export class EcsStack extends cdk.Stack {
         // Placeholder: the `latest` tag of the (currently empty) repo.
         image: ecs.ContainerImage.fromEcrRepository(repo, 'latest'),
         logging: ecs.LogDrivers.awsLogs({ streamPrefix: spec.key, logGroup }),
-        environment: { SB_ENV: config.env },
+        environment: {
+          SB_ENV: config.env,
+          // Deterministic resource names (avoids cross-stack imports/cycles).
+          // ORDER_NAME + JOB arrive per-run via Step Functions overrides.
+          UPLOADS_BUCKET: `${config.prefix}-uploads-${this.account}`,
+          PROCESSED_BUCKET: `${config.prefix}-processed-${this.account}`,
+          FINISHED_BUCKET: `${config.prefix}-finished-${this.account}`,
+          DZI_BUCKET: `${config.prefix}-dzi-${this.account}`,
+          JOBS_TABLE: `${config.prefix}-jobs`,
+        },
       });
 
       this.taskDefinitions[spec.key] = taskDef;

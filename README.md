@@ -87,6 +87,7 @@ lib/stacks/
   cdn-stack.ts          CloudFront (OAC) in front of the dzi proof tiles
   webapp-stack.ts       Hosts the staff dashboard on CloudFront (auto-config)
 src/functions/          Lambda handler code (Node 22, .mjs)
+src/services/           ECS container code (Python; legacy image logic ports)
 src/shared/             Shared helpers (secrets, facility routing)
 web/index.html          Staff dashboard (single file, no build step)
 test/                   Jest unit tests (cdk assertions)
