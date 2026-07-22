@@ -13,7 +13,7 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { getSecret } from '../../shared/secrets.mjs';
-import { routeOrder } from '../../shared/routing.mjs';
+import { cleanOrder } from '../../shared/orderdesk.mjs';
 
 const sqs = new SQSClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -75,85 +75,4 @@ export async function handler(event) {
 
   console.log(JSON.stringify({ msg: 'webhook accepted', orderName: job.orderName }));
   return json(202, { accepted: true, orderName: job.orderName });
-}
-
-/**
- * Map an OrderDesk order JSON into our cleaned job shape.
- * TODO(week6): confirm exact field paths against the live OrderDesk API.
- */
-export function cleanOrder(order) {
-  const items = (order.order_items ?? []).map((it) => {
-    const md = metaMap(it.metadata);
-    return {
-      sku: it.code ?? md.SKU,
-      name: it.name,
-      quantity: Number(it.quantity ?? 1),
-      widthFt: num(md.WIDTH),
-      heightFt: num(md.HEIGHT),
-      finishing: splitFinishing(md['FINISHING OPTIONS']),
-      artworkUrl: md['UPLOADED FILE'],
-    };
-  });
-
-  const shipping = {
-    state: order.shipping?.state,
-    postalCode: order.shipping?.postal_code,
-    method: order.shipping_method,
-    name: [order.shipping?.first_name, order.shipping?.last_name].filter(Boolean).join(' '),
-  };
-
-  // Dictionaries are empty until seeded — routeOrder returns UNROUTED for now.
-  const routing = routeOrder(shipping);
-
-  return {
-    orderName: order.source_id ?? order.order_number ?? order.id,
-    createdAt: toIso(order.date_added),
-    folder: order.folder_name,
-    financialStatus: order.checkout_data?.financial_status,
-    customer: { email: order.email, name: shipping.name },
-    shipping,
-    routing,
-    needsProof: wantsProof(order),
-    totals: {
-      subtotal: num(order.product_total),
-      grandTotal: num(order.order_total),
-      currency: order.currency ?? 'USD',
-    },
-    items,
-    source: { shopifyOrderId: metaMap(order.order_metadata).shopify_order_id },
-  };
-}
-
-// --- helpers ---------------------------------------------------------------
-
-function metaMap(metadata) {
-  // OrderDesk metadata can be an array of {name,value} or an object.
-  if (Array.isArray(metadata)) {
-    return Object.fromEntries(metadata.map((m) => [m.name, m.value]));
-  }
-  return metadata ?? {};
-}
-
-function splitFinishing(value) {
-  // "Hem & Grommets" -> ["Hem", "Grommets"]
-  if (!value) return [];
-  return String(value)
-    .split(/&|,|\band\b/i)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function wantsProof(order) {
-  const note = `${order.customer_note ?? ''} ${order.internal_note ?? ''}`.toLowerCase();
-  return note.includes('proof');
-}
-
-function num(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-}
-
-function toIso(v) {
-  const d = v ? new Date(v) : new Date();
-  return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
 }
