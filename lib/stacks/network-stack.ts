@@ -37,6 +37,10 @@ export class NetworkStack extends cdk.Stack {
     // ---------------------------------------------------------------------
     // VPC + subnets + IGW + NAT
     // ---------------------------------------------------------------------
+    // With zero NATs (dev, $0), private subnets have no egress: workloads run
+    // in the PUBLIC subnets with a public IP instead.
+    const hasNat = network.natGateways > 0;
+
     this.vpc = new ec2.Vpc(this, 'Vpc', {
       vpcName: `${config.prefix}-vpc`,
       ipAddresses: ec2.IpAddresses.cidr(network.cidr),
@@ -51,8 +55,8 @@ export class NetworkStack extends cdk.Stack {
         },
         {
           name: 'private',
-          // Private subnets with NAT egress: ECS tasks, Lambda ENIs, Redis.
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+          // NAT egress when available; otherwise isolated (Redis etc. only).
+          subnetType: hasNat ? ec2.SubnetType.PRIVATE_WITH_EGRESS : ec2.SubnetType.PRIVATE_ISOLATED,
           cidrMask: 20,
         },
       ],
@@ -135,18 +139,22 @@ export class NetworkStack extends cdk.Stack {
     });
 
     // Interface endpoints (hourly + data cost) for control-plane services so
-    // private subnets reach them without traversing the NAT Gateway.
-    const interfaceEndpoints: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
-      SecretsManagerEndpoint: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
-      SqsEndpoint: ec2.InterfaceVpcEndpointAwsService.SQS,
-    };
-    for (const [logicalId, service] of Object.entries(interfaceEndpoints)) {
-      this.vpc.addInterfaceEndpoint(logicalId, {
-        service,
-        securityGroups: [this.vpcEndpointSecurityGroup],
-        subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        privateDnsEnabled: true,
-      });
+    // private subnets reach them without traversing the NAT Gateway. Only
+    // created alongside NAT (prod): in the $0/no-NAT layout, tasks run in
+    // public subnets and reach these services over their public endpoints.
+    if (hasNat) {
+      const interfaceEndpoints: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
+        SecretsManagerEndpoint: ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+        SqsEndpoint: ec2.InterfaceVpcEndpointAwsService.SQS,
+      };
+      for (const [logicalId, service] of Object.entries(interfaceEndpoints)) {
+        this.vpc.addInterfaceEndpoint(logicalId, {
+          service,
+          securityGroups: [this.vpcEndpointSecurityGroup],
+          subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+          privateDnsEnabled: true,
+        });
+      }
     }
 
     // ---------------------------------------------------------------------
@@ -156,8 +164,10 @@ export class NetworkStack extends cdk.Stack {
       value: this.vpc.vpcId,
       exportName: `${config.prefix}-vpc-id`,
     });
+    // With no NAT the "private" tier synthesizes as isolated subnets.
+    const privateTier = hasNat ? this.vpc.privateSubnets : this.vpc.isolatedSubnets;
     new cdk.CfnOutput(this, 'PrivateSubnetIds', {
-      value: this.vpc.privateSubnets.map((s) => s.subnetId).join(','),
+      value: privateTier.map((s) => s.subnetId).join(','),
       exportName: `${config.prefix}-private-subnet-ids`,
     });
     new cdk.CfnOutput(this, 'LambdaSgId', {

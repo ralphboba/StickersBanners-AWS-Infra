@@ -88,9 +88,16 @@ export class WorkflowStack extends cdk.Stack {
         taskDefinition: taskDef,
         launchTarget: new tasks.EcsFargateLaunchTarget(),
         integrationPattern: sfn.IntegrationPattern.RUN_JOB, // wait for completion
-        subnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        // No-NAT ($0) layout: tasks run in PUBLIC subnets with a public IP for
+        // egress (ECR pull, S3, OrderDesk). With NAT (prod) they stay private.
+        subnets: {
+          subnetType:
+            config.network.natGateways > 0
+              ? ec2.SubnetType.PRIVATE_WITH_EGRESS
+              : ec2.SubnetType.PUBLIC,
+        },
         securityGroups: [securityGroup],
-        assignPublicIp: false,
+        assignPublicIp: config.network.natGateways === 0,
         containerOverrides: [
           {
             containerDefinition: taskDef.defaultContainer!,

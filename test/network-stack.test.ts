@@ -25,8 +25,8 @@ describe('NetworkStack', () => {
     });
   });
 
-  test('dev uses a single NAT Gateway, prod uses two', () => {
-    expect(Object.keys(synth('dev').findResources('AWS::EC2::NatGateway')).length).toBe(1);
+  test('dev has zero NAT Gateways ($0), prod uses two (HA)', () => {
+    expect(Object.keys(synth('dev').findResources('AWS::EC2::NatGateway')).length).toBe(0);
     expect(Object.keys(synth('prod').findResources('AWS::EC2::NatGateway')).length).toBe(2);
   });
 
@@ -57,12 +57,13 @@ describe('NetworkStack', () => {
     });
   });
 
-  test('creates Secrets Manager + SQS interface endpoints', () => {
-    const template = synth('dev');
-    const interfaceEndpoints = Object.values(
-      template.findResources('AWS::EC2::VPCEndpoint'),
-    ).filter((r) => r.Properties?.VpcEndpointType === 'Interface');
-    expect(interfaceEndpoints.length).toBe(2);
+  test('interface endpoints only exist alongside NAT (prod 2, dev 0)', () => {
+    const count = (env: 'dev' | 'prod') =>
+      Object.values(synth(env).findResources('AWS::EC2::VPCEndpoint')).filter(
+        (r) => r.Properties?.VpcEndpointType === 'Interface',
+      ).length;
+    expect(count('dev')).toBe(0); // $0 layout: public-subnet egress instead
+    expect(count('prod')).toBe(2); // Secrets Manager + SQS
   });
 
   test('tags propagate to resources', () => {

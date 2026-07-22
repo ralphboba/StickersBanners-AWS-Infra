@@ -21,8 +21,9 @@ const environments: Record<DeployEnv, EnvironmentConfig> = {
     network: {
       cidr: '10.10.0.0/16',
       maxAzs: 2,
-      // Single NAT Gateway in dev to keep costs down (~$32/mo each).
-      natGateways: 1,
+      // Zero NAT Gateways in dev (~$32/mo each): ECS tasks run in PUBLIC
+      // subnets with a public IP instead, keeping dev at $0.
+      natGateways: 0,
     },
     tags: {
       Project: 'StickersBanners',
