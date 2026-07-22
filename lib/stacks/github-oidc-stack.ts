@@ -81,6 +81,32 @@ export class GithubOidcStack extends cdk.Stack {
       }),
     );
 
+    // Image publishing: the CI "build-images" workflow docker-builds the
+    // src/services/* containers (this sandboxed dev env can't pull registry
+    // CDNs) and pushes them to the service ECR repos. Scoped to sb-* repos.
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EcrLogin',
+        actions: ['ecr:GetAuthorizationToken'],
+        resources: ['*'], // this action does not support resource scoping
+      }),
+    );
+    role.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'EcrPushServiceImages',
+        actions: [
+          'ecr:BatchCheckLayerAvailability',
+          'ecr:CompleteLayerUpload',
+          'ecr:InitiateLayerUpload',
+          'ecr:PutImage',
+          'ecr:UploadLayerPart',
+          'ecr:BatchGetImage',
+          'ecr:GetDownloadUrlForLayer',
+        ],
+        resources: [`arn:aws:ecr:${this.region}:${this.account}:repository/sb-*`],
+      }),
+    );
+
     this.role = role;
 
     new cdk.CfnOutput(this, 'GithubActionsRoleArn', {

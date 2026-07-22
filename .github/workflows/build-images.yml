@@ -1,0 +1,59 @@
+# Build the four image-service containers and push them to ECR.
+#
+# Runs on the GitHub-hosted runner (unrestricted network) because the dev
+# sandbox's proxy blocks registry CDNs. Auth is the Week-1 OIDC role — no
+# stored AWS keys. Triggered manually, or automatically when service code
+# changes on the main working branch.
+
+name: build-images
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target environment prefix (sb-<env>-<service> repos)"
+        default: "dev"
+        required: true
+  push:
+    paths:
+      - "src/services/**"
+      - ".github/workflows/build-images.yml"
+
+permissions:
+  id-token: write # OIDC token for AWS
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::025857592188:role/sb-github-actions-cdk
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [resize, finish, proof, ftp]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TARGET_ENV: ${{ github.event.inputs.env || 'dev' }}
+        run: |
+          set -euo pipefail
+          repo="$REGISTRY/sb-$TARGET_ENV-${{ matrix.service }}"
+          docker build -t "$repo:latest" "src/services/${{ matrix.service }}"
+          docker push "$repo:latest"
+          echo "pushed $repo:latest"
