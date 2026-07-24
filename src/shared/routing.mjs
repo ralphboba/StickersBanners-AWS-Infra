@@ -1,16 +1,21 @@
-// Facility routing (data-driven skeleton).
+// Facility routing.
 //
 // Decides which production facility an order goes to, and how its finished
 // files are transported there. The legacy system stored zip dictionaries in
-// Redis (dict:nvZipCodes, dict:caZipCodes); here those become data loaded at
-// runtime (DynamoDB DICT items, to be seeded later) so adding/changing zips is
-// a data edit — no code change, no redeploy.
-//
-// Facilities: GA, NJ, TX, NV, CA. CA ships via Google Drive; the rest via FTP.
+// Redis (dict:nvZipCodes, dict:caZipCodes); those are now bundled from
+// zipRouting.mjs (extracted from the legacy zip.xlsx). Editing zips = edit that
+// file + redeploy. Facilities: GA, NJ, TX, NV, CA. CA ships via Google Drive;
+// the rest via FTP.
+
+import { NV_ZIPS, CA_ZIPS } from './zipRouting.mjs';
 
 /** @typedef {'GA'|'NJ'|'TX'|'NV'|'CA'} Facility */
 
 const GDRIVE_FACILITIES = new Set(['CA']);
+
+// Built once per Lambda cold start.
+const DEFAULT_NV = new Set(NV_ZIPS);
+const DEFAULT_CA = new Set(CA_ZIPS);
 
 /**
  * Resolve the transport for a facility.
@@ -24,23 +29,28 @@ export function transportFor(facility) {
 /**
  * Decide the facility for an order from its shipping state + postal code.
  *
- * NV/CA are driven by the seeded zip dictionaries; GA/NJ/TX use a
- * (still-to-be-defined) state-based rule. Until the dictionaries/rules are
- * seeded, this returns a safe default the pipeline can hold on.
+ * NV is checked BEFORE CA: NV_ZIPS are the CA destinations the NV facility
+ * ships in 1 day, so they take precedence over the broader CA list. GA/NJ/TX
+ * use a (still-to-be-defined) state rule; until then those orders are UNROUTED
+ * (held for manual assignment) rather than shipped to the wrong facility.
  *
  * @param {{ state?: string, postalCode?: string }} shipping
  * @param {{ nvZips?: Set<string>, caZips?: Set<string> }} [dicts]
  * @returns {{ facility: Facility | 'UNROUTED', transport: 'FTP'|'GDRIVE'|null }}
  */
 export function routeOrder(shipping, dicts = {}) {
-  const zip = (shipping?.postalCode ?? '').trim();
-  const { nvZips, caZips } = dicts;
+  const zip = normalizeZip(shipping?.postalCode);
+  const nvZips = dicts.nvZips ?? DEFAULT_NV;
+  const caZips = dicts.caZips ?? DEFAULT_CA;
 
-  if (caZips?.has(zip)) return { facility: 'CA', transport: transportFor('CA') };
-  if (nvZips?.has(zip)) return { facility: 'NV', transport: transportFor('NV') };
+  if (nvZips.has(zip)) return { facility: 'NV', transport: transportFor('NV') };
+  if (caZips.has(zip)) return { facility: 'CA', transport: transportFor('CA') };
 
-  // TODO(routing): GA/NJ/TX state-based rule once defined. Until then, leave
-  // the order UNROUTED so it is held for manual assignment rather than
-  // shipped to the wrong facility.
   return { facility: 'UNROUTED', transport: null };
+}
+
+/** ZIP+4 and stray whitespace -> the 5-digit base used by the dictionaries. */
+function normalizeZip(postalCode) {
+  const m = String(postalCode ?? '').trim().match(/^(\d{5})/);
+  return m ? m[1] : '';
 }
