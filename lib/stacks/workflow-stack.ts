@@ -62,9 +62,12 @@ export class WorkflowStack extends cdk.Stack {
         PK: tasks.DynamoAttributeValue.fromString(orderPk),
         SK: tasks.DynamoAttributeValue.fromString('META'),
       },
-      updateExpression: 'SET #s = :s',
+      updateExpression: 'SET #s = :s, GSI1PK = :g',
       expressionAttributeNames: { '#s': 'status' },
-      expressionAttributeValues: { ':s': tasks.DynamoAttributeValue.fromString('failed') },
+      expressionAttributeValues: {
+        ':s': tasks.DynamoAttributeValue.fromString('failed'),
+        ':g': tasks.DynamoAttributeValue.fromString('STATUS#failed'),
+      },
       resultPath: sfn.JsonPath.DISCARD,
     });
     const notifyFailure = new tasks.SqsSendMessage(this, 'NotifyFailure', {
@@ -114,8 +117,9 @@ export class WorkflowStack extends cdk.Stack {
       return step;
     };
 
-    // --- states ---
-    const markProcessing = updateStatus(this, 'MarkProcessing', jobsTable, orderPk, 'processing', true);
+    // --- states (status = OrderDesk folder the order sits in) ---
+    const markPrinting = updateStatus(this, 'MarkPrinting', jobsTable, orderPk, 'printing');
+    const markProofing = updateStatus(this, 'MarkProofing', jobsTable, orderPk, 'proofing');
 
     const resize = runTask('Resize', 'resize');
     const finish = runTask('Finish', 'finish');
@@ -175,8 +179,12 @@ export class WorkflowStack extends cdk.Stack {
       resultPath: sfn.JsonPath.DISCARD,
     });
 
-    const markDone = updateStatus(this, 'MarkDone', jobsTable, orderPk, 'done', false);
-    const markHeld = updateStatus(this, 'MarkHeld', jobsTable, orderPk, 'manual_hold', false);
+    // After files reach the facility, the order rests in "Awaiting Pickup (XX)"
+    // — the facility folder, computed per order (pickup_ga/nj/tx/ca). Staff
+    // move it to Completed manually once the facility finishes. UNROUTED orders
+    // land in "Awaiting Admin Process" for manual assignment.
+    const markPickup = updateStatus(this, 'MarkPickup', jobsTable, orderPk, '$.routing.pickupStatus');
+    const markHeld = updateStatus(this, 'MarkHeld', jobsTable, orderPk, 'awaiting_admin');
 
     // Route: only ship when a transport (facility) was resolved.
     const route = new sfn.Choice(this, 'RouteChoice')
@@ -185,7 +193,7 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.isPresent('$.routing.transport'),
           sfn.Condition.isNotNull('$.routing.transport'),
         ),
-        sendToTransfer.next(notify).next(markDone),
+        sendToTransfer.next(notify).next(markPickup),
       )
       .otherwise(markHeld);
 
@@ -195,11 +203,13 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.isPresent('$.needsProof'),
           sfn.Condition.booleanEquals('$.needsProof', true),
         ),
-        proof.next(notifyProofReady).next(waitForApproval).next(route),
+        // proof made -> "Proofing" folder -> ping reviewer -> wait for approval
+        proof.next(markProofing).next(notifyProofReady).next(waitForApproval).next(route),
       )
       .otherwise(route);
 
-    const definition = markProcessing.next(resize).next(finish).next(needsProof);
+    // Pipeline picks the order up from "In Queue" -> "Printing" while it runs.
+    const definition = markPrinting.next(resize).next(finish).next(needsProof);
 
     this.stateMachine = new sfn.StateMachine(this, 'Pipeline', {
       stateMachineName: `${config.prefix}-pipeline`,
@@ -239,32 +249,35 @@ export class WorkflowStack extends cdk.Stack {
   }
 }
 
-/** A DynamoUpdateItem that sets status (and optionally the GSI1 status key). */
+/**
+ * A DynamoUpdateItem that sets `status` AND the GSI1 status key together, so the
+ * dashboard's per-folder query always reflects the current stage. `status` may
+ * be a literal ('printing') or a JsonPath ('$.routing.pickupStatus') for a
+ * facility-specific folder (pickup_ga/nj/tx/ca).
+ */
 function updateStatus(
   scope: Construct,
   id: string,
   table: dynamodb.ITable,
   orderPk: string,
   status: string,
-  withGsi: boolean,
 ): tasks.DynamoUpdateItem {
-  const values: Record<string, tasks.DynamoAttributeValue> = {
-    ':s': tasks.DynamoAttributeValue.fromString(status),
-  };
-  let updateExpression = 'SET #s = :s';
-  if (withGsi) {
-    updateExpression += ', GSI1PK = :g';
-    values[':g'] = tasks.DynamoAttributeValue.fromString(`STATUS#${status}`);
-  }
+  const isPath = status.startsWith('$');
+  const statusVal = tasks.DynamoAttributeValue.fromString(
+    isPath ? sfn.JsonPath.stringAt(status) : status,
+  );
+  const gsiVal = tasks.DynamoAttributeValue.fromString(
+    isPath ? sfn.JsonPath.format('STATUS#{}', sfn.JsonPath.stringAt(status)) : `STATUS#${status}`,
+  );
   return new tasks.DynamoUpdateItem(scope, id, {
     table,
     key: {
       PK: tasks.DynamoAttributeValue.fromString(orderPk),
       SK: tasks.DynamoAttributeValue.fromString('META'),
     },
-    updateExpression,
+    updateExpression: 'SET #s = :s, GSI1PK = :g',
     expressionAttributeNames: { '#s': 'status' },
-    expressionAttributeValues: values,
+    expressionAttributeValues: { ':s': statusVal, ':g': gsiVal },
     resultPath: sfn.JsonPath.DISCARD,
   });
 }

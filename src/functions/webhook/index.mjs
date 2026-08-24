@@ -56,9 +56,10 @@ export async function handler(event) {
       Item: {
         PK: `ORDER#${job.orderName}`,
         SK: 'META',
-        GSI1PK: 'STATUS#received',
+        // Lands in the "In Queue" folder until the pipeline picks it up.
+        GSI1PK: 'STATUS#in_queue',
         GSI1SK: job.createdAt,
-        status: 'received',
+        status: 'in_queue',
         ...job,
       },
     }),

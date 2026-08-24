@@ -43,10 +43,19 @@ export function routeOrder(shipping, dicts = {}) {
   const nvZips = dicts.nvZips ?? DEFAULT_NV;
   const caZips = dicts.caZips ?? DEFAULT_CA;
 
-  if (nvZips.has(zip)) return { facility: 'NV', transport: transportFor('NV') };
-  if (caZips.has(zip)) return { facility: 'CA', transport: transportFor('CA') };
+  if (nvZips.has(zip)) return decided('NV');
+  if (caZips.has(zip)) return decided('CA');
 
-  return { facility: 'UNROUTED', transport: null };
+  return { facility: 'UNROUTED', transport: null, pickupStatus: null };
+}
+
+/** Facility -> full routing decision incl. the "Awaiting Pickup (XX)" folder key. */
+function decided(facility) {
+  return {
+    facility,
+    transport: transportFor(facility),
+    pickupStatus: `pickup_${facility.toLowerCase()}`,
+  };
 }
 
 /** ZIP+4 and stray whitespace -> the 5-digit base used by the dictionaries. */
