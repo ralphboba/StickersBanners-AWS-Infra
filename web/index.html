@@ -3,234 +3,300 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StickersBanners — Orders</title>
+<title>Orders Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --mut:#6b7686; --line:#e3e7ee;
-          --blue:#2563eb; --green:#16a34a; --red:#dc2626; --amber:#d97706; }
+  :root {
+    --bg:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --rail:#f1f4f8;
+    --ink:#16202e; --muted:#5f6f82; --faint:#8496a8; --line:#e2e7ee;
+    --accent:#2f6feb; --accent-soft:#e5edfd;
+    --s-queue:#2563eb; --s-print:#d97706; --s-proof:#7c3aed; --s-admin:#475569;
+    --s-pay:#e11d48; --s-pickup:#0d9488; --s-done:#16a34a; --s-hold:#dc2626;
+    --shadow:0 1px 2px rgba(16,32,46,.06), 0 8px 24px rgba(16,32,46,.06);
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#0d131c; --surface:#141d29; --surface-2:#111a25; --rail:#101823;
+    --ink:#e6edf5; --muted:#93a4b8; --faint:#6b7f95; --line:#233040;
+    --accent:#5b8def; --accent-soft:#17263f;
+    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-admin:#7688a0;
+    --s-pay:#f2557a; --s-pickup:#2bb3a3; --s-done:#3fce74; --s-hold:#ef5350;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0d131c; --surface:#141d29; --surface-2:#111a25; --rail:#101823;
+    --ink:#e6edf5; --muted:#93a4b8; --faint:#6b7f95; --line:#233040;
+    --accent:#5b8def; --accent-soft:#17263f;
+    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-admin:#7688a0;
+    --s-pay:#f2557a; --s-pickup:#2bb3a3; --s-done:#3fce74; --s-hold:#ef5350;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
   * { box-sizing:border-box; }
-  body { margin:0; font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
-         background:var(--bg); color:var(--ink); }
-  header { background:var(--card); border-bottom:1px solid var(--line);
-           padding:14px 24px; display:flex; align-items:center; gap:16px; }
-  header h1 { font-size:17px; margin:0; }
-  header .spacer { flex:1; }
-  header .who { color:var(--mut); font-size:13px; }
-  main { max-width:1100px; margin:24px auto; padding:0 16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
-          padding:20px; }
-  button { font:inherit; border:1px solid var(--line); background:var(--card);
-           border-radius:8px; padding:8px 14px; cursor:pointer; }
-  button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
-  button.approve { background:var(--green); border-color:var(--green); color:#fff; }
-  button.reject  { background:var(--red);   border-color:var(--red);   color:#fff; }
-  button:disabled { opacity:.5; cursor:default; }
-  input { font:inherit; border:1px solid var(--line); border-radius:8px;
-          padding:9px 12px; width:100%; }
-  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 4px; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--ink); font-size:14px; line-height:1.5;
+    font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing:antialiased; }
+  .mono { font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums; }
+  button { font:inherit; }
+
   /* login */
-  #login { max-width:360px; margin:10vh auto; }
-  #login h2 { margin-top:0; }
-  #login button { width:100%; margin-top:16px; }
-  .err { color:var(--red); font-size:13px; min-height:18px; margin-top:10px; }
-  /* tabs */
-  .tabs { display:flex; gap:8px; margin:0 0 16px; flex-wrap:wrap; }
-  .tabs button { border-radius:999px; padding:7px 14px; font-size:13.5px; }
-  .tabs button.on { background:var(--ink); border-color:var(--ink); color:#fff; }
-  .tabs .n { opacity:.65; margin-left:4px; }
-  /* table */
-  table { width:100%; border-collapse:collapse; font-size:14px; }
-  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
-  th { color:var(--mut); font-weight:600; font-size:12.5px; text-transform:uppercase;
-       letter-spacing:.04em; }
-  tr.row { cursor:pointer; } tr.row:hover { background:#f0f4fa; }
-  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px;
-          font-weight:600; }
-  .s-received    { background:#e0edff; color:#1d4ed8; }
-  .s-processing  { background:#fef3c7; color:#92400e; }
-  .s-manual_hold { background:#fde8e8; color:#b91c1c; }
-  .s-done        { background:#dcfce7; color:#166534; }
-  .s-failed      { background:#fee2e2; color:#991b1b; }
-  .mut { color:var(--mut); }
-  .empty { color:var(--mut); text-align:center; padding:32px 0; }
-  /* detail */
-  #detail { margin-top:16px; }
-  #detail h3 { margin:0 0 4px; }
-  dl { display:grid; grid-template-columns:140px 1fr; gap:6px 12px; margin:14px 0; }
-  dt { color:var(--mut); font-size:13px; } dd { margin:0; }
-  .actions { display:flex; gap:10px; margin-top:16px; align-items:center; }
-  .actions input { width:260px; }
-  .note { font-size:13px; color:var(--mut); margin-top:10px; }
-  .items td { border-bottom:none; padding:4px 12px 4px 0; font-size:13.5px; }
+  #login { max-width:360px; margin:12vh auto; background:var(--surface); border:1px solid var(--line);
+    border-radius:14px; padding:28px; box-shadow:var(--shadow); }
+  #login h1 { font-size:19px; margin:0 0 4px; }
+  #login p { color:var(--muted); margin:0 0 18px; font-size:13px; }
+  #login label { display:block; font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  #login input { width:100%; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink); border-radius:9px; padding:10px 12px; font:inherit; outline:none; }
+  #login input:focus { border-color:var(--accent); }
+  #login button { width:100%; margin-top:18px; background:var(--accent); color:#fff; border:0;
+    border-radius:9px; padding:11px; font-weight:600; cursor:pointer; }
+  .err { color:var(--s-hold); font-size:13px; min-height:18px; margin-top:10px; }
+
+  /* app */
+  .top { display:flex; align-items:center; gap:16px; padding:12px 20px;
+    background:var(--surface); border-bottom:1px solid var(--line); }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:-.01em; }
+  .brand .dot { width:22px; height:22px; border-radius:6px; background:linear-gradient(135deg,var(--accent),#8ab0ff); }
+  .top .spacer { flex:1; }
+  .who { display:flex; align-items:center; gap:9px; font-size:13px; color:var(--muted); }
+  .avatar { width:28px; height:28px; border-radius:50%; background:var(--accent); color:#fff;
+    display:grid; place-items:center; font-weight:600; font-size:12px; }
+  .signout { background:var(--surface-2); border:1px solid var(--line); color:var(--muted);
+    border-radius:8px; padding:7px 12px; cursor:pointer; }
+
+  .shell { display:grid; grid-template-columns:250px 1fr; min-height:calc(100vh - 53px); }
+  .rail { background:var(--rail); border-right:1px solid var(--line); padding:16px 12px; }
+  .rail h2 { font-size:11px; text-transform:uppercase; letter-spacing:.09em; color:var(--faint);
+    margin:6px 8px 10px; font-weight:600; }
+  .folder { display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; border-radius:8px;
+    border:0; background:transparent; color:var(--ink); cursor:pointer; text-align:left; margin-bottom:2px; }
+  .folder:hover { background:var(--surface); }
+  .folder.on { background:var(--surface); box-shadow:var(--shadow); font-weight:600; }
+  .folder .tick { width:8px; height:8px; border-radius:50%; flex:none; }
+  .folder .nm { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .folder .ct { font-size:12px; color:var(--muted); background:var(--surface-2); border-radius:20px;
+    padding:1px 8px; min-width:24px; text-align:center; }
+  .folder.on .ct { background:var(--accent-soft); color:var(--accent); }
+  .rail .sep { height:1px; background:var(--line); margin:10px 8px; }
+
+  .main { padding:20px 24px; min-width:0; }
+  .head { display:flex; align-items:baseline; gap:12px; margin-bottom:4px; }
+  .head .tick { width:10px; height:10px; border-radius:50%; }
+  .head h1 { font-size:20px; margin:0; letter-spacing:-.02em; }
+  .head .sub { color:var(--muted); font-size:13px; }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    box-shadow:var(--shadow); overflow:hidden; margin-top:14px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:640px; }
+  thead th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--faint); font-weight:600; padding:11px 14px; border-bottom:1px solid var(--line); }
+  tbody td { padding:12px 14px; border-bottom:1px solid var(--line); font-size:13.5px; }
+  tbody tr:last-child td { border-bottom:0; }
+  tbody tr { cursor:pointer; } tbody tr:hover { background:var(--surface-2); }
+  .ordno { font-weight:600; }
+  .fac { font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted); }
+  .proofyes { color:var(--s-proof); font-weight:600; } .proofno { color:var(--faint); }
+  .empty { padding:40px; text-align:center; color:var(--muted); }
+  .loading { padding:40px; text-align:center; color:var(--faint); }
+
+  .drawer { position:fixed; top:0; right:0; height:100vh; width:400px; max-width:92vw;
+    background:var(--surface); border-left:1px solid var(--line); box-shadow:-12px 0 40px rgba(16,32,46,.14);
+    transform:translateX(100%); transition:transform .22s ease; padding:22px; overflow-y:auto; z-index:20; }
+  .drawer.open { transform:translateX(0); }
+  @media (prefers-reduced-motion:reduce){ .drawer{ transition:none; } }
+  .drawer .x { float:right; border:0; background:var(--surface-2); color:var(--muted);
+    width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:16px; }
+  .drawer h3 { margin:0 0 2px; font-size:18px; } .drawer .oid { color:var(--muted); font-size:13px; margin-bottom:14px; }
+  dl { display:grid; grid-template-columns:104px 1fr; gap:8px 12px; margin:16px 0; font-size:13.5px; }
+  dt { color:var(--faint); } dd { margin:0; }
+  .proofbox { margin-top:16px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .proofbox .lab { font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .btns { display:flex; gap:9px; } .btn { flex:1; border:0; border-radius:9px; padding:10px; font-weight:600; cursor:pointer; }
+  .btn.approve { background:var(--s-done); color:#fff; } .btn.reject { background:transparent; color:var(--s-hold); border:1px solid var(--s-hold); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .note { font-size:12px; color:var(--faint); margin-top:9px; }
+  .scrim { position:fixed; inset:0; background:rgba(8,14,22,.38); opacity:0; pointer-events:none; transition:opacity .2s; z-index:15; }
+  .scrim.open { opacity:1; pointer-events:auto; }
+  @media (max-width:720px){ .shell{ grid-template-columns:1fr; } .rail{ display:none; } }
 </style>
 </head>
 <body>
+<script>let CONFIG = { region:'us-east-1', apiBase:'', userPoolClientId:'', cdnBase:'' };</script>
 
-<!-- CONFIG is loaded from config.json, which is generated automatically at
-     deploy time (webapp stack). Staff never edit anything — they just visit
-     the hosted URL. Falls back to empty when opened as a bare file. -->
-<script>
-let CONFIG = { region: 'us-east-1', apiBase: '', userPoolClientId: '', cdnBase: '' };
-</script>
-
-<header hidden id="topbar">
+<!-- LOGIN -->
+<div id="login">
   <h1>StickersBanners Orders</h1>
-  <span class="spacer"></span>
-  <span class="who" id="who"></span>
-  <button id="signout">Sign out</button>
-</header>
-
-<div id="login" class="card">
-  <h2>Staff sign in</h2>
-  <label>Username</label><input id="email" type="text" autocomplete="username">
+  <p>Sign in to view and process orders.</p>
+  <label>Username</label><input id="username" type="text" autocomplete="username">
   <label>Password</label><input id="password" type="password" autocomplete="current-password">
-  <button class="primary" id="signin">Sign in</button>
+  <button id="signin">Sign in</button>
   <div class="err" id="loginErr"></div>
 </div>
 
-<main hidden id="app">
-  <div class="tabs" id="tabs"></div>
-  <div class="card">
-    <table>
-      <thead><tr><th>Order</th><th>Customer</th><th>Facility</th><th>Proof?</th><th>Created</th><th>Status</th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div class="empty" id="empty" hidden>No orders in this status.</div>
+<!-- APP -->
+<div id="app" hidden>
+  <div class="top">
+    <div class="brand"><span class="dot"></span> StickersBanners</div>
+    <span class="spacer"></span>
+    <div class="who"><span id="who"></span><span class="avatar" id="avatar">?</span></div>
+    <button class="signout" id="signout">Sign out</button>
   </div>
+  <div class="shell">
+    <nav class="rail"><h2>Folders</h2><div id="folders"></div></nav>
+    <main class="main">
+      <div class="head"><span class="tick" id="headtick"></span><h1 id="headname">In Queue</h1><span class="sub" id="headsub"></span></div>
+      <div class="card">
+        <table><thead><tr>
+          <th>Order</th><th>Customer</th><th>Facility</th><th>Proof</th><th>Created</th><th>Status</th>
+        </tr></thead><tbody id="rows"></tbody></table>
+        <div class="loading" id="loading" hidden>Loading…</div>
+        <div class="empty" id="empty" hidden>No orders in this folder.</div>
+      </div>
+    </main>
+  </div>
+</div>
 
-  <div class="card" id="detail" hidden></div>
-</main>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Order detail"></aside>
 
 <script>
-const STATUSES = ['received','processing','manual_hold','done','failed'];
-let token = null, currentStatus = 'processing';
+// OrderDesk folders — same names staff use today.
+const FOLDERS = [
+  { key:'in_queue',        name:'In Queue',                color:'--s-queue' },
+  { key:'printing',        name:'Printing',                color:'--s-print' },
+  { key:'proofing',        name:'Proofing',                color:'--s-proof' },
+  { key:'awaiting_admin',  name:'Awaiting Admin Process',  color:'--s-admin' },
+  { key:'awaiting_payment',name:'Awaiting Payment',        color:'--s-pay'   },
+  { sep:true },
+  { key:'pickup_ga',       name:'Awaiting Pickup (GA)',    color:'--s-pickup'},
+  { key:'pickup_nj',       name:'Awaiting Pickup (NJ)',    color:'--s-pickup'},
+  { key:'pickup_tx',       name:'Awaiting Pickup (TX)',    color:'--s-pickup'},
+  { key:'pickup_ca',       name:'Awaiting Pickup (CA)',    color:'--s-pickup'},
+  { sep:true },
+  { key:'completed',       name:'Completed',               color:'--s-done'  },
+];
+const FMAP = Object.fromEntries(FOLDERS.filter(f=>f.key).map(f=>[f.key,f]));
+let token=null, current='in_queue', counts={};
 
-const $ = (id) => document.getElementById(id);
+const $ = (id)=>document.getElementById(id);
+const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtDate = (iso)=> iso ? new Date(iso).toLocaleString() : '—';
 
-/* ---------- auth (Cognito USER_PASSWORD_AUTH via plain fetch) ---------- */
-async function signIn(email, password) {
-  const r = await fetch(`https://cognito-idp.${CONFIG.region}.amazonaws.com/`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-amz-json-1.1',
-               'x-amz-target': 'AWSCognitoIdentityProviderService.InitiateAuth' },
-    body: JSON.stringify({
-      AuthFlow: 'USER_PASSWORD_AUTH',
-      ClientId: CONFIG.userPoolClientId,
-      AuthParameters: { USERNAME: email, PASSWORD: password },
-    }),
+/* auth: Cognito USER_PASSWORD_AUTH via plain fetch */
+async function signIn(user, pass){
+  const r = await fetch(`https://cognito-idp.${CONFIG.region}.amazonaws.com/`,{
+    method:'POST',
+    headers:{'content-type':'application/x-amz-json-1.1','x-amz-target':'AWSCognitoIdentityProviderService.InitiateAuth'},
+    body:JSON.stringify({ AuthFlow:'USER_PASSWORD_AUTH', ClientId:CONFIG.userPoolClientId,
+      AuthParameters:{ USERNAME:user, PASSWORD:pass } }),
   });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.message || 'sign-in failed');
-  if (!data.AuthenticationResult) throw new Error('additional challenge required — finish setup in the AWS console first');
-  return data.AuthenticationResult.IdToken;
+  const d = await r.json();
+  if(!r.ok) throw new Error(d.message||'sign-in failed');
+  if(!d.AuthenticationResult) throw new Error('extra challenge required — finish setup in the AWS console');
+  return d.AuthenticationResult.IdToken;
+}
+async function api(path, opts={}){
+  const r = await fetch(CONFIG.apiBase+path, { ...opts,
+    headers:{ authorization:`Bearer ${token}`, 'content-type':'application/json', ...(opts.headers||{}) } });
+  if(r.status===401){ location.reload(); return; }
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+  return d;
 }
 
-/* ---------------------------- API helpers ------------------------------ */
-async function api(path, opts = {}) {
-  const r = await fetch(CONFIG.apiBase + path, {
-    ...opts,
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json',
-               ...(opts.headers || {}) },
-  });
-  if (r.status === 401) { location.reload(); return; }
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-  return data;
+function renderFolders(){
+  const wrap=$('folders'); wrap.innerHTML='';
+  for(const f of FOLDERS){
+    if(f.sep){ const s=document.createElement('div'); s.className='sep'; wrap.appendChild(s); continue; }
+    const b=document.createElement('button');
+    b.className='folder'+(f.key===current?' on':'');
+    const c = counts[f.key]==null ? '·' : counts[f.key];
+    b.innerHTML=`<span class="tick" style="background:var(${f.color})"></span>
+      <span class="nm">${f.name}</span><span class="ct">${c}</span>`;
+    b.onclick=()=>{ current=f.key; loadFolder(); };
+    wrap.appendChild(b);
+  }
 }
-
-/* ------------------------------- views --------------------------------- */
-function renderTabs(counts = {}) {
-  $('tabs').innerHTML = STATUSES.map(s =>
-    `<button class="${s === currentStatus ? 'on' : ''}" data-s="${s}">
-       ${s.replace('_',' ')}${counts[s] != null ? `<span class="n">${counts[s]}</span>` : ''}
-     </button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b =>
-    b.onclick = () => { currentStatus = b.dataset.s; $('detail').hidden = true; loadList(); });
+async function loadCounts(){
+  await Promise.all(FOLDERS.filter(f=>f.key).map(async f=>{
+    try { const d=await api(`/orders?status=${f.key}`); counts[f.key]=d.count; } catch { counts[f.key]='—'; }
+  }));
+  renderFolders();
 }
-
-function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
-const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-async function loadList() {
-  renderTabs();
-  const data = await api(`/orders?status=${currentStatus}`);
-  const rows = data.orders.map(o => `
-    <tr class="row" data-n="${esc(o.orderName)}">
-      <td><strong>${esc(o.orderName)}</strong></td>
-      <td>${esc(o.customer?.name || o.customer?.email || '—')}</td>
-      <td>${esc(o.routing?.facility || '—')}</td>
-      <td>${o.needsProof ? 'yes' : 'no'}</td>
-      <td class="mut">${fmtDate(o.createdAt)}</td>
-      <td><span class="pill s-${esc(o.status)}">${esc(o.status)}</span></td>
+async function loadFolder(){
+  renderFolders();
+  const f=FMAP[current];
+  $('headname').textContent=f.name; $('headtick').style.background=`var(${f.color})`;
+  $('rows').innerHTML=''; $('empty').hidden=true; $('loading').hidden=false; $('headsub').textContent='';
+  let data; try { data=await api(`/orders?status=${current}`); } catch(e){ $('loading').textContent=e.message; return; }
+  $('loading').hidden=true;
+  counts[current]=data.count; renderFolders();
+  $('headsub').textContent=`${data.count} order${data.count!==1?'s':''}`;
+  const rows=data.orders.map(o=>`
+    <tr data-n="${esc(o.orderName)}">
+      <td class="ordno mono">${esc(o.orderName)}</td>
+      <td>${esc(o.customer?.name||o.customer?.email||'—')}</td>
+      <td class="fac">${esc(o.routing?.facility||'—')}</td>
+      <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
+      <td class="mono" style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
+      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}</span></td>
     </tr>`).join('');
-  $('rows').innerHTML = rows;
-  $('empty').hidden = data.orders.length > 0;
-  document.querySelectorAll('tr.row').forEach(tr =>
-    tr.onclick = () => showDetail(tr.dataset.n));
+  $('rows').innerHTML=rows;
+  $('empty').hidden=data.orders.length>0;
+  document.querySelectorAll('#rows tr').forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.n));
 }
-
-async function showDetail(name) {
-  const o = await api(`/orders/${encodeURIComponent(name)}`);
-  const items = (o.items || []).map(it => `
-    <tr><td>${esc(it.quantity)}×</td><td>${esc(it.name)} (${esc(it.sku)})</td>
-        <td>${esc(it.widthFt)}×${esc(it.heightFt)} ft</td>
-        <td>${esc((it.finishing || []).join(', '))}</td></tr>`).join('');
+async function showDetail(name){
+  let o; try { o=await api(`/orders/${encodeURIComponent(name)}`); } catch(e){ return; }
+  const f=FMAP[o.status]||{name:o.status,color:'--muted'};
+  const items=(o.items||[]).map(it=>`<div style="font-size:13px;padding:4px 0;color:var(--muted)">
+    <b style="color:var(--ink)">${esc(it.quantity)}× ${esc(it.name||it.sku)}</b> — ${esc(it.width)}×${esc(it.height)} ${esc(it.unit||'ft')}, ${esc((it.finishingRaw)||'')}</div>`).join('');
   const proofUrl = CONFIG.cdnBase ? `${CONFIG.cdnBase}/${encodeURIComponent(name)}/` : null;
-
-  $('detail').innerHTML = `
-    <h3>${esc(o.orderName)} <span class="pill s-${esc(o.status)}">${esc(o.status)}</span></h3>
+  const canApprove = o.needsProof && o.status==='proofing';
+  $('drawer').innerHTML=`
+    <button class="x" onclick="closeDrawer()">×</button>
+    <h3 class="mono">${esc(o.orderName)}</h3><div class="oid">${esc(f.name)}</div>
     <dl>
-      <dt>Customer</dt><dd>${esc(o.customer?.name || '—')} · ${esc(o.customer?.email || '')}</dd>
-      <dt>Ship to</dt><dd>${esc(o.shipping?.state || '—')} ${esc(o.shipping?.postalCode || '')} · ${esc(o.shipping?.method || '')}</dd>
-      <dt>Facility</dt><dd>${esc(o.routing?.facility || '—')} ${o.routing?.transport ? `(${esc(o.routing.transport)})` : ''}</dd>
-      <dt>Total</dt><dd>$${esc(o.totals?.grandTotal ?? '—')} ${esc(o.totals?.currency || '')}</dd>
+      <dt>Customer</dt><dd>${esc(o.customer?.name||'—')}<br><span style="color:var(--muted)">${esc(o.customer?.email||'')}</span></dd>
+      <dt>Ship to</dt><dd>${esc(o.shipping?.state||'—')} ${esc(o.shipping?.postalCode||'')} · ${esc(o.shipping?.method||'')}</dd>
+      <dt>Facility</dt><dd>${esc(o.routing?.facility||'—')} ${o.routing?.transport?`(${esc(o.routing.transport)})`:''}</dd>
+      <dt>Total</dt><dd>$${esc(o.totals?.grandTotal??'—')} ${esc(o.totals?.currency||'')}</dd>
       <dt>Created</dt><dd>${fmtDate(o.createdAt)}</dd>
-      <dt>Needs proof</dt><dd>${o.needsProof ? 'yes' : 'no'}</dd>
     </dl>
-    ${items ? `<table class="items">${items}</table>` : ''}
-    ${proofUrl && o.needsProof ? `<p><a href="${proofUrl}" target="_blank" rel="noopener">Open proof viewer ↗</a></p>` : ''}
-    ${o.needsProof && o.status === 'processing' ? `
-      <div class="actions">
-        <button class="approve" id="btnApprove">Approve proof</button>
-        <button class="reject"  id="btnReject">Reject</button>
-        <input id="rejectReason" placeholder="Reject reason (optional)">
-      </div>
-      <p class="note">Approve resumes printing; Reject stops this order and alerts the team.</p>` : ''}
-    <div class="err" id="actErr"></div>`;
-  $('detail').hidden = false;
-
-  const act = async (verb, body) => {
-    try {
-      $('btnApprove').disabled = $('btnReject').disabled = true;
-      await api(`/orders/${encodeURIComponent(name)}/${verb}`, { method: 'POST', body: JSON.stringify(body || {}) });
-      await loadList(); await showDetail(name);
-    } catch (e) { $('actErr').textContent = e.message; $('btnApprove').disabled = $('btnReject').disabled = false; }
-  };
-  $('btnApprove')?.addEventListener('click', () => act('approve'));
-  $('btnReject')?.addEventListener('click', () => act('reject', { reason: $('rejectReason').value || undefined }));
+    <div style="border-top:1px solid var(--line);padding-top:12px">${items||'<span style="color:var(--faint)">No line items</span>'}</div>
+    ${proofUrl&&o.needsProof?`<p style="margin-top:12px"><a href="${proofUrl}" target="_blank" rel="noopener" style="color:var(--accent)">Open proof viewer ↗</a></p>`:''}
+    ${canApprove?`<div class="proofbox"><div class="lab">Waiting for proof approval.</div>
+      <div class="btns"><button class="btn approve" id="ap">Approve proof</button><button class="btn reject" id="rj">Reject</button></div>
+      <div class="note">Approve → moves to Printing. Reject → holds &amp; alerts the team.</div>
+      <div class="err" id="actErr"></div></div>`:''}`;
+  $('drawer').classList.add('open'); $('scrim').classList.add('open');
+  if(canApprove){
+    const act=async(verb)=>{ try{ $('ap').disabled=$('rj').disabled=true;
+      await api(`/orders/${encodeURIComponent(name)}/${verb}`,{method:'POST',body:'{}'});
+      closeDrawer(); loadFolder(); loadCounts();
+    }catch(e){ $('actErr').textContent=e.message; $('ap').disabled=$('rj').disabled=false; } };
+    $('ap').onclick=()=>act('approve'); $('rj').onclick=()=>act('reject');
+  }
 }
+function closeDrawer(){ $('drawer').classList.remove('open'); $('scrim').classList.remove('open'); }
+$('scrim').onclick=closeDrawer;
 
-/* ------------------------------ boot ----------------------------------- */
-$('signin').onclick = async () => {
-  $('loginErr').textContent = '';
-  try {
-    token = await signIn($('email').value.trim(), $('password').value);
-    $('who').textContent = $('email').value.trim();
-    $('login').hidden = true; $('topbar').hidden = false; $('app').hidden = false;
-    await loadList();
-  } catch (e) { $('loginErr').textContent = e.message; }
+$('signin').onclick=async()=>{
+  $('loginErr').textContent='';
+  try{
+    token=await signIn($('username').value.trim(), $('password').value);
+    const u=$('username').value.trim();
+    $('who').textContent=u; $('avatar').textContent=(u[0]||'?').toUpperCase();
+    $('login').hidden=true; $('app').hidden=false;
+    loadFolder(); loadCounts();
+  }catch(e){ $('loginErr').textContent=e.message; }
 };
-$('password').addEventListener('keydown', e => { if (e.key === 'Enter') $('signin').click(); });
-$('signout').onclick = () => location.reload();
+$('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('signin').click(); });
+$('signout').onclick=()=>location.reload();
 
-// Load deploy-time config, then unlock the sign-in form.
-(async function init() {
-  try {
-    const r = await fetch('config.json', { cache: 'no-store' });
-    if (r.ok) CONFIG = { ...CONFIG, ...(await r.json()) };
-  } catch { /* opened as a bare file — CONFIG stays empty */ }
-  if (!CONFIG.apiBase || !CONFIG.userPoolClientId) {
-    $('loginErr').textContent = 'Not configured yet — this page must be served by the deployed webapp stack.';
-    $('signin').disabled = true;
+(async function init(){
+  try{ const r=await fetch('config.json',{cache:'no-store'}); if(r.ok) CONFIG={...CONFIG,...(await r.json())}; }catch{}
+  if(!CONFIG.apiBase||!CONFIG.userPoolClientId){
+    $('loginErr').textContent='Not configured — this page must be served by the deployed webapp stack.';
+    $('signin').disabled=true;
   }
 })();
 </script>

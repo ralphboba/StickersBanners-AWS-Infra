@@ -13,7 +13,11 @@ import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-d
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
 
-const STATUSES = ['received', 'processing', 'manual_hold', 'done', 'failed'];
+// Statuses mirror the OrderDesk folders staff already know.
+const STATUSES = [
+  'in_queue', 'printing', 'proofing', 'awaiting_admin', 'awaiting_payment',
+  'pickup_ga', 'pickup_nj', 'pickup_tx', 'pickup_ca', 'completed',
+];
 
 const resp = (statusCode, obj) => ({
   statusCode,
@@ -34,7 +38,7 @@ export async function handler(event) {
   }
 
   // --- list by status (GSI1: GSI1PK = STATUS#<status>, newest first) ---
-  const status = event?.queryStringParameters?.status ?? 'processing';
+  const status = event?.queryStringParameters?.status ?? 'in_queue';
   if (!STATUSES.includes(status)) {
     return resp(400, { error: `status must be one of ${STATUSES.join(', ')}` });
   }
