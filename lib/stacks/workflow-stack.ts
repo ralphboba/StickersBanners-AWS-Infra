@@ -50,8 +50,8 @@ export class WorkflowStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: WorkflowStackProps) {
     super(scope, id, props);
 
-    const { config, cluster, vpc, securityGroup, taskDefinitions, jobsTable, ftpQueue, notifyQueue, intakeQueue } =
-      props;
+    const { config, cluster, vpc, securityGroup, taskDefinitions, jobsTable, notifyQueue, intakeQueue } = props;
+    void vpc;
 
     const orderPk = sfn.JsonPath.format('ORDER#{}', sfn.JsonPath.stringAt('$.orderName'));
 
@@ -161,13 +161,10 @@ export class WorkflowStack extends cdk.Stack {
     });
     waitForApproval.addCatch(markFailed, catchProps);
 
-    const sendToTransfer = new tasks.SqsSendMessage(this, 'SendToTransfer', {
-      queue: ftpQueue,
-      messageGroupId: 'transfer',
-      messageBody: sfn.TaskInput.fromJsonPathAt('$'),
-      resultPath: sfn.JsonPath.DISCARD,
-    });
-    sendToTransfer.addCatch(markFailed, catchProps);
+    // Deliver to the facility: run the ftp container (FTP for GA/NJ/TX/NV,
+    // Google Drive for CA). Synchronous like the other stages, so pickup status
+    // is only set after a successful transfer; failures are caught -> MarkFailed.
+    const transfer = runTask('Transfer', 'ftp');
 
     const notify = new tasks.SqsSendMessage(this, 'Notify', {
       queue: notifyQueue,
@@ -175,6 +172,7 @@ export class WorkflowStack extends cdk.Stack {
       messageBody: sfn.TaskInput.fromObject({
         type: 'order-complete',
         orderName: sfn.JsonPath.stringAt('$.orderName'),
+        facility: sfn.JsonPath.stringAt('$.routing.facility'),
       }),
       resultPath: sfn.JsonPath.DISCARD,
     });
@@ -193,7 +191,7 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.isPresent('$.routing.transport'),
           sfn.Condition.isNotNull('$.routing.transport'),
         ),
-        sendToTransfer.next(notify).next(markPickup),
+        transfer.next(notify).next(markPickup),
       )
       .otherwise(markHeld);
 
