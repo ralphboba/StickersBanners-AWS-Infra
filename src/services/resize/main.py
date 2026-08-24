@@ -73,12 +73,13 @@ def main():
             local = fetch_artwork(item, scratch, name)
             output = os.path.join(scratch, f"{name}v1.tif")
 
-            unit = item.get("unit") or infer_unit(
-                item.get("widthFt"), item.get("heightFt"), item.get("sku", ""))
+            width = item.get("width", item.get("widthFt"))
+            height = item.get("height", item.get("heightFt"))
+            unit = item.get("unit") or infer_unit(width, height, item.get("sku", ""))
             process_image(
                 file_path=local,
-                width=item.get("widthFt"),
-                height=item.get("heightFt"),
+                width=width,
+                height=height,
                 unit=unit,
                 output_path=output,
             )
