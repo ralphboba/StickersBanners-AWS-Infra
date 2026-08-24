@@ -46,6 +46,9 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   // Discord (ops alerts / notifications)
   { group: 'discord', key: 'webhook-url', description: 'Discord webhook URL for alerts' },
 
+  // Google Chat (order notifications: proof-ready / complete / failed)
+  { group: 'googlechat', key: 'webhook-url', description: 'Google Chat incoming-webhook URL for order notifications' },
+
   // Gmail (transactional email via app password)
   { group: 'gmail', key: 'user', description: 'Gmail account address' },
   { group: 'gmail', key: 'app-password', description: 'Gmail app password' },
