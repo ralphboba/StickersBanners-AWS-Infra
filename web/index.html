@@ -250,7 +250,7 @@ async function showDetail(name){
   const items=(o.items||[]).map(it=>`<div style="font-size:13px;padding:4px 0;color:var(--muted)">
     <b style="color:var(--ink)">${esc(it.quantity)}× ${esc(it.name||it.sku)}</b> — ${esc(it.width)}×${esc(it.height)} ${esc(it.unit||'ft')}, ${esc((it.finishingRaw)||'')}</div>`).join('');
   const proofUrl = CONFIG.cdnBase ? `${CONFIG.cdnBase}/${encodeURIComponent(name)}/` : null;
-  const canApprove = o.needsProof && o.status==='proofing';
+  const canSend = o.needsProof && o.status==='proofing';
   $('drawer').innerHTML=`
     <button class="x" onclick="closeDrawer()">×</button>
     <h3 class="mono">${esc(o.orderName)}</h3><div class="oid">${esc(f.name)}</div>
@@ -263,17 +263,15 @@ async function showDetail(name){
     </dl>
     <div style="border-top:1px solid var(--line);padding-top:12px">${items||'<span style="color:var(--faint)">No line items</span>'}</div>
     ${proofUrl&&o.needsProof?`<p style="margin-top:12px"><a href="${proofUrl}" target="_blank" rel="noopener" style="color:var(--accent)">Open proof viewer ↗</a></p>`:''}
-    ${canApprove?`<div class="proofbox"><div class="lab">Waiting for proof approval.</div>
-      <div class="btns"><button class="btn approve" id="ap">Approve proof</button><button class="btn reject" id="rj">Reject</button></div>
-      <div class="note">Approve → moves to Printing. Reject → holds &amp; alerts the team.</div>
+    ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
+      <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
       <div class="err" id="actErr"></div></div>`:''}`;
   $('drawer').classList.add('open'); $('scrim').classList.add('open');
-  if(canApprove){
-    const act=async(verb)=>{ try{ $('ap').disabled=$('rj').disabled=true;
-      await api(`/orders/${encodeURIComponent(name)}/${verb}`,{method:'POST',body:'{}'});
+  if(canSend){
+    $('send').onclick=async()=>{ try{ $('send').disabled=true;
+      await api(`/orders/${encodeURIComponent(name)}/approve`,{method:'POST',body:'{}'});
       closeDrawer(); loadFolder(); loadCounts();
-    }catch(e){ $('actErr').textContent=e.message; $('ap').disabled=$('rj').disabled=false; } };
-    $('ap').onclick=()=>act('approve'); $('rj').onclick=()=>act('reject');
+    }catch(e){ $('actErr').textContent=e.message; $('send').disabled=false; } };
   }
 }
 function closeDrawer(){ $('drawer').classList.remove('open'); $('scrim').classList.remove('open'); }
