@@ -26,7 +26,8 @@ def create_drive_folder(drive, name, parent_folder_id):
     meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
     if parent_folder_id:
         meta["parents"] = [parent_folder_id]
-    folder = drive.files().create(body=meta, fields="id").execute()
+    # supportsAllDrives is required for Shared Drive IDs (CA_DRIVE_ID is one).
+    folder = drive.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
     return folder.get("id")
 
 
@@ -36,7 +37,7 @@ def _upload_single_file(drive, local_path, file_name, drive_root_id):
         media = MediaFileUpload(local_path, mimetype=mime_type, resumable=True)
         f = drive.files().create(
             body={"name": file_name, "parents": [drive_root_id]},
-            media_body=media, fields="id").execute()
+            media_body=media, fields="id", supportsAllDrives=True).execute()
         return {"success": True, "file": file_name, "id": f.get("id")}
     except Exception as e:  # per-file failure recorded, not fatal (legacy behaviour)
         return {"success": False, "file": file_name, "error": str(e)}

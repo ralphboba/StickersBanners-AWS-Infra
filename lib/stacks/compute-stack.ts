@@ -86,7 +86,9 @@ export class ComputeStack extends cdk.Stack {
     this.notifyConsumer = new lambda.Function(this, 'NotifyConsumer', {
       ...base,
       functionName: `${config.prefix}-notify-consumer`,
-      code: lambda.Code.fromAsset(path.join(SRC, 'notify-consumer')),
+      // Bundle src root so it can import shared/zendesk + shared/secrets.
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/notify-consumer/index.handler',
       description: 'Email the customer (Zendesk) when a proof is ready',
       environment: {
         // dzi CloudFront base for the customer proof link (optional).
