@@ -46,8 +46,10 @@ export class SchedulerStack extends cdk.Stack {
       target: new targets.LambdaInvoke(pollerFn, {
         retryAttempts: 2,
       }),
-      // OrderDesk has no outbound webhook, so polling is the primary intake — ON.
-      enabled: true,
+      // Polling is the primary intake, but it ships OFF: enabling it starts
+      // auto-processing REAL QTS orders straight to production (FTP/Drive) and
+      // emailing real customers. Flip to ENABLED only as a deliberate go-live.
+      enabled: false,
     });
 
     new cdk.CfnOutput(this, 'PollerScheduleName', {

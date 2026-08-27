@@ -28,9 +28,9 @@ describe('SchedulerStack', () => {
     synth().resourceCountIs('AWS::Scheduler::Schedule', 1);
   });
 
-  test('ships ENABLED (polling is the primary intake)', () => {
+  test('ships DISABLED (go-live is a deliberate flip)', () => {
     synth().hasResourceProperties('AWS::Scheduler::Schedule', {
-      State: 'ENABLED',
+      State: 'DISABLED',
     });
   });
 
