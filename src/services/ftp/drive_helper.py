@@ -34,7 +34,11 @@ def create_drive_folder(drive, name, parent_folder_id):
 def _upload_single_file(drive, local_path, file_name, drive_root_id):
     try:
         mime_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
-        media = MediaFileUpload(local_path, mimetype=mime_type, resumable=True)
+        # Simple (non-resumable) upload: one multipart request, same request
+        # style as the folder-create call that succeeds. Resumable uploads open a
+        # separate chunked session that intermittently fails with an httplib2 TLS
+        # error ("[SSL] record layer failure") from the Fargate task, so avoid it.
+        media = MediaFileUpload(local_path, mimetype=mime_type, resumable=False)
         f = drive.files().create(
             body={"name": file_name, "parents": [drive_root_id]},
             media_body=media, fields="id", supportsAllDrives=True).execute()
