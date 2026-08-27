@@ -120,6 +120,7 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   jobsTable: databaseStack.jobsTable,
   intakeQueue: queueStack.queues['intake'],
   notifyQueue: queueStack.queues['notify'],
+  proofCdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
   description: `StickersBanners Lambda compute (${config.env})`,
 });
 

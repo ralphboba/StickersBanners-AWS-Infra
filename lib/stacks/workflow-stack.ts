@@ -125,13 +125,15 @@ export class WorkflowStack extends cdk.Stack {
     const finish = runTask('Finish', 'finish');
     const proof = runTask('Proof', 'proof');
 
-    // Tell the reviewer a proof is ready (no token; just a ping).
+    // Email the customer (via Zendesk) that their proof is ready to review.
     const notifyProofReady = new tasks.SqsSendMessage(this, 'NotifyProofReady', {
       queue: notifyQueue,
       messageGroupId: 'notify',
       messageBody: sfn.TaskInput.fromObject({
         type: 'proof-ready',
         orderName: sfn.JsonPath.stringAt('$.orderName'),
+        customerEmail: sfn.JsonPath.stringAt('$.customer.email'),
+        customerName: sfn.JsonPath.stringAt('$.customer.name'),
       }),
       resultPath: sfn.JsonPath.DISCARD,
     });

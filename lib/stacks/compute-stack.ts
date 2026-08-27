@@ -15,6 +15,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly jobsTable: dynamodb.ITable;
   readonly intakeQueue: sqs.IQueue;
   readonly notifyQueue: sqs.IQueue;
+  /** dzi CloudFront base URL, for the customer proof link in the Zendesk email. */
+  readonly proofCdnBase?: string;
 }
 
 const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
@@ -74,12 +76,16 @@ export class ComputeStack extends cdk.Stack {
     jobsTable.grantWriteData(this.poller);
     this.grantSecretsRead(this.poller, config);
 
-    // --- notify-consumer: drains notify queue, reads Discord/Gmail secrets ---
+    // --- notify-consumer: drains notify queue, emails proof-ready via Zendesk ---
     this.notifyConsumer = new lambda.Function(this, 'NotifyConsumer', {
       ...base,
       functionName: `${config.prefix}-notify-consumer`,
       code: lambda.Code.fromAsset(path.join(SRC, 'notify-consumer')),
-      description: 'Send Discord/email notifications from the notify queue',
+      description: 'Email the customer (Zendesk) when a proof is ready',
+      environment: {
+        // dzi CloudFront base for the customer proof link (optional).
+        PROOF_CDN_BASE: props.proofCdnBase ?? '',
+      },
     });
     // SqsEventSource also grants Receive/Delete on the queue.
     this.notifyConsumer.addEventSource(
