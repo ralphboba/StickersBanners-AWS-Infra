@@ -22,7 +22,7 @@ import tempfile
 import boto3
 import ftputil
 
-from drive_helper import get_drive, upload_print_folder
+from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
 
@@ -128,8 +128,9 @@ def main():
             sa_path = os.path.join(scratch, "service_account.json")
             with open(sa_path, "w") as f:
                 f.write(sa_json)
-            drive = get_drive(sa_path)
-            result = upload_print_folder(drive, local_dir, ca_drive_id, max_workers=4)
+            # Each upload worker builds its own Drive service from this file
+            # (the client is not thread-safe).
+            result = upload_print_folder(sa_path, local_dir, ca_drive_id, max_workers=4)
             if result["failed"]:
                 raise RuntimeError(f"CA Drive upload incomplete: {result}")
             detail = f"CA Drive folder {result['folder_id']} ({result['successful']} files)"
