@@ -14,3 +14,7 @@ scripts/parameters.*.env
 # Google service account key files
 *service_account*.json
 *service-account*.json
+
+# Python build artifacts
+__pycache__/
+*.pyc
