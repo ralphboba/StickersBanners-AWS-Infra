@@ -121,6 +121,7 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   intakeQueue: queueStack.queues['intake'],
   notifyQueue: queueStack.queues['notify'],
   proofCdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
+  qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
   description: `StickersBanners Lambda compute (${config.env})`,
 });
 
@@ -193,6 +194,7 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   env,
   config,
   pollerFn: computeStack.poller,
+  intervalMinutes: 5, // primary intake — poll the QTS folder every 5 min
   description: `StickersBanners schedules (${config.env})`,
 });
 

@@ -40,14 +40,14 @@ export class SchedulerStack extends cdk.Stack {
     const { config, pollerFn, intervalMinutes = 15 } = props;
 
     this.pollerSchedule = new scheduler.Schedule(this, 'PollerFallback', {
-      scheduleName: `${config.prefix}-poller-fallback`,
-      description: 'Fallback OrderDesk poll (safety net for missed webhooks)',
+      scheduleName: `${config.prefix}-poller`,
+      description: 'Primary intake: poll the OrderDesk QTS folder for ready orders',
       schedule: scheduler.ScheduleExpression.rate(Duration.minutes(intervalMinutes)),
       target: new targets.LambdaInvoke(pollerFn, {
         retryAttempts: 2,
       }),
-      // Ships OFF — flip to ENABLED once the poller logic + credentials are ready.
-      enabled: false,
+      // OrderDesk has no outbound webhook, so polling is the primary intake — ON.
+      enabled: true,
     });
 
     new cdk.CfnOutput(this, 'PollerScheduleName', {

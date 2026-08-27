@@ -28,9 +28,9 @@ describe('SchedulerStack', () => {
     synth().resourceCountIs('AWS::Scheduler::Schedule', 1);
   });
 
-  test('ships DISABLED by default (safe until poller logic is ready)', () => {
+  test('ships ENABLED (polling is the primary intake)', () => {
     synth().hasResourceProperties('AWS::Scheduler::Schedule', {
-      State: 'DISABLED',
+      State: 'ENABLED',
     });
   });
 

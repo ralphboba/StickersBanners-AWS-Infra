@@ -17,6 +17,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly notifyQueue: sqs.IQueue;
   /** dzi CloudFront base URL, for the customer proof link in the Zendesk email. */
   readonly proofCdnBase?: string;
+  /** OrderDesk folder id the poller pulls ready orders from (QTS). */
+  readonly qtsFolderId?: string;
 }
 
 const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
@@ -60,20 +62,24 @@ export class ComputeStack extends cdk.Stack {
       tracing: lambda.Tracing.ACTIVE,
     };
 
-    // --- poller: enqueue intake + write order state, reads OrderDesk secrets ---
+    // --- poller: pull QTS-folder orders from OrderDesk -> clean -> enqueue ---
+    // Bundles src root so it can reuse shared/orderdesk (cleanOrder).
     this.poller = new lambda.Function(this, 'Poller', {
       ...base,
       functionName: `${config.prefix}-poller`,
-      code: lambda.Code.fromAsset(path.join(SRC, 'poller')),
-      timeout: Duration.seconds(60),
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/poller/index.handler',
+      timeout: Duration.seconds(120),
       environment: {
         INTAKE_QUEUE_URL: intakeQueue.queueUrl,
         JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+        QTS_FOLDER_ID: props.qtsFolderId ?? '',
       },
-      description: 'Poll OrderDesk, clean jobs, enqueue intake',
+      description: 'Poll the OrderDesk QTS folder, clean jobs, enqueue intake',
     });
     intakeQueue.grantSendMessages(this.poller);
-    jobsTable.grantWriteData(this.poller);
+    jobsTable.grantReadWriteData(this.poller); // read for dedupe, write META
     this.grantSecretsRead(this.poller, config);
 
     // --- notify-consumer: drains notify queue, emails proof-ready via Zendesk ---
