@@ -198,6 +198,8 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   // Demo feed is ENABLED (synthetic DEMO-* orders only); real poll stays OFF.
   demoFeederFn: computeStack.demoFeeder,
   demoIntervalMinutes: 10,
+  mirrorIntervalMinutes: 2, // display-only real-order sync — snappy for demos
+
   description: `StickersBanners schedules (${config.env})`,
 });
 

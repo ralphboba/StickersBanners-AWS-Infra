@@ -286,8 +286,21 @@ $('signin').onclick=async()=>{
     $('who').textContent=u; $('avatar').textContent=(u[0]||'?').toUpperCase();
     $('login').hidden=true; $('app').hidden=false;
     loadFolder(); loadCounts();
+    startAutoRefresh();
   }catch(e){ $('loginErr').textContent=e.message; }
 };
+
+// Auto-refresh: new orders arrive on their own, so re-pull counts + the current
+// folder every 30s. Skips while a detail drawer is open so it isn't disruptive.
+let refreshTimer=null;
+function startAutoRefresh(){
+  if(refreshTimer) return;
+  refreshTimer=setInterval(()=>{
+    if(document.hidden) return;
+    if($('drawer').classList.contains('open')) { loadCounts(); return; }
+    loadFolder(); loadCounts();
+  }, 30000);
+}
 $('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('signin').click(); });
 $('signout').onclick=()=>location.reload();
 
