@@ -299,7 +299,7 @@ function startAutoRefresh(){
     if(document.hidden) return;
     if($('drawer').classList.contains('open')) { loadCounts(); return; }
     loadFolder(); loadCounts();
-  }, 30000);
+  }, 20000);
 }
 $('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('signin').click(); });
 $('signout').onclick=()=>location.reload();
