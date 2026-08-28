@@ -16,7 +16,7 @@ const JOBS_TABLE = process.env.JOBS_TABLE;
 // Statuses mirror the OrderDesk folders staff already know.
 const STATUSES = [
   'in_queue', 'printing', 'proofing', 'awaiting_admin', 'awaiting_payment',
-  'pickup_ga', 'pickup_nj', 'pickup_tx', 'pickup_ca', 'completed',
+  'pickup_ga', 'pickup_nj', 'pickup_tx', 'pickup_nv', 'pickup_ca', 'completed',
 ];
 
 const resp = (statusCode, obj) => ({
@@ -42,15 +42,23 @@ export async function handler(event) {
   if (!STATUSES.includes(status)) {
     return resp(400, { error: `status must be one of ${STATUSES.join(', ')}` });
   }
-  const res = await ddb.send(
-    new QueryCommand({
-      TableName: JOBS_TABLE,
-      IndexName: 'GSI1',
-      KeyConditionExpression: 'GSI1PK = :s',
-      ExpressionAttributeValues: { ':s': `STATUS#${status}` },
-      ScanIndexForward: false, // newest first
-      Limit: 100,
-    }),
-  );
-  return resp(200, { status, count: res.Items?.length ?? 0, orders: res.Items ?? [] });
+  // Page through the whole status — no 100-item cap, so the count grows with
+  // the real order volume.
+  const orders = [];
+  let ExclusiveStartKey;
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: JOBS_TABLE,
+        IndexName: 'GSI1',
+        KeyConditionExpression: 'GSI1PK = :s',
+        ExpressionAttributeValues: { ':s': `STATUS#${status}` },
+        ScanIndexForward: false, // newest first
+        ExclusiveStartKey,
+      }),
+    );
+    orders.push(...(res.Items ?? []));
+    ExclusiveStartKey = res.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return resp(200, { status, count: orders.length, orders });
 }

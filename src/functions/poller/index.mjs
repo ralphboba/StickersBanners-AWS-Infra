@@ -8,7 +8,9 @@
 
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, ScanCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 
@@ -77,10 +79,25 @@ export async function handler(event = {}) {
   // orders arriving — but NEVER enqueues, so the pipeline never runs: no resize/
   // finish/transfer, no email, no OrderDesk write. Purely "orders coming in".
   if (event?.mirror === true) {
+    // Page through the WHOLE QTS folder (no 100 cap) so In Queue grows with the
+    // real volume.
+    const all = [];
+    const pageSize = 500;
+    for (let offset = 0; ; offset += pageSize) {
+      const pu = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${pageSize}&offset=${offset}`;
+      const pr = await fetch(pu, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
+      if (!pr.ok) throw new Error(`OrderDesk ${pr.status}: ${(await pr.text()).slice(0, 200)}`);
+      const page = (await pr.json()).orders ?? [];
+      all.push(...page);
+      if (page.length < pageSize) break;
+    }
+
+    const present = new Set();
     let mirrored = 0;
-    for (const order of orders) {
+    for (const order of all) {
       const job = cleanOrder(order);
       if (!job.orderName) continue;
+      present.add(job.orderName);
       await ddb.send(new PutCommand({
         TableName: JOBS_TABLE,
         Item: {
@@ -88,15 +105,36 @@ export async function handler(event = {}) {
           GSI1PK: 'STATUS#in_queue', GSI1SK: job.createdAt,
           status: 'in_queue', mirror: true, ...job,
         },
-        // Only create/refresh a mirror row; never overwrite an order that is
-        // actually being processed (defensive — real orders are never processed).
+        // Only create/refresh a mirror row; never touch a processed order.
         ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
         ExpressionAttributeValues: { ':t': true },
       })).catch((e) => { if (e?.name !== 'ConditionalCheckFailedException') throw e; });
       mirrored += 1;
     }
-    console.log(JSON.stringify({ msg: 'mirror sync (display-only)', polled: orders.length, mirrored }));
-    return { mirror: true, polled: orders.length, mirrored };
+
+    // Prune mirror rows whose order has left the QTS folder, so In Queue reflects
+    // the current folder rather than accumulating stale orders.
+    let pruned = 0;
+    let ExclusiveStartKey;
+    do {
+      const scan = await ddb.send(new ScanCommand({
+        TableName: JOBS_TABLE,
+        FilterExpression: 'SK = :meta AND mirror = :t',
+        ExpressionAttributeValues: { ':meta': 'META', ':t': true },
+        ProjectionExpression: 'PK, orderName',
+        ExclusiveStartKey,
+      }));
+      for (const it of scan.Items ?? []) {
+        if (!present.has(it.orderName)) {
+          await ddb.send(new DeleteCommand({ TableName: JOBS_TABLE, Key: { PK: it.PK, SK: 'META' } }));
+          pruned += 1;
+        }
+      }
+      ExclusiveStartKey = scan.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+
+    console.log(JSON.stringify({ msg: 'mirror sync (display-only)', polled: all.length, mirrored, pruned }));
+    return { mirror: true, polled: all.length, mirrored, pruned };
   }
 
   if (dryRun) {
