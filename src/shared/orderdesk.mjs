@@ -16,7 +16,24 @@ const INTSKU = [
   'SKU-DXB-B', 'SKU-DXB', 'SKUDXBB', 'SKUDXBBB',
 ];
 
-// Finishing strings (whitespace-stripped, lowercased) that carry grommets.
+/**
+ * Normalize an OrderDesk finishing label to a comparison key.
+ *
+ * Legacy getFinishMode only stripped whitespace, but the live store's product
+ * options now wrap modifiers in "&" and "( )" — e.g. "Hem & Grommets",
+ * "Pole Pockets (Top Only)" — which the whitespace-only key never matched, so
+ * ~half of real orders fell through to "no finishing". We strip "&" and the
+ * parentheses (keeping "/", which the "No Hem / Grommets Only" key relies on)
+ * so both the old and current label formats map to the same finishing.
+ */
+function normalizeFinish(finish) {
+  return String(finish ?? '')
+    .toLowerCase()
+    .replace(/[&()]/g, '')
+    .replace(/\s+/g, '');
+}
+
+// Finishing keys (normalized) that carry grommets → get size-based counts.
 const GROMMETS_FINISHES = new Set([
   'hemgrommets',
   'hemgrommetsourstandard',
@@ -24,6 +41,8 @@ const GROMMETS_FINISHES = new Set([
   'nohem/grommetsonly',
   'nohemgrommetsonly',
   'bravotabswithgrommets',
+  'grommetwithbravotab',
+  'grommetwithbravotabtoponly',
 ]);
 
 const NOFINISHSKU = ['SKUAB', 'SKUST'];
@@ -66,7 +85,7 @@ export function resolveDimensions(sku, productName, rawWidth, rawHeight) {
  * known finishing set. Returns the finishing object (no quantity/counts yet).
  */
 export function getFinishMode(finish) {
-  const key = String(finish ?? '').toLowerCase().replace(/\s+/g, '');
+  const key = normalizeFinish(finish);
   switch (key) {
     case 'polepocketstopandbottom':
     case 'pptb':
@@ -80,12 +99,16 @@ export function getFinishMode(finish) {
     case 'hemgrommets':
     case 'hemgrommetsourstandard':
     case 'bravotabswithgrommets':
+    // Live store spellings for bravo-tab grommets (not in the legacy switch).
+    case 'grommetwithbravotab':
+    case 'grommetwithbravotabtoponly':
       return { grommets: { sides: ['top', 'left', 'right', 'bottom'] } };
     case 'nohem/grommetsonly':
     case 'nohem/grommetsonlyy':
     case 'grommetsonly':
       return { grommets: { sides: ['top', 'left', 'right', 'bottom'] }, isOnly: true, descSuf: 'GO' };
     case 'nohemnogrommets':
+    case 'cutonly': // live store spelling; cut only = no image finishing (CO)
       return { descSuf: 'CO' };
     case 'hemonly':
       return { descSuf: 'HO' };
@@ -132,7 +155,7 @@ export function getGrommetsCount2(width, height, unit) {
  */
 export function getFinishObj(finish, width, height, unit, quantity) {
   const finishObj = getFinishMode(finish);
-  const key = String(finish ?? '').toLowerCase().replace(/\s+/g, '');
+  const key = normalizeFinish(finish);
   if (GROMMETS_FINISHES.has(key) && finishObj.grommets) {
     const [widthG, heightG] = getGrommetsCount2(parseInt(width, 10), parseInt(height, 10), unit);
     finishObj.grommets.widthGrommets = widthG;
