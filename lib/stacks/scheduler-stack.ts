@@ -16,6 +16,8 @@ export interface SchedulerStackProps extends cdk.StackProps {
   readonly demoFeederFn?: lambda.IFunction;
   /** How often the demo feeder runs (default 15 min). */
   readonly demoIntervalMinutes?: number;
+  /** How often the display-only real-order mirror sync runs (default 5 min). */
+  readonly mirrorIntervalMinutes?: number;
 }
 
 /**
@@ -38,11 +40,15 @@ export interface SchedulerStackProps extends cdk.StackProps {
 export class SchedulerStack extends cdk.Stack {
   public readonly pollerSchedule: scheduler.Schedule;
   public readonly demoSchedule?: scheduler.Schedule;
+  public readonly mirrorSchedule: scheduler.Schedule;
 
   constructor(scope: Construct, id: string, props: SchedulerStackProps) {
     super(scope, id, props);
 
-    const { config, pollerFn, intervalMinutes = 15, demoFeederFn, demoIntervalMinutes = 15 } = props;
+    const {
+      config, pollerFn, intervalMinutes = 15,
+      demoFeederFn, demoIntervalMinutes = 15, mirrorIntervalMinutes = 5,
+    } = props;
 
     this.pollerSchedule = new scheduler.Schedule(this, 'PollerFallback', {
       scheduleName: `${config.prefix}-poller`,
@@ -76,5 +82,20 @@ export class SchedulerStack extends cdk.Stack {
       });
       new cdk.CfnOutput(this, 'DemoScheduleName', { value: this.demoSchedule.scheduleName });
     }
+
+    // Mirror sync — ENABLED. DISPLAY-ONLY: shows real QTS orders arriving on the
+    // dashboard without ever processing them (poller mirror branch never
+    // enqueues). Distinct from the (disabled) real process-poll above.
+    this.mirrorSchedule = new scheduler.Schedule(this, 'MirrorSync', {
+      scheduleName: `${config.prefix}-mirror-sync`,
+      description: 'Display-only: mirror real QTS orders onto the dashboard',
+      schedule: scheduler.ScheduleExpression.rate(Duration.minutes(mirrorIntervalMinutes)),
+      target: new targets.LambdaInvoke(pollerFn, {
+        retryAttempts: 0,
+        input: scheduler.ScheduleTargetInput.fromObject({ mirror: true }),
+      }),
+      enabled: true,
+    });
+    new cdk.CfnOutput(this, 'MirrorScheduleName', { value: this.mirrorSchedule.scheduleName });
   }
 }

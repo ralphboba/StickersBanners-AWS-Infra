@@ -30,14 +30,21 @@ const DEMO_ARTWORK = process.env.DEMO_ARTWORK || 'TEST001/art.png';
 const BUSY = new Set(['in_queue', 'printing', 'proofing']);
 
 // Variety so the board looks like real traffic (size, finishing, destination).
+// `fac` gives each demo order an explicit facility so the board spreads across
+// all pickup folders — a DEMO-only convenience; real routing (routeOrder) is
+// untouched. fac:null leaves it UNROUTED so the "Awaiting Admin" state shows too.
 const VARIANTS = [
-  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '10', H: '3', finish: 'Hem & Grommets', state: 'CA', zip: '90001' },
-  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '6', H: '4', finish: 'Pole Pockets (Top and Bottom)', state: 'NV', zip: '89101' },
-  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '4', H: '2', finish: 'No Hem / Grommets Only', state: 'GA', zip: '30301' },
-  { name: "8'x8' Step & Repeat Banner Only", sku: 'SKUSR08X08BB', W: '8', H: '8', finish: 'Pole Pockets (Top Only)', state: 'CA', zip: '92101' },
-  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '3', H: '6', finish: 'Hem & Grommets', state: 'TX', zip: '75201' },
-  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '5', H: '2', finish: 'Cut Only', state: 'NJ', zip: '07001' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '10', H: '3', finish: 'Hem & Grommets', fac: 'CA' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '6', H: '4', finish: 'Pole Pockets (Top and Bottom)', fac: 'NV' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '4', H: '2', finish: 'No Hem / Grommets Only', fac: 'GA' },
+  { name: "8'x8' Step & Repeat Banner Only", sku: 'SKUSR08X08BB', W: '8', H: '8', finish: 'Pole Pockets (Top Only)', fac: 'NJ' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '3', H: '6', finish: 'Hem & Grommets', fac: 'TX' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '5', H: '2', finish: 'Cut Only', fac: null },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '8', H: '4', finish: 'Hem & Grommets', fac: 'CA' },
+  { name: 'Custom Vinyl Banners', sku: 'SKUVB', W: '2', H: '8', finish: 'Pole Pockets (Top Only)', fac: 'GA' },
 ];
+
+const TRANSPORT = { CA: 'GDRIVE', GA: 'FTP', NJ: 'FTP', TX: 'FTP', NV: 'FTP' };
 
 function buildDemoJob(slot) {
   const v = VARIANTS[(slot - 1) % VARIANTS.length];
@@ -45,7 +52,7 @@ function buildDemoJob(slot) {
   const order = {
     source_id: orderName, id: orderName, date_added: new Date().toISOString(),
     email: 'demo@stickersbanners.invalid', payment_status: 'paid',
-    shipping: { first_name: 'Demo', last_name: `#${slot}`, state: v.state, postal_code: v.zip },
+    shipping: { first_name: 'Demo', last_name: `#${slot}`, state: v.fac ?? 'CA', postal_code: '00000' },
     shipping_method: 'FedEx Ground', order_total: 1, product_total: 1, currency: 'USD',
     // half of them require a proof so the board also shows the "proofing" stage
     customer_note: slot % 2 === 0 ? 'proof' : '',
@@ -58,6 +65,11 @@ function buildDemoJob(slot) {
   const job = cleanOrder(order);
   job.items.forEach((it) => { it.artworkUrl = DEMO_ARTWORK; });
   job.demo = true; // belt-and-suspenders alongside the DEMO- name guard
+  // DEMO-only: force an explicit facility so the board spreads across pickup
+  // folders. fac:null stays UNROUTED (-> Awaiting Admin). Real orders unaffected.
+  if (v.fac) {
+    job.routing = { facility: v.fac, transport: TRANSPORT[v.fac], pickupStatus: `pickup_${v.fac.toLowerCase()}` };
+  }
   return job;
 }
 

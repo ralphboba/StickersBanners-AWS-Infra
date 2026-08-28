@@ -24,13 +24,21 @@ function synth(intervalMinutes?: number) {
 }
 
 describe('SchedulerStack', () => {
-  test('creates one EventBridge schedule', () => {
-    synth().resourceCountIs('AWS::Scheduler::Schedule', 1);
+  test('creates the real-poll and mirror schedules', () => {
+    synth().resourceCountIs('AWS::Scheduler::Schedule', 2);
   });
 
-  test('ships DISABLED (go-live is a deliberate flip)', () => {
+  test('the real process-poll ships DISABLED (go-live is a deliberate flip)', () => {
     synth().hasResourceProperties('AWS::Scheduler::Schedule', {
+      ScheduleExpression: 'rate(15 minutes)',
       State: 'DISABLED',
+    });
+  });
+
+  test('the display-only mirror sync ships ENABLED', () => {
+    synth().hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-mirror-sync',
+      State: 'ENABLED',
     });
   });
 

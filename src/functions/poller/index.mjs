@@ -13,7 +13,10 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 
 const sqs = new SQSClient({});
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+// Real orders can carry undefined fields (missing totals/uploads); drop them.
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
@@ -68,6 +71,33 @@ export async function handler(event = {}) {
   });
   if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const { orders = [] } = await res.json();
+
+  // mirror: DISPLAY-ONLY sync of real QTS orders onto the dashboard. Upserts a
+  // META record (status in_queue, mirror:true) for each real order so staff SEE
+  // orders arriving — but NEVER enqueues, so the pipeline never runs: no resize/
+  // finish/transfer, no email, no OrderDesk write. Purely "orders coming in".
+  if (event?.mirror === true) {
+    let mirrored = 0;
+    for (const order of orders) {
+      const job = cleanOrder(order);
+      if (!job.orderName) continue;
+      await ddb.send(new PutCommand({
+        TableName: JOBS_TABLE,
+        Item: {
+          PK: `ORDER#${job.orderName}`, SK: 'META',
+          GSI1PK: 'STATUS#in_queue', GSI1SK: job.createdAt,
+          status: 'in_queue', mirror: true, ...job,
+        },
+        // Only create/refresh a mirror row; never overwrite an order that is
+        // actually being processed (defensive — real orders are never processed).
+        ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
+        ExpressionAttributeValues: { ':t': true },
+      })).catch((e) => { if (e?.name !== 'ConditionalCheckFailedException') throw e; });
+      mirrored += 1;
+    }
+    console.log(JSON.stringify({ msg: 'mirror sync (display-only)', polled: orders.length, mirrored }));
+    return { mirror: true, polled: orders.length, mirrored };
+  }
 
   if (dryRun) {
     const inspected = orders.map((order) => {

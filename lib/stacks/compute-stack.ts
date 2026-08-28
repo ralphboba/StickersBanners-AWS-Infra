@@ -160,7 +160,7 @@ export class ComputeStack extends cdk.Stack {
       environment: {
         INTAKE_QUEUE_URL: intakeQueue.queueUrl,
         JOBS_TABLE: jobsTable.tableName,
-        DEMO_COUNT: '5',
+        DEMO_COUNT: '8',
       },
       description: 'Feed synthetic DEMO-* orders through the pipeline (sandbox)',
     });
