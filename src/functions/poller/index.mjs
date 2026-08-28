@@ -52,16 +52,42 @@ async function enqueue(job) {
   );
 }
 
-export async function handler() {
+export async function handler(event = {}) {
   const storeId = await getSecret('orderdesk', 'store-id');
   const apiKey = await getSecret('orderdesk', 'api-key');
 
-  const url = `https://app.orderdesk.me/api/v2/orders?folder_id=${QTS_FOLDER_ID}&limit=100`;
+  // dryRun: fetch + clean real orders and RETURN the computed finishing/dims,
+  // writing nothing and enqueuing nothing. Read-only — cannot affect real orders.
+  const dryRun = event?.dryRun === true;
+  const limit = Number(event?.limit) || 100;
+  const folderId = event?.folderId || QTS_FOLDER_ID;
+
+  const url = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${limit}`;
   const res = await fetch(url, {
     headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey },
   });
   if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const { orders = [] } = await res.json();
+
+  if (dryRun) {
+    const inspected = orders.map((order) => {
+      const job = cleanOrder(order);
+      return {
+        orderName: job.orderName,
+        routing: job.routing,
+        items: job.items.map((it) => ({
+          sku: it.sku,
+          name: it.name,
+          width: it.width,
+          height: it.height,
+          unit: it.unit,
+          finishingRaw: it.finishingRaw,
+          finishingObj: it.finishingObj,
+        })),
+      };
+    });
+    return { dryRun: true, polled: orders.length, inspected };
+  }
 
   let enqueued = 0;
   let skipped = 0;
