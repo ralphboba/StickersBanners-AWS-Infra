@@ -11,6 +11,12 @@ import { sendProofReadyEmail } from '../../shared/zendesk.mjs';
 
 const PROOF_CDN_BASE = process.env.PROOF_CDN_BASE ?? '';
 
+// Safety net: synthetic demo/test orders (DEMO-*, ZZ-*) never send a real
+// customer email, regardless of any other flag. Real orders are unaffected.
+function isDemoOrder(name) {
+  return typeof name === 'string' && /^(DEMO-|ZZ-)/i.test(name);
+}
+
 /** Best-effort proof link for the customer (single-item review image). */
 function proofUrl(orderName) {
   if (!PROOF_CDN_BASE) return undefined;
@@ -33,7 +39,10 @@ export async function handler(event) {
     }
 
     try {
-      if (n.type === 'proof-ready') {
+      if (n.type === 'proof-ready' && isDemoOrder(n.orderName)) {
+        // Demo order: show the flow on the dashboard, but send no real email.
+        console.log(JSON.stringify({ msg: 'proof email skipped (demo)', orderName: n.orderName }));
+      } else if (n.type === 'proof-ready') {
         await sendProofReadyEmail({
           orderName: n.orderName,
           customerEmail: n.customerEmail,

@@ -12,6 +12,10 @@ export interface SchedulerStackProps extends cdk.StackProps {
   readonly pollerFn: lambda.IFunction;
   /** How often the fallback poll runs (default 15 min). */
   readonly intervalMinutes?: number;
+  /** The demo-feeder Lambda (synthetic orders); enabled schedule if provided. */
+  readonly demoFeederFn?: lambda.IFunction;
+  /** How often the demo feeder runs (default 15 min). */
+  readonly demoIntervalMinutes?: number;
 }
 
 /**
@@ -33,11 +37,12 @@ export interface SchedulerStackProps extends cdk.StackProps {
  */
 export class SchedulerStack extends cdk.Stack {
   public readonly pollerSchedule: scheduler.Schedule;
+  public readonly demoSchedule?: scheduler.Schedule;
 
   constructor(scope: Construct, id: string, props: SchedulerStackProps) {
     super(scope, id, props);
 
-    const { config, pollerFn, intervalMinutes = 15 } = props;
+    const { config, pollerFn, intervalMinutes = 15, demoFeederFn, demoIntervalMinutes = 15 } = props;
 
     this.pollerSchedule = new scheduler.Schedule(this, 'PollerFallback', {
       scheduleName: `${config.prefix}-poller`,
@@ -56,5 +61,20 @@ export class SchedulerStack extends cdk.Stack {
       value: this.pollerSchedule.scheduleName,
       description: 'DISABLED by default — enable after seeding OrderDesk credentials',
     });
+
+    // Demo feed — ENABLED. Injects synthetic DEMO-* orders into the real
+    // pipeline so the dashboard shows the system working, with no real-world
+    // effect (no real OrderDesk read/write, no customer email, no transfer).
+    // This is deliberately separate from the (disabled) real poll above.
+    if (demoFeederFn) {
+      this.demoSchedule = new scheduler.Schedule(this, 'DemoFeed', {
+        scheduleName: `${config.prefix}-demo-feed`,
+        description: 'Sandbox: feed synthetic DEMO-* orders through the pipeline',
+        schedule: scheduler.ScheduleExpression.rate(Duration.minutes(demoIntervalMinutes)),
+        target: new targets.LambdaInvoke(demoFeederFn, { retryAttempts: 0 }),
+        enabled: true,
+      });
+      new cdk.CfnOutput(this, 'DemoScheduleName', { value: this.demoSchedule.scheduleName });
+    }
   }
 }

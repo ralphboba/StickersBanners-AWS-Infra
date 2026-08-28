@@ -109,10 +109,25 @@ def record_step(order_name, state, detail=""):
     })
 
 
+def is_demo_order(name):
+    """Synthetic demo/test orders (DEMO-*, ZZ-*) never touch real FTP/Drive."""
+    return isinstance(name, str) and name.upper().startswith(("DEMO-", "ZZ-"))
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
     job = json.loads(os.environ["JOB"])
     facility = (job.get("routing") or {}).get("facility")
+
+    # Safety net: demo orders show the full flow on the dashboard (status ->
+    # pickup_*) but perform NO real production transfer.
+    if is_demo_order(order_name) or job.get("demo") is True:
+        detail = f"DEMO — skipped real transfer (facility {facility})"
+        record_step(order_name, "done", detail=detail)
+        print(json.dumps({"orderName": order_name, "facility": facility,
+                          "detail": detail, "demo": True}))
+        return
+
     if facility not in FACILITIES:
         raise ValueError(f"Invalid production facility: {facility}")
 

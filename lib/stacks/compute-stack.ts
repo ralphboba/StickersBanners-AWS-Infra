@@ -46,6 +46,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly orderApi: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
+  public readonly demoFeeder: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
@@ -147,7 +148,27 @@ export class ComputeStack extends cdk.Stack {
       }),
     );
 
+    // --- demo-feeder: inject synthetic orders into the real pipeline (safe) ---
+    // Keeps a bounded set of DEMO-* orders flowing for the dashboard demo. Never
+    // touches real OrderDesk; DEMO-* orders send no real email / do no transfer.
+    this.demoFeeder = new lambda.Function(this, 'DemoFeeder', {
+      ...base,
+      functionName: `${config.prefix}-demo-feeder`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/demo-feeder/index.handler',
+      timeout: Duration.seconds(60),
+      environment: {
+        INTAKE_QUEUE_URL: intakeQueue.queueUrl,
+        JOBS_TABLE: jobsTable.tableName,
+        DEMO_COUNT: '5',
+      },
+      description: 'Feed synthetic DEMO-* orders through the pipeline (sandbox)',
+    });
+    intakeQueue.grantSendMessages(this.demoFeeder);
+    jobsTable.grantReadWriteData(this.demoFeeder);
+
     new cdk.CfnOutput(this, 'PollerName', { value: this.poller.functionName });
+    new cdk.CfnOutput(this, 'DemoFeederName', { value: this.demoFeeder.functionName });
     new cdk.CfnOutput(this, 'NotifyConsumerName', { value: this.notifyConsumer.functionName });
     new cdk.CfnOutput(this, 'OrderApiName', { value: this.orderApi.functionName });
     new cdk.CfnOutput(this, 'WebhookName', { value: this.webhook.functionName });

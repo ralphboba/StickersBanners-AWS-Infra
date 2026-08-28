@@ -195,6 +195,9 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   config,
   pollerFn: computeStack.poller,
   intervalMinutes: 5, // primary intake — poll the QTS folder every 5 min
+  // Demo feed is ENABLED (synthetic DEMO-* orders only); real poll stays OFF.
+  demoFeederFn: computeStack.demoFeeder,
+  demoIntervalMinutes: 10,
   description: `StickersBanners schedules (${config.env})`,
 });
 
