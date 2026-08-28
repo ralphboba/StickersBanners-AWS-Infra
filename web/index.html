@@ -128,6 +128,8 @@
   <p>Sign in to view and process orders.</p>
   <label>Username</label><input id="username" type="text" autocomplete="username">
   <label>Password</label><input id="password" type="password" autocomplete="current-password">
+  <label class="remember" style="display:flex;align-items:center;gap:8px;font-weight:400;margin:14px 0 4px;cursor:pointer">
+    <input id="remember" type="checkbox" checked style="width:auto;margin:0"> Keep me logged in</label>
   <button id="signin">Sign in</button>
   <div class="err" id="loginErr"></div>
 </div>
@@ -193,12 +195,36 @@ async function signIn(user, pass){
   const d = await r.json();
   if(!r.ok) throw new Error(d.message||'sign-in failed');
   if(!d.AuthenticationResult) throw new Error('extra challenge required — finish setup in the AWS console');
+  return d.AuthenticationResult; // { IdToken, AccessToken, RefreshToken, ExpiresIn }
+}
+// Exchange a stored refresh token for a fresh IdToken (no password needed).
+async function refreshSession(refreshToken){
+  const r = await fetch(`https://cognito-idp.${CONFIG.region}.amazonaws.com/`,{
+    method:'POST',
+    headers:{'content-type':'application/x-amz-json-1.1','x-amz-target':'AWSCognitoIdentityProviderService.InitiateAuth'},
+    body:JSON.stringify({ AuthFlow:'REFRESH_TOKEN_AUTH', ClientId:CONFIG.userPoolClientId,
+      AuthParameters:{ REFRESH_TOKEN:refreshToken } }),
+  });
+  const d = await r.json();
+  if(!r.ok || !d.AuthenticationResult) throw new Error('refresh failed');
   return d.AuthenticationResult.IdToken;
 }
+// "Keep me logged in" store (localStorage; guarded for private mode).
+const RT_KEY='sb_rt', USER_KEY='sb_user';
+function saveSession(rt,user){ try{ localStorage.setItem(RT_KEY,rt); localStorage.setItem(USER_KEY,user);}catch{} }
+function clearSession(){ try{ localStorage.removeItem(RT_KEY); localStorage.removeItem(USER_KEY);}catch{} }
+function storedRefresh(){ try{ return {rt:localStorage.getItem(RT_KEY), user:localStorage.getItem(USER_KEY)}; }catch{ return {}; } }
+
 async function api(path, opts={}){
-  const r = await fetch(CONFIG.apiBase+path, { ...opts,
+  const call=()=>fetch(CONFIG.apiBase+path, { ...opts,
     headers:{ authorization:`Bearer ${token}`, 'content-type':'application/json', ...(opts.headers||{}) } });
-  if(r.status===401){ location.reload(); return; }
+  let r = await call();
+  if(r.status===401){
+    // Try a silent refresh (keep-me-logged-in) before giving up.
+    const {rt}=storedRefresh();
+    if(rt){ try{ token=await refreshSession(rt); r=await call(); }catch{} }
+    if(r.status===401){ clearSession(); location.reload(); return; }
+  }
   const d = await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
   return d;
@@ -278,15 +304,20 @@ async function showDetail(name){
 function closeDrawer(){ $('drawer').classList.remove('open'); $('scrim').classList.remove('open'); }
 $('scrim').onclick=closeDrawer;
 
+function enterApp(u){
+  $('who').textContent=u; $('avatar').textContent=(u[0]||'?').toUpperCase();
+  $('login').hidden=true; $('app').hidden=false;
+  loadFolder(); loadCounts();
+  startAutoRefresh();
+}
 $('signin').onclick=async()=>{
   $('loginErr').textContent='';
   try{
-    token=await signIn($('username').value.trim(), $('password').value);
     const u=$('username').value.trim();
-    $('who').textContent=u; $('avatar').textContent=(u[0]||'?').toUpperCase();
-    $('login').hidden=true; $('app').hidden=false;
-    loadFolder(); loadCounts();
-    startAutoRefresh();
+    const auth=await signIn(u, $('password').value);
+    token=auth.IdToken;
+    if($('remember').checked && auth.RefreshToken) saveSession(auth.RefreshToken,u); else clearSession();
+    enterApp(u);
   }catch(e){ $('loginErr').textContent=e.message; }
 };
 
@@ -302,13 +333,20 @@ function startAutoRefresh(){
   }, 20000);
 }
 $('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('signin').click(); });
-$('signout').onclick=()=>location.reload();
+$('signout').onclick=()=>{ clearSession(); location.reload(); };
 
 (async function init(){
   try{ const r=await fetch('config.json',{cache:'no-store'}); if(r.ok) CONFIG={...CONFIG,...(await r.json())}; }catch{}
   if(!CONFIG.apiBase||!CONFIG.userPoolClientId){
     $('loginErr').textContent='Not configured — this page must be served by the deployed webapp stack.';
     $('signin').disabled=true;
+    return;
+  }
+  // Keep me logged in: if we have a stored refresh token, sign in silently.
+  const {rt,user}=storedRefresh();
+  if(rt){
+    try{ token=await refreshSession(rt); enterApp(user||'kai'); return; }
+    catch{ clearSession(); }
   }
 })();
 </script>
