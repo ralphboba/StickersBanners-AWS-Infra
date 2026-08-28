@@ -66,10 +66,18 @@ def flatten_image(img: Image.Image) -> Image.Image:
     return white_bg
 
 
-def _rescale_and_save(image: Image.Image, width_px, height_px, output_path):
-    """B. LANCZOS resize -> flatten if transparent -> TIFF 72dpi lzw."""
+def _rescale_and_save(image: Image.Image, width_px, height_px, output_path, force_rgba=False):
+    """B. LANCZOS resize -> flatten if transparent -> TIFF 72dpi lzw.
+
+    Legacy has two paths and they differ, so we mirror both exactly:
+      * raster (normalFileConverter): NO mode conversion — resize in the source
+        mode and only flatten if transparent, so a CMYK/grayscale print file is
+        preserved as-is (force_rgba=False).
+      * vector (imageRescale, for pdf/ai/psd): always convert to RGBA first, then
+        flatten if transparent (force_rgba=True).
+    """
     processed = image.resize((width_px, height_px), Image.LANCZOS)
-    if processed.mode not in ("RGB", "RGBA"):
+    if force_rgba:
         processed = processed.convert("RGBA")
     if check_transparency(processed):
         processed = flatten_image(processed)
@@ -83,7 +91,7 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
     page.set_cropbox(page.trimbox)  # legacy: crop to trimbox
     pix = page.get_pixmap(dpi=300)
     image = Image.open(io.BytesIO(pix.tobytes("png")))
-    return _rescale_and_save(image, width_px, height_px, output_path)
+    return _rescale_and_save(image, width_px, height_px, output_path, force_rgba=True)
 
 
 def _convert_postscript(file_path, width_px, height_px, output_path):
@@ -96,7 +104,7 @@ def _convert_postscript(file_path, width_px, height_px, output_path):
              f"-sOutputFile={tmp_png}", file_path],
             check=True,
         )
-        return _rescale_and_save(Image.open(tmp_png), width_px, height_px, output_path)
+        return _rescale_and_save(Image.open(tmp_png), width_px, height_px, output_path, force_rgba=True)
     finally:
         if os.path.exists(tmp_png):
             os.remove(tmp_png)
@@ -115,7 +123,7 @@ def _convert_ai(file_path, width_px, height_px, output_path):
 
 def _convert_psd(file_path, width_px, height_px, output_path):
     psd = PSDImage.open(file_path)
-    return _rescale_and_save(psd.composite(), width_px, height_px, output_path)
+    return _rescale_and_save(psd.composite(), width_px, height_px, output_path, force_rgba=True)
 
 
 def check_pdf_pages(file_path) -> int:
