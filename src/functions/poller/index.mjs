@@ -24,6 +24,48 @@ const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 
+// OrderDesk folder id -> dashboard status, for the display-only mirror.
+// From Linh's constants (orderStatusLib / folderLib) and confirmed against live
+// order counts. "Completed" is intentionally excluded (huge history, not useful).
+const MIRROR_FOLDERS = {
+  665685: 'in_queue',
+  651474: 'proofing',
+  31358: 'awaiting_admin',
+  31301: 'pickup_ga',
+  52437: 'pickup_nj',
+  52438: 'pickup_tx',
+  609286: 'pickup_nv',
+  82463: 'pickup_ca',
+};
+const MAX_PER_FOLDER = 400; // safety cap per folder per sync
+
+// Some real orders (non-banner products) have no WIDTH/HEIGHT -> NaN fields,
+// which DynamoDB rejects. Drop NaN (and undefined) deeply for display-only rows.
+function sanitize(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (Array.isArray(v)) return v.map(sanitize);
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v)) { const x = sanitize(v[k]); if (x !== undefined) o[k] = x; }
+    return o;
+  }
+  return v;
+}
+
+async function fetchFolder(storeId, apiKey, folderId, max) {
+  const out = [];
+  const pageSize = 500;
+  for (let offset = 0; out.length < max; offset += pageSize) {
+    const u = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${pageSize}&offset=${offset}`;
+    const r = await fetch(u, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
+    if (!r.ok) throw new Error(`OrderDesk ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const page = (await r.json()).orders ?? [];
+    out.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return out;
+}
+
 async function alreadySeen(orderName) {
   const res = await ddb.send(
     new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' }, ProjectionExpression: 'PK' }),
@@ -61,6 +103,71 @@ export async function handler(event = {}) {
   const storeId = await getSecret('orderdesk', 'store-id');
   const apiKey = await getSecret('orderdesk', 'api-key');
 
+  // mirror: DISPLAY-ONLY sync of real orders onto the dashboard, across all the
+  // folders we show. Upserts a META row (mirror:true) with the folder's mapped
+  // status so staff SEE the real operational board — but NEVER enqueues, so the
+  // pipeline never runs (no resize/finish/transfer, no email, no OrderDesk write).
+  // Cost-efficient: reads current state and only WRITES orders that are new or
+  // whose folder/status changed; deletes those that left.
+  if (event?.mirror === true) {
+    // 1. current real orders across folders -> desired status
+    const current = new Map(); // orderName -> { job, status }
+    for (const [fid, status] of Object.entries(MIRROR_FOLDERS)) {
+      const page = await fetchFolder(storeId, apiKey, fid, MAX_PER_FOLDER);
+      for (const order of page) {
+        const job = sanitize(cleanOrder(order));
+        if (job.orderName) current.set(job.orderName, { job, status });
+      }
+    }
+
+    // 2. what we already have mirrored
+    const existing = new Map(); // orderName -> status
+    let ESK;
+    do {
+      const scan = await ddb.send(new ScanCommand({
+        TableName: JOBS_TABLE,
+        FilterExpression: 'SK = :meta AND mirror = :t',
+        ExpressionAttributeValues: { ':meta': 'META', ':t': true },
+        ProjectionExpression: 'orderName, #s',
+        ExpressionAttributeNames: { '#s': 'status' },
+        ExclusiveStartKey: ESK,
+      }));
+      for (const it of scan.Items ?? []) existing.set(it.orderName, it.status);
+      ESK = scan.LastEvaluatedKey;
+    } while (ESK);
+
+    // 3. write only new/changed rows
+    let wrote = 0;
+    for (const [name, { job, status }] of current) {
+      if (existing.get(name) === status) continue; // unchanged -> skip (no write)
+      await ddb.send(new PutCommand({
+        TableName: JOBS_TABLE,
+        Item: {
+          PK: `ORDER#${name}`, SK: 'META',
+          GSI1PK: `STATUS#${status}`, GSI1SK: job.createdAt,
+          status, mirror: true, ...job,
+        },
+        // Only create/refresh a mirror row; never touch a processed order.
+        ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
+        ExpressionAttributeValues: { ':t': true },
+      })).catch((e) => { if (e?.name !== 'ConditionalCheckFailedException') throw e; });
+      wrote += 1;
+    }
+
+    // 4. delete mirror rows whose order left every mirrored folder
+    let pruned = 0;
+    for (const name of existing.keys()) {
+      if (!current.has(name)) {
+        await ddb.send(new DeleteCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${name}`, SK: 'META' } }));
+        pruned += 1;
+      }
+    }
+
+    const summary = { mirror: true, folders: Object.keys(MIRROR_FOLDERS).length, total: current.size, wrote, pruned };
+    console.log(JSON.stringify({ msg: 'mirror sync (display-only, multi-folder)', ...summary }));
+    return summary;
+  }
+
   // dryRun: fetch + clean real orders and RETURN the computed finishing/dims,
   // writing nothing and enqueuing nothing. Read-only — cannot affect real orders.
   const dryRun = event?.dryRun === true;
@@ -74,74 +181,12 @@ export async function handler(event = {}) {
   if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const { orders = [] } = await res.json();
 
-  // mirror: DISPLAY-ONLY sync of real QTS orders onto the dashboard. Upserts a
-  // META record (status in_queue, mirror:true) for each real order so staff SEE
-  // orders arriving — but NEVER enqueues, so the pipeline never runs: no resize/
-  // finish/transfer, no email, no OrderDesk write. Purely "orders coming in".
-  if (event?.mirror === true) {
-    // Page through the WHOLE QTS folder (no 100 cap) so In Queue grows with the
-    // real volume.
-    const all = [];
-    const pageSize = 500;
-    for (let offset = 0; ; offset += pageSize) {
-      const pu = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${pageSize}&offset=${offset}`;
-      const pr = await fetch(pu, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
-      if (!pr.ok) throw new Error(`OrderDesk ${pr.status}: ${(await pr.text()).slice(0, 200)}`);
-      const page = (await pr.json()).orders ?? [];
-      all.push(...page);
-      if (page.length < pageSize) break;
-    }
-
-    const present = new Set();
-    let mirrored = 0;
-    for (const order of all) {
-      const job = cleanOrder(order);
-      if (!job.orderName) continue;
-      present.add(job.orderName);
-      await ddb.send(new PutCommand({
-        TableName: JOBS_TABLE,
-        Item: {
-          PK: `ORDER#${job.orderName}`, SK: 'META',
-          GSI1PK: 'STATUS#in_queue', GSI1SK: job.createdAt,
-          status: 'in_queue', mirror: true, ...job,
-        },
-        // Only create/refresh a mirror row; never touch a processed order.
-        ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
-        ExpressionAttributeValues: { ':t': true },
-      })).catch((e) => { if (e?.name !== 'ConditionalCheckFailedException') throw e; });
-      mirrored += 1;
-    }
-
-    // Prune mirror rows whose order has left the QTS folder, so In Queue reflects
-    // the current folder rather than accumulating stale orders.
-    let pruned = 0;
-    let ExclusiveStartKey;
-    do {
-      const scan = await ddb.send(new ScanCommand({
-        TableName: JOBS_TABLE,
-        FilterExpression: 'SK = :meta AND mirror = :t',
-        ExpressionAttributeValues: { ':meta': 'META', ':t': true },
-        ProjectionExpression: 'PK, orderName',
-        ExclusiveStartKey,
-      }));
-      for (const it of scan.Items ?? []) {
-        if (!present.has(it.orderName)) {
-          await ddb.send(new DeleteCommand({ TableName: JOBS_TABLE, Key: { PK: it.PK, SK: 'META' } }));
-          pruned += 1;
-        }
-      }
-      ExclusiveStartKey = scan.LastEvaluatedKey;
-    } while (ExclusiveStartKey);
-
-    console.log(JSON.stringify({ msg: 'mirror sync (display-only)', polled: all.length, mirrored, pruned }));
-    return { mirror: true, polled: all.length, mirrored, pruned };
-  }
-
   if (dryRun) {
     const inspected = orders.map((order) => {
       const job = cleanOrder(order);
       return {
         orderName: job.orderName,
+        folder: job.folder,
         routing: job.routing,
         items: job.items.map((it) => ({
           sku: it.sku,
