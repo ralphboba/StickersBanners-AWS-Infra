@@ -15,8 +15,8 @@ const JOBS_TABLE = process.env.JOBS_TABLE;
 
 // Statuses mirror the OrderDesk folders staff already know.
 const STATUSES = [
-  'in_queue', 'printing', 'proofing', 'awaiting_admin', 'awaiting_payment',
-  'pickup_ga', 'pickup_nj', 'pickup_tx', 'pickup_nv', 'pickup_ca', 'completed',
+  'in_queue', 'printing', 'proofing', 'needs_review', 'awaiting_admin', 'awaiting_payment',
+  'pickup_ga', 'pickup_nj', 'pickup_tx', 'pickup_nv', 'pickup_ca', 'completed', 'failed',
 ];
 
 const resp = (statusCode, obj) => ({

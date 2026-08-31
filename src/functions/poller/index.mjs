@@ -110,13 +110,19 @@ export async function handler(event = {}) {
   // Cost-efficient: reads current state and only WRITES orders that are new or
   // whose folder/status changed; deletes those that left.
   if (event?.mirror === true) {
-    // 1. current real orders across folders -> desired status
+    // 1. current real orders across folders -> desired status. Orders the system
+    //    can't fully handle are pulled aside into "needs_review": an unknown SKU
+    //    (product not set up) or an intake order we can't route to a facility.
     const current = new Map(); // orderName -> { job, status }
-    for (const [fid, status] of Object.entries(MIRROR_FOLDERS)) {
+    for (const [fid, folderStatus] of Object.entries(MIRROR_FOLDERS)) {
       const page = await fetchFolder(storeId, apiKey, fid, MAX_PER_FOLDER);
       for (const order of page) {
         const job = sanitize(cleanOrder(order));
-        if (job.orderName) current.set(job.orderName, { job, status });
+        if (!job.orderName) continue;
+        const unroutedIntake = folderStatus === 'in_queue'
+          && (!job.routing?.facility || job.routing.facility === 'UNROUTED');
+        const status = (job.hasUnknownSku || unroutedIntake) ? 'needs_review' : folderStatus;
+        current.set(job.orderName, { job, status });
       }
     }
 

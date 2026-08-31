@@ -12,7 +12,7 @@
     --bg:#eef1f5; --surface:#fff; --surface-2:#f7f9fb; --rail:#f1f4f8;
     --ink:#16202e; --muted:#5f6f82; --faint:#8496a8; --line:#e2e7ee;
     --accent:#2f6feb; --accent-soft:#e5edfd;
-    --s-queue:#2563eb; --s-print:#d97706; --s-proof:#7c3aed; --s-admin:#475569;
+    --s-queue:#2563eb; --s-print:#d97706; --s-proof:#7c3aed; --s-review:#c0392b; --s-admin:#475569;
     --s-pay:#e11d48; --s-pickup:#0d9488; --s-done:#16a34a; --s-hold:#dc2626;
     --shadow:0 1px 2px rgba(16,32,46,.06), 0 8px 24px rgba(16,32,46,.06);
   }
@@ -20,7 +20,7 @@
     --bg:#0d131c; --surface:#141d29; --surface-2:#111a25; --rail:#101823;
     --ink:#e6edf5; --muted:#93a4b8; --faint:#6b7f95; --line:#233040;
     --accent:#5b8def; --accent-soft:#17263f;
-    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-admin:#7688a0;
+    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-review:#e06666; --s-admin:#7688a0;
     --s-pay:#f2557a; --s-pickup:#2bb3a3; --s-done:#3fce74; --s-hold:#ef5350;
     --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
   }}
@@ -28,7 +28,7 @@
     --bg:#0d131c; --surface:#141d29; --surface-2:#111a25; --rail:#101823;
     --ink:#e6edf5; --muted:#93a4b8; --faint:#6b7f95; --line:#233040;
     --accent:#5b8def; --accent-soft:#17263f;
-    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-admin:#7688a0;
+    --s-queue:#5b8def; --s-print:#e0a44a; --s-proof:#a17bef; --s-review:#e06666; --s-admin:#7688a0;
     --s-pay:#f2557a; --s-pickup:#2bb3a3; --s-done:#3fce74; --s-hold:#ef5350;
     --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
   }
@@ -172,6 +172,7 @@ const FOLDERS = [
   { key:'in_queue',        name:'In Queue',                color:'--s-queue' },
   { key:'printing',        name:'Printing',                color:'--s-print' },
   { key:'proofing',        name:'Proofing',                color:'--s-proof' },
+  { key:'needs_review',    name:'⚠ Needs Review',          color:'--s-review' },
   { key:'awaiting_admin',  name:'Awaiting Admin Process',  color:'--s-admin' },
   { key:'awaiting_payment',name:'Awaiting Payment',        color:'--s-pay'   },
   { sep:true },
