@@ -138,6 +138,12 @@
 <div id="app" hidden>
   <div class="top">
     <div class="brand"><span class="dot"></span> StickersBanners</div>
+    <div class="search" style="display:flex;align-items:center;gap:8px;margin-left:18px">
+      <input id="searchbox" type="text" placeholder="Search order #…" autocomplete="off"
+        style="padding:7px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font-size:13px;width:190px;outline:none">
+      <button id="searchbtn" class="signout" style="cursor:pointer">Search</button>
+      <span id="searchmsg" style="font-size:12px;color:var(--danger,#a63232)"></span>
+    </div>
     <span class="spacer"></span>
     <div class="who"><span id="who"></span><span class="avatar" id="avatar">?</span></div>
     <button class="signout" id="signout">Sign out</button>
@@ -333,6 +339,26 @@ function startAutoRefresh(){
   }, 20000);
 }
 $('password').addEventListener('keydown',e=>{ if(e.key==='Enter') $('signin').click(); });
+// Search an order # -> jump to the folder it's in and open its detail.
+async function searchOrder(){
+  const name=$('searchbox').value.trim();
+  $('searchmsg').textContent='';
+  if(!name) return;
+  let o;
+  try { o=await api(`/orders/${encodeURIComponent(name)}`); }
+  catch(e){ $('searchmsg').textContent=`"${name}" not found`; return; }
+  if(o && o.status){
+    current=o.status;
+    await loadFolder();
+    showDetail(o.orderName||name);
+    $('searchmsg').textContent='';
+  } else {
+    $('searchmsg').textContent=`"${name}" not found`;
+  }
+}
+$('searchbtn').onclick=searchOrder;
+$('searchbox').addEventListener('keydown',e=>{ if(e.key==='Enter') searchOrder(); });
+
 $('signout').onclick=()=>{ clearSession(); location.reload(); };
 
 (async function init(){
