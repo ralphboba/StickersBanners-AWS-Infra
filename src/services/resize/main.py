@@ -61,8 +61,24 @@ def record_step(order_name, state, detail=""):
     })
 
 
+def set_stage(order_name, stage):
+    """Live sub-step shown on the dashboard while status is 'printing'."""
+    if not JOBS_TABLE:
+        return
+    try:
+        ddb.Table(JOBS_TABLE).update_item(
+            Key={"PK": f"ORDER#{order_name}", "SK": "META"},
+            UpdateExpression="SET #st = :s",
+            ExpressionAttributeNames={"#st": "stage"},
+            ExpressionAttributeValues={":s": stage},
+        )
+    except Exception:
+        pass  # cosmetic only — never fail the job over the stage label
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
+    set_stage(order_name, "resizing")
     job = json.loads(os.environ["JOB"])
     items = job.get("items", [])
     produced = []

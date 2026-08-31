@@ -265,7 +265,7 @@ async function loadFolder(){
       <td class="fac">${esc(o.routing?.facility||'—')}</td>
       <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
       <td class="mono" style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
-      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}</span></td>
+      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span></td>
     </tr>`).join('');
   $('rows').innerHTML=rows;
   $('empty').hidden=data.orders.length>0;
