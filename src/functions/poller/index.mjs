@@ -30,11 +30,13 @@ const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 const MIRROR_FOLDERS = {
   665685: 'in_queue',
   651474: 'proofing',
+  661019: 'needs_review', // Missing/Corrupted File — orders that didn't process
+  653109: 'needs_review', // Pending Review
   31358: 'awaiting_admin',
   31301: 'pickup_ga',
   52437: 'pickup_nj',
   52438: 'pickup_tx',
-  609286: 'pickup_nv',
+  674908: 'pickup_nv',    // "NV Awaiting Pickup" (correct NV folder id from /store)
   82463: 'pickup_ca',
 };
 const MAX_PER_FOLDER = 400; // safety cap per folder per sync
@@ -102,6 +104,15 @@ async function enqueue(job) {
 export async function handler(event = {}) {
   const storeId = await getSecret('orderdesk', 'store-id');
   const apiKey = await getSecret('orderdesk', 'api-key');
+
+  // probe: read-only GET of an arbitrary OrderDesk API path, for investigating
+  // what the API exposes (store settings, folders, rules …). Returns raw text.
+  if (event?.probe) {
+    const u = `https://app.orderdesk.me/api/v2/${event.probe}`;
+    const r = await fetch(u, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
+    const body = await r.text();
+    return { probe: event.probe, status: r.status, body: body.slice(0, 12000) };
+  }
 
   // mirror: DISPLAY-ONLY sync of real orders onto the dashboard, across all the
   // folders we show. Upserts a META row (mirror:true) with the folder's mapped
