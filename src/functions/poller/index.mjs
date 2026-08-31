@@ -119,9 +119,10 @@ export async function handler(event = {}) {
       for (const order of page) {
         const job = sanitize(cleanOrder(order));
         if (!job.orderName) continue;
-        const unroutedIntake = folderStatus === 'in_queue'
-          && (!job.routing?.facility || job.routing.facility === 'UNROUTED');
-        const status = (job.hasUnknownSku || unroutedIntake) ? 'needs_review' : folderStatus;
+        // Pull aside only genuine anomalies. (Unrouted is NOT one yet — the
+        // GA/NJ/TX routing rules are incomplete, so every intake order is
+        // unrouted; flagging all of them would make the folder meaningless.)
+        const status = job.hasUnknownSku ? 'needs_review' : folderStatus;
         current.set(job.orderName, { job, status });
       }
     }
