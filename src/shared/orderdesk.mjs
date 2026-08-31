@@ -16,6 +16,15 @@ const INTSKU = [
   'SKU-DXB-B', 'SKU-DXB', 'SKUDXBB', 'SKUDXBBB',
 ];
 
+// SKU prefixes whose dimensions are also in inches. Fabric Pop Up Displays
+// (SKUFPUD*, e.g. SKUFPUD08X10 = 145x91 in) are sized in inches, not feet.
+const INTSKU_PREFIXES = ['SKUFPUD'];
+
+function isInchSku(sku) {
+  const s = String(sku ?? '');
+  return INTSKU.includes(s) || INTSKU_PREFIXES.some((p) => s.startsWith(p));
+}
+
 /**
  * Normalize an OrderDesk finishing label to a comparison key.
  *
@@ -54,7 +63,7 @@ const NOFINISHSKU = ['SKUAB', 'SKUST'];
 export function resolveDimensions(sku, productName, rawWidth, rawHeight) {
   let width = parseFloat(rawWidth);
   let height = parseFloat(rawHeight);
-  let unit = INTSKU.includes(sku) ? 'in' : 'ft';
+  let unit = isInchSku(sku) ? 'in' : 'ft';
   const name = String(productName ?? '').toLowerCase();
 
   if (!name.includes('fabric')) {
