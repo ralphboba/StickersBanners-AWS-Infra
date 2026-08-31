@@ -203,6 +203,7 @@ export async function handler(event = {}) {
       return {
         orderName: job.orderName,
         folder: job.folder,
+        shipping: job.shipping,
         routing: job.routing,
         items: job.items.map((it) => ({
           sku: it.sku,
