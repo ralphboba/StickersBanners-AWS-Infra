@@ -43,6 +43,29 @@ export const HARDWARE_SKUS = [];
 export const HARDWARE_SKU_PREFIXES = [];
 
 
+// --- 4. Known product families (for the "unknown SKU" alert) ---------------
+// SKUs the system has been set up for. When an order arrives with a SKU that
+// matches NONE of these, it's flagged as an unknown/new product so staff can
+// review it (see how it should be sized/finished) — the dashboard shows a
+// warning and the poller logs it. When a NEW product line launches, add its
+// prefix here. Seeded from the store's current catalogue.
+export const KNOWN_SKU_PREFIXES = [
+  'SKUVB',   // vinyl banner            SKUAB — adhesive
+  'SKUAB', 'SKUPB', 'SKUXB', 'SKUMB', 'SKUST', 'SKUVS', 'SKUDC',
+  'SKUCSR', 'SKUCFSR',        // custom (fabric) step & repeat
+  'SKUSR',  'SKUFSR',         // step & repeat / fabric step & repeat (all sizes)
+  'SKUBS',  'SKURC',          // backdrop stand / retractable
+  'SKUFPUD', 'SKU08',         // fabric pop up display families
+  'SKU-',                     // numbered SKUs (SKU-543, SKU-602, …)
+];
+
+export function isKnownSku(sku) {
+  const s = String(sku ?? '');
+  if (!s) return true; // empty/missing SKU is a separate problem, not "unknown"
+  return KNOWN_SKU_PREFIXES.some((p) => s.startsWith(p));
+}
+
+
 // --- helpers (used by the intake logic) ------------------------------------
 export function isInchSku(sku) {
   const s = String(sku ?? '');

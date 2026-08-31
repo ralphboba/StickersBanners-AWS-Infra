@@ -11,7 +11,7 @@
 import { routeOrder } from './routing.mjs';
 
 // All SKU-based rules live in one place — see src/shared/sku-config.mjs.
-import { isInchSku, isNoFinishSku } from './sku-config.mjs';
+import { isInchSku, isNoFinishSku, isKnownSku } from './sku-config.mjs';
 
 /**
  * Normalize an OrderDesk finishing label to a comparison key.
@@ -188,6 +188,8 @@ export function cleanOrder(order) {
       finishingObj,
       artworkUrl: uploads[0],
       artworkUrls: uploads,
+      // Flag a product the system hasn't been set up for, so staff can review it.
+      ...(isKnownSku(sku) ? {} : { unknownSku: true }),
     };
   });
 
@@ -209,6 +211,8 @@ export function cleanOrder(order) {
     shipping,
     routing,
     needsProof: wantsProof(order),
+    // True if any line item is a product the system hasn't been set up for.
+    ...(items.some((it) => it.unknownSku) ? { hasUnknownSku: true } : {}),
     totals: {
       subtotal: num(order.product_total),
       grandTotal: num(order.order_total),

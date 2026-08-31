@@ -163,7 +163,16 @@ export async function handler(event = {}) {
       }
     }
 
-    const summary = { mirror: true, folders: Object.keys(MIRROR_FOLDERS).length, total: current.size, wrote, pruned };
+    // Surface any orders whose product isn't set up yet (unknown SKU).
+    const unknown = [];
+    for (const [name, { job }] of current) {
+      if (job.hasUnknownSku) {
+        unknown.push({ order: name, skus: (job.items || []).filter((i) => i.unknownSku).map((i) => i.sku) });
+      }
+    }
+    if (unknown.length) console.warn(JSON.stringify({ msg: 'UNKNOWN SKU — needs review', count: unknown.length, unknown }));
+
+    const summary = { mirror: true, folders: Object.keys(MIRROR_FOLDERS).length, total: current.size, wrote, pruned, unknownSku: unknown.length };
     console.log(JSON.stringify({ msg: 'mirror sync (display-only, multi-folder)', ...summary }));
     return summary;
   }

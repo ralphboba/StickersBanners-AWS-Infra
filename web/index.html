@@ -266,7 +266,7 @@ async function loadFolder(){
   $('headsub').textContent=`${data.count} order${data.count!==1?'s':''}`;
   const rows=data.orders.map(o=>`
     <tr data-n="${esc(o.orderName)}">
-      <td class="ordno mono">${esc(o.orderName)}</td>
+      <td class="ordno mono">${esc(o.orderName)}${o.hasUnknownSku?` <span title="Unknown SKU — not set up yet, needs review" style="color:#a63232;font-weight:700">⚠</span>`:''}</td>
       <td>${esc(o.customer?.name||o.customer?.email||'—')}</td>
       <td class="fac">${esc(o.routing?.facility||'—')}</td>
       <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
