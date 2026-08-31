@@ -10,20 +10,8 @@
 
 import { routeOrder } from './routing.mjs';
 
-// SKUs whose WIDTH/HEIGHT are quoted in inches (legacy INTSKU).
-const INTSKU = [
-  'SKUPB', 'SKUXB', 'SKU-543', 'SKU-545',
-  'SKU-DXB-B', 'SKU-DXB', 'SKUDXBB', 'SKUDXBBB',
-];
-
-// SKU prefixes whose dimensions are also in inches. Fabric Pop Up Displays
-// (SKUFPUD*, e.g. SKUFPUD08X10 = 145x91 in) are sized in inches, not feet.
-const INTSKU_PREFIXES = ['SKUFPUD'];
-
-function isInchSku(sku) {
-  const s = String(sku ?? '');
-  return INTSKU.includes(s) || INTSKU_PREFIXES.some((p) => s.startsWith(p));
-}
+// All SKU-based rules live in one place — see src/shared/sku-config.mjs.
+import { isInchSku, isNoFinishSku } from './sku-config.mjs';
 
 /**
  * Normalize an OrderDesk finishing label to a comparison key.
@@ -54,7 +42,6 @@ const GROMMETS_FINISHES = new Set([
   'grommetwithbravotabtoponly',
 ]);
 
-const NOFINISHSKU = ['SKUAB', 'SKUST'];
 
 /**
  * Legacy getUnit: pick the unit and remap certain nominal sizes to inches.
@@ -187,7 +174,7 @@ export function cleanOrder(order) {
     // counts use the effective size — exactly as the legacy order path did.
     const { width, height, unit } = resolveDimensions(sku, it.name, vl.WIDTH, vl.HEIGHT);
 
-    const noFinish = NOFINISHSKU.includes(sku);
+    const noFinish = isNoFinishSku(sku);
     const finishingObj = noFinish ? { quantity } : getFinishObj(finish, width, height, unit, quantity);
 
     return {
