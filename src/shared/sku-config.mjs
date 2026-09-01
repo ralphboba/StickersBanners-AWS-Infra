@@ -31,6 +31,25 @@ export const INCH_SKU_PREFIXES = [
 ];
 
 
+// --- 1b. Fixed-size products (print dimensions don't come from the order) ---
+// Some products are a fixed physical size — the customer doesn't pick W/H, so
+// the order line has no meaningful dimensions. For these the print file is
+// ALWAYS produced at the size below, ignoring whatever WIDTH/HEIGHT the order
+// carries. Dimensions are the BLEED ZONE (the full print area). The resizer
+// scales artwork to exactly this size at 72dpi — it does NOT add bleed itself,
+// so put the bleed size here, not the trim/safe size. The safe zone (where art
+// must stay) is a design guideline only; the pipeline doesn't use it, so it's
+// recorded in the comment for reference.
+export const FIXED_DIMENSIONS = {
+  // 10ft Tent Full Walls — safe zone 111x76 in; bleed (print) 115x80 in.
+  SKU10TFW: { width: 115, height: 80, unit: 'in' },
+};
+
+export function fixedDimensions(sku) {
+  return FIXED_DIMENSIONS[String(sku ?? '')] || null;
+}
+
+
 // --- 2. Products with NO image finishing -----------------------------------
 // These skip grommets / pole pockets entirely (plain copy) — e.g. stickers.
 export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU10ET = 10ft Event Tent, SKU10TFW = 10ft Tent Full Walls
@@ -57,7 +76,7 @@ export const KNOWN_SKU_PREFIXES = [
   'SKUBS',  'SKURC',          // backdrop stand / retractable
   'SKUFPUD', 'SKU08',         // fabric pop up display families
   'SKU10ET',                  // 10ft Event Tent (feet, no finishing)
-  'SKU10TFW',                 // 10ft Tent Full Walls (feet, no finishing)
+  'SKU10TFW',                 // 10ft Tent Full Walls (fixed 115x80 in, no finishing)
   'SKU-',                     // numbered SKUs (SKU-543, SKU-602, …)
 ];
 

@@ -11,7 +11,9 @@
 import { routeOrder } from './routing.mjs';
 
 // All SKU-based rules live in one place — see src/shared/sku-config.mjs.
-import { isInchSku, isNoFinishSku, isKnownSku } from './sku-config.mjs';
+import {
+  isInchSku, isNoFinishSku, isKnownSku, fixedDimensions,
+} from './sku-config.mjs';
 
 /**
  * Normalize an OrderDesk finishing label to a comparison key.
@@ -48,6 +50,11 @@ const GROMMETS_FINISHES = new Set([
  * Mutates nothing — returns the effective { width, height, unit }.
  */
 export function resolveDimensions(sku, productName, rawWidth, rawHeight) {
+  // Fixed-size products (e.g. tents) print at a set size regardless of the
+  // order's WIDTH/HEIGHT. Return those dimensions verbatim (bleed = print size).
+  const fixed = fixedDimensions(sku);
+  if (fixed) return { ...fixed };
+
   let width = parseFloat(rawWidth);
   let height = parseFloat(rawHeight);
   let unit = isInchSku(sku) ? 'in' : 'ft';
