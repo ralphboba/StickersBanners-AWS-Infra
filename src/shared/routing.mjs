@@ -7,7 +7,7 @@
 // file + redeploy. Facilities: GA, NJ, TX, NV, CA. CA ships via Google Drive;
 // the rest via FTP.
 
-import { NV_ZIPS, CA_ZIPS } from './zipRouting.mjs';
+import { NV_ZIPS } from './zipRouting.mjs';
 
 /** @typedef {'GA'|'NJ'|'TX'|'NV'|'CA'} Facility */
 
@@ -15,7 +15,6 @@ const GDRIVE_FACILITIES = new Set(['CA']);
 
 // Built once per Lambda cold start.
 const DEFAULT_NV = new Set(NV_ZIPS);
-const DEFAULT_CA = new Set(CA_ZIPS);
 
 // State -> facility (Linh's rule). NV/CA are decided by ZIP first (NV ships some
 // CA-destination zips); every other state ships from the facility listed here.
@@ -36,25 +35,30 @@ export function transportFor(facility) {
 /**
  * Decide the facility for an order from its shipping state + postal code.
  *
- * Order of decision (Linh's rule):
- *   1. NV_ZIPS  — CA destinations the NV facility ships in 1 day (checked first).
- *   2. CA_ZIPS  — the broader CA-facility zip list.
- *   3. by state — GA/NJ/TX/NV state lists for everything else.
+ * Linh's rule: "Zip code check only applies to nv/ca cause nv ships to some zip
+ * codes in ca. The rest of the production ships by state." So the ZIP lookup is
+ * gated on the shipping state being CA — only a CA-bound order can be pulled to
+ * the NV facility by ZIP; everything else routes purely by state.
+ *
+ *   - state === CA: NV_ZIPS (NV-shipped CA destinations) → else CA.
+ *   - other states: GA/NJ/TX/NV state lists.
  * Anything still unmatched is UNROUTED (held for manual assignment).
  *
  * @param {{ state?: string, postalCode?: string }} shipping
- * @param {{ nvZips?: Set<string>, caZips?: Set<string> }} [dicts]
+ * @param {{ nvZips?: Set<string> }} [dicts]
  * @returns {{ facility: Facility | 'UNROUTED', transport: 'FTP'|'GDRIVE'|null }}
  */
 export function routeOrder(shipping, dicts = {}) {
-  const zip = normalizeZip(shipping?.postalCode);
-  const nvZips = dicts.nvZips ?? DEFAULT_NV;
-  const caZips = dicts.caZips ?? DEFAULT_CA;
-
-  if (nvZips.has(zip)) return decided('NV');
-  if (caZips.has(zip)) return decided('CA');
-
   const state = String(shipping?.state ?? '').trim().toUpperCase();
+
+  // ZIP routing applies ONLY to CA-bound orders (NV ships some CA zips in 1 day).
+  if (state === 'CA') {
+    const zip = normalizeZip(shipping?.postalCode);
+    const nvZips = dicts.nvZips ?? DEFAULT_NV;
+    if (nvZips.has(zip)) return decided('NV');
+    return decided('CA');
+  }
+
   if (GA_STATES.has(state)) return decided('GA');
   if (NJ_STATES.has(state)) return decided('NJ');
   if (TX_STATES.has(state)) return decided('TX');
