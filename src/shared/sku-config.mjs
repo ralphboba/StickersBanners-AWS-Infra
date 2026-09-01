@@ -41,6 +41,9 @@ export const INCH_SKU_PREFIXES = [
 // must stay) is a design guideline only; the pipeline doesn't use it, so it's
 // recorded in the comment for reference.
 export const FIXED_DIMENSIONS = {
+  // 10ft Event Tent / Canopy Graphic — safe 115x78.85 in; bleed (print) 119x84.28 in.
+  // (Artwork guide on the template: CMYK, 150dpi, flatten, per-side artwork.)
+  SKU10ET: { width: 119, height: 84.28, unit: 'in' },
   // 10ft Tent Full Walls — safe zone 111x76 in; bleed (print) 115x80 in.
   SKU10TFW: { width: 115, height: 80, unit: 'in' },
 };
@@ -75,7 +78,7 @@ export const KNOWN_SKU_PREFIXES = [
   'SKUSR',  'SKUFSR',         // step & repeat / fabric step & repeat (all sizes)
   'SKUBS',  'SKURC',          // backdrop stand / retractable
   'SKUFPUD', 'SKU08',         // fabric pop up display families
-  'SKU10ET',                  // 10ft Event Tent (feet, no finishing)
+  'SKU10ET',                  // 10ft Event Tent / Canopy (fixed 119x84.28 in, no finishing)
   'SKU10TFW',                 // 10ft Tent Full Walls (fixed 115x80 in, no finishing)
   'SKU-',                     // numbered SKUs (SKU-543, SKU-602, …)
 ];
