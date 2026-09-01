@@ -278,13 +278,45 @@ async function loadFolder(){
   $('empty').hidden=data.orders.length>0;
   document.querySelectorAll('#rows tr').forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.n));
 }
+// Demo-only manual pipeline: the folders a DEMO-* order steps through, In Queue
+// -> Printing -> Proofing -> Awaiting Pickup (its facility). Real orders never
+// get these controls.
+const isDemo=(name)=>/^(DEMO|ZZ)-/i.test(String(name||''));
+function demoLadder(o){
+  const fac=String(o.routing?.facility||'CA').toLowerCase();
+  return ['in_queue','printing','proofing',`pickup_${fac}`];
+}
+async function demoMove(o,dir){
+  const ladder=demoLadder(o);
+  let i=ladder.indexOf(o.status);
+  if(i<0) i = dir>0 ? -1 : ladder.length; // off-ladder -> step onto an end
+  const j=Math.max(0,Math.min(ladder.length-1,i+dir));
+  const status=ladder[j];
+  if(status===o.status) return;
+  try{ await api(`/orders/${encodeURIComponent(o.orderName)}/move`,{method:'POST',body:JSON.stringify({status})}); }
+  catch(e){ const el=$('demoErr'); if(el) el.textContent=e.message; return; }
+  await loadCounts();
+  showDetail(o.orderName); // reopen on its new folder
+}
 async function showDetail(name){
   let o; try { o=await api(`/orders/${encodeURIComponent(name)}`); } catch(e){ return; }
   const f=FMAP[o.status]||{name:o.status,color:'--muted'};
   const items=(o.items||[]).map(it=>`<div style="font-size:13px;padding:4px 0;color:var(--muted)">
     <b style="color:var(--ink)">${esc(it.quantity)}× ${esc(it.name||it.sku)}</b> — ${esc(it.width)}×${esc(it.height)} ${esc(it.unit||'ft')}, ${esc((it.finishingRaw)||'')}</div>`).join('');
   const proofUrl = CONFIG.cdnBase ? `${CONFIG.cdnBase}/${encodeURIComponent(name)}/` : null;
-  const canSend = o.needsProof && o.status==='proofing';
+  const demo = isDemo(o.orderName);
+  const canSend = o.needsProof && o.status==='proofing' && !demo;
+  // Demo controls: step this synthetic order forward/back through the pipeline.
+  const ladder = demoLadder(o); const li = ladder.indexOf(o.status);
+  const nextName = li>=0 && li<ladder.length-1 ? (FMAP[ladder[li+1]]?.name||ladder[li+1]) : null;
+  const prevName = li>0 ? (FMAP[ladder[li-1]]?.name||ladder[li-1]) : null;
+  const demoBox = demo ? `<div class="proofbox">
+    <div class="lab">Demo controls — move this order through the pipeline by hand.</div>
+    <div class="btns">
+      <button class="btn reject" id="dback" ${prevName?'':'disabled'}>◀ ${prevName?esc(prevName):'Back'}</button>
+      <button class="btn approve" id="dfwd" ${nextName?'':'disabled'}>${nextName?esc(nextName):'Done'} ▶</button>
+    </div>
+    <div class="err" id="demoErr"></div></div>` : '';
   $('drawer').innerHTML=`
     <button class="x" onclick="closeDrawer()">×</button>
     <h3 class="mono">${esc(o.orderName)}</h3><div class="oid">${esc(f.name)}</div>
@@ -299,8 +331,13 @@ async function showDetail(name){
     ${proofUrl&&o.needsProof?`<p style="margin-top:12px"><a href="${proofUrl}" target="_blank" rel="noopener" style="color:var(--accent)">Open proof viewer ↗</a></p>`:''}
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
-      <div class="err" id="actErr"></div></div>`:''}`;
+      <div class="err" id="actErr"></div></div>`:''}
+    ${demoBox}`;
   $('drawer').classList.add('open'); $('scrim').classList.add('open');
+  if(demo){
+    if($('dfwd')) $('dfwd').onclick=()=>demoMove(o,+1);
+    if($('dback')) $('dback').onclick=()=>demoMove(o,-1);
+  }
   if(canSend){
     $('send').onclick=async()=>{ try{ $('send').disabled=true;
       await api(`/orders/${encodeURIComponent(name)}/approve`,{method:'POST',body:'{}'});

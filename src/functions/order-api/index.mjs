@@ -8,7 +8,9 @@
 // Also callable directly with { orderName } for scripts/tests.
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient, GetCommand, QueryCommand, UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
@@ -25,8 +27,53 @@ const resp = (statusCode, obj) => ({
   body: JSON.stringify(obj),
 });
 
+// Only synthetic demo orders may be hand-moved between folders (hard safety
+// guard — a real order's status must never be changed from the dashboard).
+const isDemoName = (name) => /^(DEMO|ZZ)-/i.test(String(name ?? ''));
+
 export async function handler(event) {
   const orderName = event?.pathParameters?.name ?? event?.orderName;
+  const method = event?.requestContext?.http?.method ?? event?.httpMethod;
+
+  // --- demo move: POST /orders/{name}/move  { status } ---
+  // Manually drives a DEMO-* order to any folder (for a live walkthrough of the
+  // pipeline). Display-only: it just rewrites the status + GSI1 keys; it never
+  // runs the pipeline, sends email, or transfers files.
+  const isMove = method === 'POST'
+    && (event?.rawPath?.endsWith('/move') || event?.routeKey?.includes('/move'));
+  if (isMove) {
+    if (!orderName) return resp(400, { error: 'missing order name' });
+    if (!isDemoName(orderName)) return resp(403, { error: 'move is demo-only (DEMO-*/ZZ-* orders)' });
+    let body = {};
+    try { body = JSON.parse(event.body || '{}'); } catch { /* ignore */ }
+    const status = body.status;
+    if (!STATUSES.includes(status)) {
+      return resp(400, { error: `status must be one of ${STATUSES.join(', ')}` });
+    }
+    const cur = await ddb.send(
+      new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } }),
+    );
+    if (!cur.Item) return resp(404, { error: 'not found', orderName });
+    if (!cur.Item.demo && !isDemoName(cur.Item.orderName)) {
+      return resp(403, { error: 'move is demo-only' });
+    }
+    const sortKey = cur.Item.createdAt || new Date().toISOString();
+    const names = { '#s': 'status' };
+    const values = { ':s': status, ':g': `STATUS#${status}`, ':k': sortKey };
+    let expr = 'SET #s = :s, GSI1PK = :g, GSI1SK = :k';
+    // Show a "· resizing/finishing/making proof" sub-label while in Printing.
+    if (status === 'printing') { expr += ', stage = :st'; values[':st'] = body.stage || 'resizing'; } else { expr += ' REMOVE stage'; }
+    const upd = await ddb.send(new UpdateCommand({
+      TableName: JOBS_TABLE,
+      Key: { PK: `ORDER#${orderName}`, SK: 'META' },
+      UpdateExpression: expr,
+      ConditionExpression: 'attribute_exists(PK)',
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+      ReturnValues: 'ALL_NEW',
+    }));
+    return resp(200, upd.Attributes);
+  }
 
   // --- single order ---
   if (orderName) {

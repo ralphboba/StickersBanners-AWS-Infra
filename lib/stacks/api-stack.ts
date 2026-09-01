@@ -77,6 +77,13 @@ export class ApiStack extends cdk.Stack {
       integration: orderApiIntegration,
       authorizer,
     });
+    // Demo-only manual move between folders (handler hard-guards to DEMO-*/ZZ-*).
+    this.httpApi.addRoutes({
+      path: '/orders/{name}/move',
+      methods: [apigw.HttpMethod.POST],
+      integration: orderApiIntegration,
+      authorizer,
+    });
 
     // Proof review: separate approve/reject routes (clear intent + room for
     // per-route authorization later). Both resume the paused pipeline.

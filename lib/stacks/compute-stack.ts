@@ -108,9 +108,11 @@ export class ComputeStack extends cdk.Stack {
       functionName: `${config.prefix}-order-api`,
       code: lambda.Code.fromAsset(path.join(SRC, 'order-api')),
       environment: { JOBS_TABLE: jobsTable.tableName },
-      description: 'Read-only order/job status lookups',
+      description: 'Order/job status lookups + demo-only status moves',
     });
-    jobsTable.grantReadData(this.orderApi);
+    // Read for lookups; write is used ONLY by the demo-only /move route, which is
+    // hard-guarded in the handler to DEMO-*/ZZ-* orders.
+    jobsTable.grantReadWriteData(this.orderApi);
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.
