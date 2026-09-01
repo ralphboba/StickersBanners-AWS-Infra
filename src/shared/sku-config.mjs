@@ -33,7 +33,7 @@ export const INCH_SKU_PREFIXES = [
 
 // --- 2. Products with NO image finishing -----------------------------------
 // These skip grommets / pole pockets entirely (plain copy) — e.g. stickers.
-export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET']; // SKU10ET = 10ft Event Tent
+export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU10ET = 10ft Event Tent, SKU10TFW = 10ft Tent Full Walls
 
 
 // --- 3. Hardware-only items (NOT image-processed at all) --------------------
@@ -57,6 +57,7 @@ export const KNOWN_SKU_PREFIXES = [
   'SKUBS',  'SKURC',          // backdrop stand / retractable
   'SKUFPUD', 'SKU08',         // fabric pop up display families
   'SKU10ET',                  // 10ft Event Tent (feet, no finishing)
+  'SKU10TFW',                 // 10ft Tent Full Walls (feet, no finishing)
   'SKU-',                     // numbered SKUs (SKU-543, SKU-602, …)
 ];
 

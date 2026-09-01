@@ -16,7 +16,7 @@ FINISHINGCONFIG = {
     "Cut Only": "CO",
 }
 
-NOFINISHSKU = ["SKUAB", "SKUST", "SKU10ET"]  # SKU10ET = 10ft Event Tent
+NOFINISHSKU = ["SKUAB", "SKUST", "SKU10ET", "SKU10TFW"]  # SKU10ET = 10ft Event Tent, SKU10TFW = 10ft Tent Full Walls
 
 
 def build_finishing_obj(item):
