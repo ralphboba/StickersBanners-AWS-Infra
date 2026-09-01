@@ -17,6 +17,13 @@ const GDRIVE_FACILITIES = new Set(['CA']);
 const DEFAULT_NV = new Set(NV_ZIPS);
 const DEFAULT_CA = new Set(CA_ZIPS);
 
+// State -> facility (Linh's rule). NV/CA are decided by ZIP first (NV ships some
+// CA-destination zips); every other state ships from the facility listed here.
+const GA_STATES = new Set(['AL', 'FL', 'GA', 'IN', 'KY', 'MI', 'MS', 'NC', 'SC', 'TN', 'WI', 'OH', 'WV', 'VA']);
+const NJ_STATES = new Set(['CT', 'DC', 'DE', 'MA', 'ME', 'NH', 'NJ', 'NY', 'RI', 'VT', 'MD', 'PA']);
+const TX_STATES = new Set(['AR', 'CO', 'IL', 'IA', 'KS', 'LA', 'MO', 'ND', 'NE', 'NM', 'OK', 'SD', 'TX', 'WY', 'MN']);
+const NV_STATES = new Set(['WA', 'OR', 'NV', 'AZ', 'UT', 'ID', 'MT']);
+
 /**
  * Resolve the transport for a facility.
  * @param {Facility} facility
@@ -29,10 +36,11 @@ export function transportFor(facility) {
 /**
  * Decide the facility for an order from its shipping state + postal code.
  *
- * NV is checked BEFORE CA: NV_ZIPS are the CA destinations the NV facility
- * ships in 1 day, so they take precedence over the broader CA list. GA/NJ/TX
- * use a (still-to-be-defined) state rule; until then those orders are UNROUTED
- * (held for manual assignment) rather than shipped to the wrong facility.
+ * Order of decision (Linh's rule):
+ *   1. NV_ZIPS  — CA destinations the NV facility ships in 1 day (checked first).
+ *   2. CA_ZIPS  — the broader CA-facility zip list.
+ *   3. by state — GA/NJ/TX/NV state lists for everything else.
+ * Anything still unmatched is UNROUTED (held for manual assignment).
  *
  * @param {{ state?: string, postalCode?: string }} shipping
  * @param {{ nvZips?: Set<string>, caZips?: Set<string> }} [dicts]
@@ -45,6 +53,12 @@ export function routeOrder(shipping, dicts = {}) {
 
   if (nvZips.has(zip)) return decided('NV');
   if (caZips.has(zip)) return decided('CA');
+
+  const state = String(shipping?.state ?? '').trim().toUpperCase();
+  if (GA_STATES.has(state)) return decided('GA');
+  if (NJ_STATES.has(state)) return decided('NJ');
+  if (TX_STATES.has(state)) return decided('TX');
+  if (NV_STATES.has(state)) return decided('NV');
 
   return { facility: 'UNROUTED', transport: null, pickupStatus: null };
 }

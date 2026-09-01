@@ -12,14 +12,13 @@ confirming. Treat this as the spec the new system must match.
 - **NV / CA** → decided by **ZIP** (NV ships to certain CA-destination ZIPs; those
   take precedence, else CA). Implemented from legacy `zip.xlsx`
   (`src/shared/zipRouting.mjs`).
-- **GA / NJ / TX** → decided **by shipping state**. The state→facility lists live
-  in OrderDesk's "Moving Notification" rules (admin settings, not the order API).
-  Only a partial screenshot was seen:
-  > "Texas Moving Notification → Shipping State in **MN, IA, MO, AR, TX, OK, KS, …**"
-- **TODO:** the full GA/NJ/TX (and NV) state lists are NOT yet captured. Derive
-  them empirically from real orders already sitting in the facility folders
-  (Georgia `652514`, New Jersey `652515`, Nevada `609286`, plus the Awaiting
-  Pickup folders) by tallying each order's shipping state per folder — read-only.
+- **GA / NJ / TX / NV** → decided **by shipping state**. Linh gave the exact
+  lists (now implemented in `src/shared/routing.mjs`):
+  - **GA**: AL FL GA IN KY MI MS NC SC TN WI OH WV VA
+  - **NJ**: CT DC DE MA ME NH NJ NY RI VT MD PA
+  - **TX**: AR CO IL IA KS LA MO ND NE NM OK SD TX WY MN
+  - **NV**: WA OR NV AZ UT ID MT
+  Decision order: NV_ZIPS → CA_ZIPS → state lists → UNROUTED.
 
 ## Credentials (Linh confirmed)
 
