@@ -15,6 +15,13 @@ on:
         default: "dev"
         required: true
   push:
+    # Deploy only from the working branch. Without this filter ANY branch that
+    # touched src/services/** pushed straight to sb-dev-*:latest, and ECS pulls
+    # latest on every task run — so an unmerged experiment replaced the running
+    # dev images. (That is exactly what happened on #5.)
+    branches:
+      - claude/stickerbanners-aws-cdk-fw49s2
+      - main
     paths:
       - "src/services/**"
       - ".github/workflows/build-images.yml"

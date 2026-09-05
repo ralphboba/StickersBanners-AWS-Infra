@@ -422,7 +422,7 @@ export function cleanOrder(order) {
     customer: { email: order.email, name: shipping.name },
     shipping,
     routing,
-    needsProof: wantsProof(order),
+    needsProof: wantsProof(order, variant),
     // Legacy's order-level rollup (QTSOrderDetails.init / ShopifyDetails.init).
     // Consumed by the intake gate — see src/shared/intake-gate.mjs.
     flags: {
@@ -445,13 +445,26 @@ export function cleanOrder(order) {
   };
 }
 
-function wantsProof(order) {
-  const parts = [order.customer_note, order.internal_note];
-  for (const it of order.order_items ?? []) {
-    const vl = it.variation_list ?? {};
-    parts.push(vl['SPECIAL INSTRUCTIONS'], vl['PROOF'], vl['Proof Options']);
-  }
-  return parts.filter(Boolean).join(' ').toLowerCase().includes('proof');
+/**
+ * Legacy getProofOption (OrderDetails.mjs — shared by both order classes).
+ *
+ * Reads ONE field of `checkout_data`, and the rule is opt-OUT: an order gets a
+ * proof unless that field is empty or says "no proof".
+ *
+ *   Shopify / source_id starting "S"  ->  checkout_data.Note
+ *   everything else                   ->  checkout_data['Proof Option']
+ *
+ * This replaces an earlier guess that searched customer_note, internal_note,
+ * SPECIAL INSTRUCTIONS, PROOF and "Proof Options" for the substring "proof".
+ * That was both the wrong field and the wrong direction: a field reading
+ * "Yes" produced false, so most orders skipped Proofing entirely and no
+ * Zendesk proof email was sent.
+ */
+function wantsProof(order, variant) {
+  const key = variant === SHOPIFY ? 'Note' : 'Proof Option';
+  const value = order?.checkout_data?.[key];
+  if (!value) return false;
+  return !String(value).toLowerCase().includes('no proof');
 }
 
 function num(v) {

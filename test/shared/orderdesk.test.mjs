@@ -204,3 +204,27 @@ test('cleanOrder: quantity labels the file, it never duplicates the image', () =
   assert.equal(it.finishingObj.quantity, 3);
   assert.equal(it.artworkUrls.length, 1);
 });
+
+// --- proof gate (legacy getProofOption) ------------------------------------
+
+test('proof: Shopify orders read checkout_data.Note, opt-out style', () => {
+  const withNote = (Note) => cleanOrder({ ...order(), checkout_data: { Note } }).needsProof;
+  assert.equal(withNote('please match the sample'), true, 'any text wants a proof');
+  assert.equal(withNote('NO PROOF needed'), false);
+  assert.equal(withNote(''), false, 'empty note = no proof');
+  assert.equal(cleanOrder(order()).needsProof, false, 'absent checkout_data = no proof');
+});
+
+test('proof: QTS orders read checkout_data["Proof Option"] instead', () => {
+  const o = { ...order({ sourceId: '4823801586' }), checkout_data: { 'Proof Option': 'yes' } };
+  assert.equal(cleanOrder(o).needsProof, true);
+  // The Shopify field is not consulted on the QTS path.
+  const o2 = { ...order({ sourceId: '4823801586' }), checkout_data: { Note: 'yes' } };
+  assert.equal(cleanOrder(o2).needsProof, false);
+});
+
+test('proof: a field whose value is "Yes" counts as wanting a proof', () => {
+  // The previous substring-on-"proof" rule returned false here, so most orders
+  // silently skipped Proofing and never got a Zendesk email.
+  assert.equal(cleanOrder({ ...order(), checkout_data: { Note: 'Yes' } }).needsProof, true);
+});

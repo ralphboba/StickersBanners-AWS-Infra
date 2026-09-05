@@ -59,8 +59,10 @@ function buildDemoJob(slot) {
     email: 'demo@stickersbanners.invalid', payment_status: 'paid',
     shipping: { first_name: 'Demo', last_name: `#${slot}`, state: v.fac ?? 'CA', postal_code: '00000' },
     shipping_method: 'FedEx Ground', order_total: 1, product_total: 1, currency: 'USD',
-    // half of them require a proof so the board also shows the "proofing" stage
-    customer_note: slot % 2 === 0 ? 'proof' : '',
+    // Half require a proof so the board also shows the "proofing" stage.
+    // Legacy reads checkout_data.Note and treats any text that does not say
+    // "no proof" as wanting one (see wantsProof in shared/orderdesk.mjs).
+    checkout_data: { Note: slot % 2 === 0 ? 'Please send a proof' : 'no proof' },
     order_items: [{
       code: v.sku, name: v.name, quantity: 1,
       variation_list: { WIDTH: v.W, HEIGHT: v.H, 'FINISHING OPTIONS': v.finish, 'UPLOADED FILE': DEMO_ARTWORK },
