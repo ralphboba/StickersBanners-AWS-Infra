@@ -51,6 +51,11 @@ function buildDemoJob(slot) {
   const orderName = `DEMO-${slot}`;
   const order = {
     source_id: orderName, id: orderName, date_added: new Date().toISOString(),
+    // Real store orders are named S##### and so take the Shopify parse path
+    // (see orderVariant in shared/orderdesk.mjs). DEMO-* names would otherwise
+    // fall to the QTS path, which reads artwork from metadata.image1..5 instead
+    // of the variation list and would flag every demo order as missing its file.
+    order_metadata: { 'First Rep': 'Shopify' },
     email: 'demo@stickersbanners.invalid', payment_status: 'paid',
     shipping: { first_name: 'Demo', last_name: `#${slot}`, state: v.fac ?? 'CA', postal_code: '00000' },
     shipping_method: 'FedEx Ground', order_total: 1, product_total: 1, currency: 'USD',
