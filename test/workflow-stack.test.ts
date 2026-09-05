@@ -18,7 +18,9 @@ function build() {
   const cluster = new ecs.Cluster(deps, 'Cluster', { vpc });
 
   const taskDefinitions: Record<string, ecs.FargateTaskDefinition> = {};
-  for (const key of ['resize', 'finish', 'proof']) {
+  // 'ftp' is the Transfer step (FTP for GA/NJ/TX/NV, Google Drive for CA).
+  // Omitting it here made every test in this file crash on defaultContainer.
+  for (const key of ['resize', 'finish', 'proof', 'ftp']) {
     const td = new ecs.FargateTaskDefinition(deps, `${key}Task`);
     td.addContainer(`${key}C`, { image: ecs.ContainerImage.fromRegistry('public.ecr.aws/amazonlinux/amazonlinux:latest') });
     taskDefinitions[key] = td;
