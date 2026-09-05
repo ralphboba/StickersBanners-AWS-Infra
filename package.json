@@ -6,7 +6,8 @@
     "watch": "tsc -w",
     "test": "npm run test:shared && jest",
     "cdk": "cdk",
-    "test:shared": "node --test test/shared/*.test.mjs"
+    "test:shared": "node --test test/shared/*.test.mjs",
+    "test:python": "python3 -m unittest discover -s test/python"
   },
   "devDependencies": {
     "@aws-sdk/client-ssm": "^3.1075.0",
