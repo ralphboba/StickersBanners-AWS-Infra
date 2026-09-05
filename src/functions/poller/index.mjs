@@ -13,6 +13,8 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
+import { intakeGate } from '../../shared/intake-gate.mjs';
+import { updateOrderDeskDetails, orderDeskWritesEnabled } from '../../shared/orderdesk-write.mjs';
 
 const sqs = new SQSClient({});
 // Real orders can carry undefined fields (missing totals/uploads); drop them.
@@ -101,6 +103,43 @@ async function enqueue(job) {
   );
 }
 
+/**
+ * An order that failed the intake gate: recorded so staff can see it and why,
+ * but NEVER put on the intake queue — so nothing resizes, finishes, emails or
+ * transfers. This is the same decision legacy makes; the difference is that
+ * legacy also moves the order in OrderDesk, which we only log until writes are
+ * armed (see orderdesk-write.mjs).
+ */
+async function hold(job, gate, move) {
+  await ddb.send(
+    new PutCommand({
+      TableName: JOBS_TABLE,
+      Item: {
+        PK: `ORDER#${job.orderName}`,
+        SK: 'META',
+        GSI1PK: 'STATUS#needs_review',
+        GSI1SK: job.createdAt,
+        status: 'needs_review',
+        ...job,
+        hold: {
+          reason: gate.reason,
+          explain: gate.explain,
+          // Where legacy would have put it, so the record is complete whether
+          // or not the OrderDesk write actually went out.
+          orderDeskFolder: gate.folder,
+          orderDeskFolderId: gate.folderId,
+          orderDeskTag: gate.tag,
+          moveApplied: Boolean(move?.applied),
+          ...(move?.skipped ? { moveSkipped: move.skipped } : {}),
+          ...(move?.error ? { moveError: move.error } : {}),
+          at: new Date().toISOString(),
+        },
+      },
+      ConditionExpression: 'attribute_not_exists(PK)',
+    }),
+  );
+}
+
 export async function handler(event = {}) {
   const storeId = await getSecret('orderdesk', 'store-id');
   const apiKey = await getSecret('orderdesk', 'api-key');
@@ -130,10 +169,26 @@ export async function handler(event = {}) {
       for (const order of page) {
         const job = sanitize(cleanOrder(order));
         if (!job.orderName) continue;
+
+        // Preview of legacy's intake gate. Orders still sitting in the intake
+        // folder are the ones the bot would pick up next, so show which of them
+        // it would hand to staff instead, and why. Display only — the mirror
+        // never queues anything and never writes to OrderDesk.
+        const gate = folderStatus === 'in_queue' ? intakeGate(job) : null;
+        if (gate) {
+          job.hold = {
+            reason: gate.reason,
+            explain: gate.explain,
+            orderDeskFolder: gate.folder,
+            orderDeskTag: gate.tag,
+            preview: true, // nothing was moved; this is what would happen
+          };
+        }
+
         // Pull aside only genuine anomalies. (Unrouted is NOT one yet — the
         // GA/NJ/TX routing rules are incomplete, so every intake order is
         // unrouted; flagging all of them would make the folder meaningless.)
-        const status = job.hasUnknownSku ? 'needs_review' : folderStatus;
+        const status = (job.hasUnknownSku || gate) ? 'needs_review' : folderStatus;
         current.set(job.orderName, { job, status });
       }
     }
@@ -211,11 +266,16 @@ export async function handler(event = {}) {
   if (dryRun) {
     const inspected = orders.map((order) => {
       const job = cleanOrder(order);
+      const gate = intakeGate(job);
       return {
         orderName: job.orderName,
         folder: job.folder,
         shipping: job.shipping,
         routing: job.routing,
+        variant: job.variant,
+        flags: job.flags,
+        // What the intake gate would do with this order (nothing is moved).
+        gate: gate ? { reason: gate.reason, folder: gate.folder, tag: gate.tag } : null,
         items: job.items.map((it) => ({
           sku: it.sku,
           name: it.name,
@@ -232,6 +292,8 @@ export async function handler(event = {}) {
 
   let enqueued = 0;
   let skipped = 0;
+  let held = 0;
+  const holdReasons = {};
   for (const order of orders) {
     const job = cleanOrder(order);
     if (!job.orderName) continue;
@@ -239,6 +301,26 @@ export async function handler(event = {}) {
       skipped += 1;
       continue;
     }
+
+    // Legacy's five intake checks. An order that trips one is never queued —
+    // it goes to a staff folder instead. This runs before enqueue for exactly
+    // the same reason legacy runs it before writing job data.
+    const gate = intakeGate(job);
+    if (gate) {
+      const move = await updateOrderDeskDetails({
+        order, orderName: job.orderName, tag: gate.tag, folder: gate.folder, storeId, apiKey,
+      });
+      try {
+        await hold(job, gate, move);
+        held += 1;
+        holdReasons[gate.reason] = (holdReasons[gate.reason] ?? 0) + 1;
+      } catch (err) {
+        if (err?.name === 'ConditionalCheckFailedException') skipped += 1;
+        else console.error('hold failed', job.orderName, err);
+      }
+      continue;
+    }
+
     try {
       await enqueue(job);
       enqueued += 1;
@@ -251,7 +333,10 @@ export async function handler(event = {}) {
     }
   }
 
-  const summary = { polled: orders.length, enqueued, skipped };
+  const summary = {
+    polled: orders.length, enqueued, skipped, held, holdReasons,
+    orderDeskWrites: orderDeskWritesEnabled() ? 'ENABLED' : 'disabled',
+  };
   console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
   return summary;
 }

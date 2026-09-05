@@ -76,6 +76,13 @@ export class ComputeStack extends cdk.Stack {
         JOBS_TABLE: jobsTable.tableName,
         SB_ENV: config.env,
         QTS_FOLDER_ID: props.qtsFolderId ?? '',
+        // Arms the only code that writes back to OrderDesk (the intake gate's
+        // folder/tag move, ported from Linh's updateOrderdeskDetails). Held at
+        // "disabled" while this runs alongside the legacy program: the gate
+        // still decides and the dashboard still shows what it would do, but no
+        // real order is moved. Flipping this to "enabled" is a go-live action
+        // and needs explicit approval — see CLAUDE.md "Safety".
+        ORDERDESK_WRITES: 'disabled',
       },
       description: 'Poll the OrderDesk QTS folder, clean jobs, enqueue intake',
     });

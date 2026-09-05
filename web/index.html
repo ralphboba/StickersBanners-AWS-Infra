@@ -256,6 +256,24 @@ async function loadCounts(){
   }));
   renderFolders();
 }
+// Intake gate: the five checks the bot runs before it will touch an order
+// (ported from Linh's program). An order that trips one is never processed —
+// it is handed to staff instead. `preview:true` means nothing was moved in
+// OrderDesk; it is showing what the bot WOULD do, because OrderDesk writes are
+// still switched off while this runs alongside Linh's program.
+const HOLD_LABEL={
+  'special-product':'sales · special product',
+  'multiple-files':'sales · multiple files',
+  'special-instructions':'manual · has instructions',
+  'dc-order':'manual · DC order',
+  'missing-file':'manual · missing/bad file',
+};
+function holdPill(o){
+  if(!o.hold||!o.hold.reason) return '';
+  const label=HOLD_LABEL[o.hold.reason]||o.hold.reason;
+  const tip=[o.hold.explain||'',o.hold.preview?'(preview — nothing moved in OrderDesk)':(o.hold.moveApplied?'(moved in OrderDesk)':'(OrderDesk write skipped)')].filter(Boolean).join(' ');
+  return ` <span title="${esc(tip)}" style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;color:#8a4b00;background:#fdf1df;border:1px solid #f0d3a8">⛔ ${esc(label)}${o.hold.preview?' ·<span style="font-weight:500"> would</span>':''}</span>`;
+}
 async function loadFolder(){
   renderFolders();
   const f=FMAP[current];
@@ -272,7 +290,7 @@ async function loadFolder(){
       <td class="fac">${esc(o.routing?.facility||'—')}</td>
       <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
       <td class="mono" style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
-      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span></td>
+      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span>${holdPill(o)}</td>
     </tr>`).join('');
   $('rows').innerHTML=rows;
   $('empty').hidden=data.orders.length>0;
