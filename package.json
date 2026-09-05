@@ -5,7 +5,9 @@
     "build": "tsc",
     "watch": "tsc -w",
     "test": "jest",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "test:shared": "node --test test/shared/*.test.mjs",
+    "test:all": "npm run test:shared && npm test"
   },
   "devDependencies": {
     "@aws-sdk/client-ssm": "^3.1075.0",

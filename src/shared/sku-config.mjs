@@ -22,10 +22,16 @@
 // are quoted in INCHES instead (e.g. SKUFPUD08X10 = 145 x 91 inches).
 // Symptom of a missing entry: a size reads absurdly large (145 treated as 145
 // FEET). Add the SKU (exact) or a family prefix to fix it.
+// Legacy has TWO copies of this list, one per order class, and they differ:
+// QTSOrderDetails.mjs has 8 entries; ShopifyDetails.mjs has the same 8 plus
+// SKUXBB. Real store orders (source_id starting with "S") run the Shopify
+// class, so SKUXBB is inch-quoted for them and foot-quoted for QTS orders.
 export const INCH_SKUS = [
   'SKUPB', 'SKUXB', 'SKU-543', 'SKU-545',
   'SKU-DXB-B', 'SKU-DXB', 'SKUDXBB', 'SKUDXBBB',
 ];
+/** In legacy's ShopifyDetails INTSKU only — not in the QTS copy. */
+export const INCH_SKUS_SHOPIFY_ONLY = ['SKUXBB'];
 export const INCH_SKU_PREFIXES = [
   'SKUFPUD', // Fabric Pop Up Display (all sizes: SKUFPUD08X10, SKUFPUD10X10, …)
 ];
@@ -91,9 +97,11 @@ export function isKnownSku(sku) {
 
 
 // --- helpers (used by the intake logic) ------------------------------------
-export function isInchSku(sku) {
+export function isInchSku(sku, { shopify = false } = {}) {
   const s = String(sku ?? '');
-  return INCH_SKUS.includes(s) || INCH_SKU_PREFIXES.some((p) => s.startsWith(p));
+  if (INCH_SKUS.includes(s)) return true;
+  if (shopify && INCH_SKUS_SHOPIFY_ONLY.includes(s)) return true;
+  return INCH_SKU_PREFIXES.some((p) => s.startsWith(p));
 }
 
 export function isNoFinishSku(sku) {
