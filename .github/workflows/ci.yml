@@ -38,6 +38,19 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # The image services are Python and had no CI coverage. The grommet tests
+      # pin output that must stay byte-identical to Linh's program, so they need
+      # to run somewhere that fails the build.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install image-service test deps
+        run: pip install -r src/services/finish/requirements.txt
+
+      - name: Python unit tests
+        run: npm run test:python
+
       - name: CDK synth (dev)
         run: npx cdk synth --context env=dev
 

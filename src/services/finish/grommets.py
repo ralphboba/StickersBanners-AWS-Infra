@@ -124,10 +124,20 @@ class GrommetsAdder:
             sides=sides, widthGrommetsCounts=widthGrommetsCounts,
             heightGrommetsCounts=heightGrommetsCounts)
 
-        # corners drawn once (legacy removed duplicates, then always drew corners)
+        # Legacy subtracts the corners and draws only what is left, so no corner
+        # mark is ever printed:
+        #
+        #     filteredPositions = positions - cornerPositions
+        #     res = self.drawGrommetPoints(positions=filteredPositions, ...)
+        #
+        # getSideGrommetsPositions includes both endpoints of a side, and those
+        # endpoints ARE the corners, so this drops them from every side too. A
+        # 2x2 banner therefore comes out with no marks at all. That is what
+        # production has been receiving, so it is what we produce — do not
+        # "fix" this into drawing corners without Linh confirming first.
         cornerPositions = set(self.getCornerGrommetPositions())
-        allPositions = cornerPositions | (positions - cornerPositions)
-        return self.drawGrommetPoints(allPositions, convertedFileDir)
+        filteredPositions = positions - cornerPositions
+        return self.drawGrommetPoints(filteredPositions, convertedFileDir)
 
     def drawGrommetPoints(self, positions, convertedFileDir):
         if self.ImageInstance is None:
