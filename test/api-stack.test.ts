@@ -33,11 +33,22 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
 }
 
 describe('ApiStack', () => {
-  test('creates one HTTP API with five routes', () => {
+  test('creates one HTTP API with exactly the expected routes', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
-    // webhook, orders list, order status, approve, reject
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 5);
+    // Asserting the route keys rather than a count: a bare count goes stale
+    // silently every time a route is added, and says nothing about which.
+    const keys = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
+      .map((r) => r.Properties.RouteKey)
+      .sort();
+    expect(keys).toEqual([
+      'GET /orders',
+      'GET /orders/{name}',
+      'POST /orders/{name}/approve',
+      'POST /orders/{name}/move',
+      'POST /orders/{name}/reject',
+      'POST /webhook/orderdesk',
+    ]);
   });
 
   test('orders list route exists and requires auth', () => {
