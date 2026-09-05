@@ -20,6 +20,12 @@ authority: **Linh** (legacy author).
 ## Safety
 - dev uses REAL production credentials. Never process real orders without explicit
   go-live approval. The real poll schedule (`sb-dev-poller`) stays DISABLED.
+- **`ORDERDESK_WRITES` stays `disabled`.** It arms the only code that writes back
+  to OrderDesk (`src/shared/orderdesk-write.mjs` — the intake gate's folder/tag
+  move, ported from Linh's `updateOrderdeskDetails`). The gate itself always runs
+  and the dashboard shows what it *would* do; the write is what's held back.
+  Arming it is a go-live action needing Kai's explicit approval. `DEMO-*`/`ZZ-*`
+  can never write regardless.
 - Demo sandbox: synthetic `DEMO-*` orders + display-only mirror of real orders.
   `DEMO-*`/`ZZ-*` orders never send real email or transfer (hard guard).
 - Rotate all pasted keys (OrderDesk/FTP/Zendesk) before real go-live.
