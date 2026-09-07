@@ -14,6 +14,10 @@ import {
 import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
+import {
+  isClaimed, isConditionFailure,
+  CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
+} from '../../shared/job-rows.mjs';
 import { updateOrderDeskDetails, orderDeskWritesEnabled } from '../../shared/orderdesk-write.mjs';
 
 const sqs = new SQSClient({});
@@ -70,11 +74,21 @@ async function fetchFolder(storeId, apiKey, folderId, max) {
   return out;
 }
 
+/**
+ * Has the pipeline already taken this order? The mirror writes a row for every
+ * order in the intake folder, so a bare "does a row exist" check would make
+ * this skip every real order once the schedule is enabled — see shared/job-rows.
+ */
 async function alreadySeen(orderName) {
   const res = await ddb.send(
-    new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' }, ProjectionExpression: 'PK' }),
+    new GetCommand({
+      TableName: JOBS_TABLE,
+      Key: { PK: `ORDER#${orderName}`, SK: 'META' },
+      ProjectionExpression: 'PK, #m',
+      ExpressionAttributeNames: { '#m': 'mirror' },
+    }),
   );
-  return Boolean(res.Item);
+  return isClaimed(res.Item);
 }
 
 async function enqueue(job) {
@@ -89,8 +103,10 @@ async function enqueue(job) {
         status: 'in_queue',
         ...job,
       },
-      // guard against a race with a concurrent poll
-      ConditionExpression: 'attribute_not_exists(PK)',
+      // Create the row, or take over the mirror's display-only one. Still
+      // fails if a real order row exists — that is the dedupe/race guard.
+      ConditionExpression: CLAIM_CONDITION,
+      ExpressionAttributeValues: MIRROR_VALUES,
     }),
   );
   await sqs.send(
@@ -135,7 +151,8 @@ async function hold(job, gate, move) {
           at: new Date().toISOString(),
         },
       },
-      ConditionExpression: 'attribute_not_exists(PK)',
+      ConditionExpression: CLAIM_CONDITION,
+      ExpressionAttributeValues: MIRROR_VALUES,
     }),
   );
 }
@@ -231,7 +248,15 @@ export async function handler(event = {}) {
     let pruned = 0;
     for (const name of existing.keys()) {
       if (!current.has(name)) {
-        await ddb.send(new DeleteCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${name}`, SK: 'META' } }));
+        // Only ever delete a row the mirror owns. Without this, an order the
+        // pipeline had since claimed would be wiped when it left the mirrored
+        // folders.
+        await ddb.send(new DeleteCommand({
+          TableName: JOBS_TABLE,
+          Key: { PK: `ORDER#${name}`, SK: 'META' },
+          ConditionExpression: MIRROR_ONLY_CONDITION,
+          ExpressionAttributeValues: MIRROR_VALUES,
+        })).catch((e) => { if (!isConditionFailure(e)) throw e; });
         pruned += 1;
       }
     }
