@@ -84,6 +84,35 @@ export async function handler(event) {
     return resp(200, res.Item);
   }
 
+  // --- all folder counts in one call: GET /orders?counts=1 ---
+  // The dashboard needs a number per folder on every refresh. It used to ask
+  // for each status separately — 12 parallel invocations every 20s, each one
+  // paging the ENTIRE order list just to read .count. That burst is what
+  // produced the intermittent 503s. Select:'COUNT' also means DynamoDB never
+  // ships the items.
+  if (event?.queryStringParameters?.counts !== undefined) {
+    const entries = await Promise.all(STATUSES.map(async (s) => {
+      let total = 0;
+      let ExclusiveStartKey;
+      do {
+        const res = await ddb.send(
+          new QueryCommand({
+            TableName: JOBS_TABLE,
+            IndexName: 'GSI1',
+            KeyConditionExpression: 'GSI1PK = :s',
+            ExpressionAttributeValues: { ':s': `STATUS#${s}` },
+            Select: 'COUNT',
+            ExclusiveStartKey,
+          }),
+        );
+        total += res.Count ?? 0;
+        ExclusiveStartKey = res.LastEvaluatedKey;
+      } while (ExclusiveStartKey);
+      return [s, total];
+    }));
+    return resp(200, { counts: Object.fromEntries(entries) });
+  }
+
   // --- list by status (GSI1: GSI1PK = STATUS#<status>, newest first) ---
   const status = event?.queryStringParameters?.status ?? 'in_queue';
   if (!STATUSES.includes(status)) {

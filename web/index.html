@@ -232,6 +232,9 @@ async function api(path, opts={}){
     if(rt){ try{ token=await refreshSession(rt); r=await call(); }catch{} }
     if(r.status===401){ clearSession(); location.reload(); return; }
   }
+  // A cold start or a brief throttle shows up as 5xx. Retry once so a blip
+  // doesn't blank the board until the next refresh.
+  if(r.status>=500){ await new Promise(s=>setTimeout(s,600)); r=await call(); }
   const d = await r.json().catch(()=>({}));
   if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
   return d;
@@ -250,10 +253,20 @@ function renderFolders(){
     wrap.appendChild(b);
   }
 }
+// One request for every folder count. Asking per folder meant 12 parallel
+// calls on every 20s refresh, each paging a whole status just to read .count —
+// that burst is what made the API return 503 now and then.
 async function loadCounts(){
-  await Promise.all(FOLDERS.filter(f=>f.key).map(async f=>{
-    try { const d=await api(`/orders?status=${f.key}`); counts[f.key]=d.count; } catch { counts[f.key]='—'; }
-  }));
+  try{
+    const d=await api('/orders?counts=1');
+    for(const f of FOLDERS) if(f.key) counts[f.key]=d.counts?.[f.key] ?? 0;
+  }catch{
+    // Fallback for a dashboard deployed ahead of the API. Remove once the
+    // counts endpoint has shipped everywhere.
+    await Promise.all(FOLDERS.filter(f=>f.key).map(async f=>{
+      try { const d=await api(`/orders?status=${f.key}`); counts[f.key]=d.count; } catch { counts[f.key]='—'; }
+    }));
+  }
   renderFolders();
 }
 // Intake gate: the five checks the bot runs before it will touch an order
@@ -279,7 +292,15 @@ async function loadFolder(){
   const f=FMAP[current];
   $('headname').textContent=f.name; $('headtick').style.background=`var(${f.color})`;
   $('rows').innerHTML=''; $('empty').hidden=true; $('loading').hidden=false; $('headsub').textContent='';
-  let data; try { data=await api(`/orders?status=${current}`); } catch(e){ $('loading').textContent=e.message; return; }
+  let data;
+  try { data=await api(`/orders?status=${current}`); }
+  catch(e){
+    // Keep the rows already on screen; only say something if there is nothing
+    // to show. The next refresh is 20s away.
+    $('loading').hidden=true;
+    if(!$('rows').children.length) $('empty').hidden=false;
+    return;
+  }
   $('loading').hidden=true;
   counts[current]=data.count; renderFolders();
   $('headsub').textContent=`${data.count} order${data.count!==1?'s':''}`;
