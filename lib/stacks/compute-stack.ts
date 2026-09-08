@@ -17,6 +17,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly notifyQueue: sqs.IQueue;
   /** dzi CloudFront base URL, for the customer proof link in the Zendesk email. */
   readonly proofCdnBase?: string;
+  /** Customer-facing proof portal, where the Zendesk mail sends them to approve. */
+  readonly proofPortalBase?: string;
   /** OrderDesk folder id the poller pulls ready orders from (QTS). */
   readonly qtsFolderId?: string;
 }
@@ -101,6 +103,7 @@ export class ComputeStack extends cdk.Stack {
       environment: {
         // dzi CloudFront base for the customer proof link (optional).
         PROOF_CDN_BASE: props.proofCdnBase ?? '',
+        PROOF_PORTAL_BASE: props.proofPortalBase ?? '',
       },
     });
     // SqsEventSource also grants Receive/Delete on the queue.

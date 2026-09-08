@@ -56,6 +56,51 @@ confirming. Treat this as the spec the new system must match.
 - **Google Chat alerts**: turned OFF per Kai — staff track everything in the
   dashboard; Zendesk proof email is the only external notification.
 
+## Linh's answers, round 2 (2026-09)
+
+Asked after diffing this port against his source. Quoted, then what we did.
+
+- **Dead constants.** "there are some variables i added for temporary use but
+  then went with a different method and i never removed it." → `NOFINISHSKU` in
+  `constants.mjs` is a leftover, not a wiring bug.
+- **Adhesive banners.** "adhesive banners are sent without applying finishing
+  options." → `SKUAB` stays in `NO_FINISH_SKUS`. They ARE auto-processed (the
+  product name has no "sticker", so `checkSpecialProduct` never catches them).
+- **Zendesk.** assignee id `1900327743467` (Linh's own queue), custom field id
+  `22794009`. Seeded to SSM as `zendesk/assignee-id` and `zendesk/field-id`.
+  ⚠️ The assignee is a personal box — needs reassigning at handover.
+- **Proof approval.** "i said i didn't see the point in disapproving, not not
+  letting them approve … right now they'd still need to approve via the portal."
+  → Customers DO approve, on the portal. There is no disapprove. File upload
+  stays off; revisions come back by email.
+- **Bravo tabs.** "grommet with bravo tabs is treated the same as regular
+  grommets. the position depends on the sales rep to change, customers can only
+  request options for positions in the special instructions." → all four sides,
+  same as the plain grommet key. Position is a human decision afterwards.
+- **Cut Only.** "cut only is fine" → keep the `CO` suffix we added.
+- **Corner grommets.** "yes productions doesn't need corner grommets" → keep
+  legacy's `positions - cornerPositions`; no corner marks are drawn.
+- **`/proof` uploads.** "the proof endpoint is to generate a thumbnail for the
+  invoice on orderdesk. invoices will show them for production to use as
+  reference." → the rename to the OrderDesk line-item id matters; the invoice
+  looks the image up by it. Implemented as `renameDict`.
+- **Extra routing rules.** "all the things you asked about being live is still
+  live" → pickup keywords, the 3–6pm ET express cutoff, the 3-day→2-day upgrade
+  and see-thru→NV are all implemented.
+
+### Not answered yet
+
+1. The hardware SKU list. Ours is derived from the store's SKU catalogue
+   (`SB_SKU.xlsx`, confirmed current by Kai) — 23 codes in `sku-config.mjs`.
+   Still unverified against his `dict:hardwareSku`.
+2. Whether other SKU codes need the `SKU-DXB-B` name check. From the catalogue,
+   `SKUFSR08X08`, `SKUFSR08X10` and `SKUFB` each cover two products — but both
+   sides of each are printed, so none affects the hardware filter.
+3. Where `proof.stickersbanners.com` is hosted and who can repoint it. It is not
+   in the legacy repo; SBBotExpress only serves its API. If his program is
+   switched off with the portal still calling it, every order stalls at proofing.
+4. How customers authenticate on the portal (`requireGeneralAuth`).
+
 ## Still to confirm with Linh
 
 1. Full GA/NJ/TX/NV state→facility lists (or approve deriving them from real orders).

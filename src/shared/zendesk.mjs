@@ -1,41 +1,80 @@
-// Zendesk — the main channel we use to talk to customers.
+// Zendesk — the only external notification the system sends.
 //
-// When a proof is ready, we create a public ticket with the customer as the
-// requester; Zendesk emails them the proof link so they can review and reply
-// if they want changes (revisions are handled by staff over email — customers
-// never upload files here).
+// Ported from legacy zendeskHelper.submitTicket. When a proof is ready we open a
+// ticket with the customer as requester; Zendesk emails them the proof link.
+//
+// Linh's rules, confirmed:
+//   - the customer DOES approve, on the proof portal. What he didn't want was a
+//     *disapprove* button, and customers uploading replacement files.
+//   - revisions come back by email to sales@stickersbanners.com, not through
+//     the portal.
+// So the mail says "view and approve", and offers no upload path.
 
 import { getGroup } from './secrets.mjs';
 
+const PROOF_VIEWER_URL = 'https://proof.stickersbanners.com/proof-viewer';
+const SALES_EMAIL = 'sales@stickersbanners.com';
+
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 /**
- * Create a "proof ready" ticket that emails the customer.
- * @param {{ orderName: string, customerEmail: string, customerName?: string, proofUrl?: string }} p
+ * Legacy emailTemplate.html, with ${orderId} substituted. Kept close to the
+ * original wording — customers have been reading this exact mail for a while,
+ * and the desktop/zoom advice matters for judging a proof.
+ */
+export function proofEmailHtml(orderName, proofUrl = PROOF_VIEWER_URL) {
+  return [
+    '<p>Hello,<br />',
+    `Your proof for order <strong>${esc(orderName)}</strong> is ready for review.<br />`,
+    'For best results, please view it on a desktop or larger screen. ',
+    'Mobile viewing is supported, but quality may not display accurately. ',
+    'Zoom in to check all details before approving.<br />',
+    'View and approve your proof here:<br /><br />',
+    `<a href="${esc(proofUrl)}" target="_blank" rel="noopener nofollow noreferrer">${esc(proofUrl)}</a><br />`,
+    'If you need any changes (file updates, product changes, etc.), please email ',
+    `<strong>${SALES_EMAIL}</strong> or reply-all so we receive your request.<br />`,
+    'Please note: All proofs must be approved together, and the order will be ',
+    'processed as approved.<br />',
+    'Best regards,<br /><br /><strong>StickersBanners Team</strong></p>',
+  ].join('');
+}
+
+/**
+ * Create the "proof ready" ticket. Mirrors legacy submitTicket: the customer is
+ * the requester and is CC'd, the ticket is assigned to the proofing agent, left
+ * in `pending` (waiting on the customer), and tagged with the order number in
+ * the custom field so it can be found by order.
+ *
+ * @param {{ orderName: string, customerEmail: string, customerName?: string,
+ *           proofUrl?: string }} p
  */
 export async function sendProofReadyEmail({ orderName, customerEmail, customerName, proofUrl }) {
   if (!customerEmail) throw new Error(`no customer email for order ${orderName}`);
   const g = await getGroup('zendesk');
-  const subdomain = g.subdomain;
   const auth = Buffer.from(`${g.email}/token:${g['api-token']}`).toString('base64');
 
-  const hi = customerName ? `Hi ${customerName},` : 'Hi,';
-  const link = proofUrl ? `\n\nView your proof here:\n${proofUrl}` : '';
-  const body =
-    `${hi}\n\nYour proof for order ${orderName} is ready to review.${link}\n\n` +
-    `If everything looks good, no action is needed — we'll get it printed. ` +
-    `If you'd like any changes, just reply to this email and our team will help.\n\n` +
-    `Thanks,\nStickersBanners`;
+  const assigneeId = Number(g['assignee-id']);
+  const fieldId = Number(g['field-id']);
 
-  const res = await fetch(`https://${subdomain}.zendesk.com/api/v2/tickets.json`, {
+  const ticket = {
+    subject: `Proof for Order ${orderName} is ready to be reviewed`,
+    comment: { html_body: proofEmailHtml(orderName, proofUrl || PROOF_VIEWER_URL) },
+    requester: { name: customerName || 'Customer', email: customerEmail },
+    email_ccs: [{ user_email: customerEmail }],
+    status: 'pending',
+    // Both are optional on our side: if a value is missing from SSM the ticket
+    // still goes out, just unassigned / unfiled, rather than failing the send.
+    ...(Number.isFinite(assigneeId) && assigneeId > 0 ? { assignee_id: assigneeId } : {}),
+    ...(Number.isFinite(fieldId) && fieldId > 0
+      ? { custom_fields: [{ id: fieldId, value: orderName }] }
+      : {}),
+  };
+
+  const res = await fetch(`https://${g.subdomain}.zendesk.com/api/v2/tickets.json`, {
     method: 'POST',
     headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      ticket: {
-        subject: `Your proof is ready — Order ${orderName}`,
-        requester: { email: customerEmail, name: customerName || customerEmail },
-        comment: { public: true, body },
-        tags: ['proof_ready', 'auto'],
-      },
-    }),
+    body: JSON.stringify({ ticket }),
   });
   if (!res.ok) throw new Error(`Zendesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json();

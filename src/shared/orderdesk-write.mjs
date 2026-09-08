@@ -99,3 +99,63 @@ export async function updateOrderDeskDetails({
   console.log(JSON.stringify({ msg: 'orderdesk move applied', orderName, ...intent }));
   return { applied: true, folderId, tagValue };
 }
+
+/**
+ * Legacy changeExpress: a 3-day order placed between 3pm and 6pm ET is upgraded
+ * to 2-day, with a note appended so staff can see why. routeOrder decides this
+ * and returns it as an intent; performing it is a write, so it goes through the
+ * same kill switch as the folder move.
+ *
+ * @param {{ order: object, orderName: string,
+ *           upgrade: { to: string, note: string },
+ *           storeId: string, apiKey: string }} p
+ */
+export async function applyExpressUpgrade({ order, orderName, upgrade, storeId, apiKey }) {
+  const intent = { from: order?.shipping_method, to: upgrade?.to, note: upgrade?.note };
+
+  if (isSyntheticOrder(orderName)) {
+    console.log(JSON.stringify({ msg: 'express upgrade skipped (synthetic order)', orderName, ...intent }));
+    return { applied: false, skipped: 'synthetic' };
+  }
+  if (!orderDeskWritesEnabled()) {
+    console.log(JSON.stringify({
+      msg: 'express upgrade WOULD HAVE RUN (writes disabled)', orderName, ...intent,
+    }));
+    return { applied: false, skipped: 'disabled' };
+  }
+
+  const orderDeskId = String(order?.id ?? '');
+  if (!orderDeskId || !upgrade?.to) return { applied: false, error: 'missing order id or target' };
+
+  // Legacy formats the note timestamp in America/New_York, the same clock the
+  // cutoff is measured against.
+  const stamp = new Date().toLocaleString('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).replace(',', '');
+
+  const updated = {
+    ...order,
+    shipping_method: upgrade.to,
+    order_notes: [
+      ...(order.order_notes ?? []),
+      { username: 'SBBot', date_added: stamp, content: upgrade.note },
+    ],
+  };
+  const res = await fetch(`${OD}/orders/${orderDeskId}`, {
+    method: 'PUT',
+    headers: {
+      'ORDERDESK-STORE-ID': storeId,
+      'ORDERDESK-API-KEY': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updated),
+  });
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 200);
+    return { applied: false, error: `OrderDesk ${res.status}: ${body}` };
+  }
+  console.log(JSON.stringify({ msg: 'express upgrade applied', orderName, ...intent }));
+  return { applied: true };
+}

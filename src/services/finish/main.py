@@ -88,7 +88,9 @@ def main():
 
     with tempfile.TemporaryDirectory() as scratch:
         for i, item in enumerate(items, start=1):
-            item_no = f"{i}-1"
+            # itemNo comes from intake and predates the hardware filter — see
+            # the note in resize/main.py.
+            item_no = f"{item.get('itemNo', i)}-1"
             src_key = f"{order_name}/{item_no}v1.tif"
             src = os.path.join(scratch, f"{item_no}v1.tif")
             s3.download_file(PROCESSED_BUCKET, src_key, src)
