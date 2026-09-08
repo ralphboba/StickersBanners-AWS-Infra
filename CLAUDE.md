@@ -11,7 +11,11 @@ authority: **Linh** (legacy author).
 ## Non-negotiables Linh set
 - **Routing**: NV/CA by ZIP; **GA/NJ/TX ship by state** (state lists still to be
   captured — derive from real orders in the facility folders).
-- **No customer approve/reject or file upload** — revisions happen over email.
+- **Customers approve, but never reject and never upload.** Linh: "i said i
+  didn't see the point in disapproving, not not letting them approve … right now
+  they'd still need to approve via the portal." Approval happens on
+  `proof.stickersbanners.com`; revisions come back by email. Do NOT add a reject
+  button or a customer upload path.
 - **Pipeline ends at the production folder** (`pickup_*`); production owns
   "completed". Don't build a completed transition.
 - **Zendesk** proof-ready email is the only external notification (Google Chat off).

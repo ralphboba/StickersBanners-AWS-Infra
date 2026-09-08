@@ -85,7 +85,10 @@ def main():
 
     with tempfile.TemporaryDirectory() as scratch:
         for i, item in enumerate(items, start=1):
-            name = f"{i}-1"  # legacy naming: {item}-{file}
+            # Use the itemNo the intake assigned BEFORE hardware lines were
+            # dropped. Renumbering here would shift every file after a removed
+            # stand — legacy numbers with index+1 and only then filters.
+            name = f"{item.get('itemNo', i)}-1"  # legacy naming: {item}-{file}
             local = fetch_artwork(item, scratch, name)
             output = os.path.join(scratch, f"{name}v1.tif")
 

@@ -228,3 +228,71 @@ test('proof: a field whose value is "Yes" counts as wanting a proof', () => {
   // silently skipped Proofing and never got a Zendesk email.
   assert.equal(cleanOrder({ ...order(), checkout_data: { Note: 'Yes' } }).needsProof, true);
 });
+
+// --- hardware lines (legacy checkHardwareSku + items.filter) ----------------
+
+test('hardware lines are dropped from the order', () => {
+  const o = order();
+  o.order_items.push({
+    code: 'SKUBS08X08', name: "8' x 8' Adjustable Banner Stand", quantity: 1, id: 'LI2',
+    variation_list: {}, metadata: {},
+  });
+  const job = cleanOrder(o);
+  assert.equal(job.items.length, 1, 'only the printed line survives');
+  assert.equal(job.items[0].sku, 'SKUVB');
+  assert.deepEqual(job.hardwareItems.map((h) => h.sku), ['SKUBS08X08']);
+});
+
+test('a banner ordered with a stand still processes the banner', () => {
+  // Before the hardware filter the stand had no artwork, so isMissingFile put
+  // the WHOLE order in front of a person.
+  const o = order();
+  o.order_items.push({
+    code: 'SKURC0408', name: "4' x 8' Red Carpet", quantity: 1, id: 'LI2',
+    variation_list: {}, metadata: {},
+  });
+  const job = cleanOrder(o);
+  assert.equal(job.flags.isMissingFile, false);
+  assert.equal(job.items.length, 1);
+});
+
+test('itemNo is assigned before hardware is dropped, so files do not renumber', () => {
+  // stand first, banner second -> the banner keeps itemNo 2 and its file stays "2-1"
+  const o = order();
+  o.order_items.unshift({
+    code: 'SKUBS08X10', name: "10' x 8' Adjustable Banner Stand", quantity: 1, id: 'LI0',
+    variation_list: {}, metadata: {},
+  });
+  const job = cleanOrder(o);
+  assert.equal(job.items.length, 1);
+  assert.equal(job.items[0].itemNo, 2);
+  assert.deepEqual(Object.keys(job.renameDict), ['2-1']);
+});
+
+test('SKU-DXB-B is hardware as a stand but printed as a banner', () => {
+  const dxb = (name) => cleanOrder({
+    ...order(),
+    order_items: [{
+      code: 'SKU-DXB-B', name, quantity: 1, id: 'LI9',
+      variation_list: { WIDTH: '6', HEIGHT: '5', 'FINISHING OPTIONS': 'Hem Only', 'Uploaded File': ART },
+      metadata: {},
+    }],
+  });
+  assert.equal(dxb('Double-Sided X-Banners(Stand only)').items.length, 0);
+  assert.equal(dxb('Double-Sided X-Banners(banner only 1ea)').items.length, 1);
+  assert.equal(dxb('Double-Sided X-Banners(banner only 2ea)').items.length, 1);
+});
+
+// --- renameDict (OrderDesk invoice thumbnails) -----------------------------
+
+test('renameDict maps each proof jpg to the OrderDesk line-item id', () => {
+  // Linh: the /proof upload feeds the invoice thumbnail, looked up by line id.
+  const job = cleanOrder(order());
+  assert.deepEqual(job.renameDict, { '1-1': 'LI1' });
+});
+
+test('a line with no id is left out of renameDict rather than renamed wrongly', () => {
+  const o = order();
+  delete o.order_items[0].id;
+  assert.deepEqual(cleanOrder(o).renameDict, {});
+});

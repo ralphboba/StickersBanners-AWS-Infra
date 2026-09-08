@@ -65,10 +65,46 @@ export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU1
 
 
 // --- 3. Hardware-only items (NOT image-processed at all) --------------------
-// Stands, poles, and other physical hardware. The legacy program filtered these
-// out; list to be populated from the hardware sheet. Empty = filter off for now.
-export const HARDWARE_SKUS = [];
+// Stands, poles, carpets — physical goods with no artwork. Legacy removes these
+// line items from the order entirely (checkHardwareSku -> items.filter(Boolean))
+// so the rest of the order still gets processed.
+//
+// Derived from the store's SKU catalogue (SB_SKU.xlsx), which Kai confirmed is
+// current. Every entry is a product whose name makes it unambiguous — "Adjustable
+// Banner Stand", "Red Carpet", "Telescopic Pole Replacement". NOT yet confirmed
+// against Linh's `dict:hardwareSku` itself; he hasn't sent it.
+//
+// Deliberately excluded because the catalogue name is ambiguous: SKUHS
+// ("H-Stake") and ANTIF ("Antimicrobial Copper Film"). Leaving them out is the
+// safe default — with no artwork they trip the missing-file gate and reach a
+// person, rather than being silently dropped from an order.
+export const HARDWARE_SKUS = [
+  // Banner stands
+  'SKUBS08X08', 'SKUBS08X10', 'SKUBS08X12', 'SKUBS08X16', 'SKUBS08X20', 'SKUBS08X30',
+  // Red carpets
+  'SKURC0308', 'SKURC0310', 'SKURC0408', 'SKURC0410', 'SKURC0412', 'SKURC0416', 'SKURC0420',
+  // Poles and replacement parts
+  'SKU-461', 'SKU-462', 'SKU-463', 'SKU-510', 'SKU-511', 'SKU-541', 'ABR8',
+  // Stand-only variants of printed products
+  'SKU-544', // X-Banners (Stand only)
+  'SKU-546', // Popup Retractable Banners (Stand only)
+  // Packaging
+  'ST8', // Shipping Tube (8' Cardboard)
+];
 export const HARDWARE_SKU_PREFIXES = [];
+
+/**
+ * SKU codes the store reuses for BOTH a hardware item and a printed one, where
+ * only the product name tells them apart. Legacy hard-codes exactly one of
+ * these (checkHardwareSku): SKU-DXB-B is "Double-Sided X-Banners(Stand only)"
+ * but also "(banner only 1ea)" and "(banner only 2ea)".
+ *
+ * `notHardwareWhenNameHas` — if the product name contains this, the line is a
+ * printed product and must NOT be filtered out.
+ */
+export const HARDWARE_SKU_NAME_EXCEPTIONS = {
+  'SKU-DXB-B': { notHardwareWhenNameHas: 'banner only' },
+};
 
 
 // --- 4. Known product families (for the "unknown SKU" alert) ---------------
@@ -108,7 +144,20 @@ export function isNoFinishSku(sku) {
   return NO_FINISH_SKUS.includes(String(sku ?? ''));
 }
 
-export function isHardwareSku(sku) {
+/**
+ * Legacy checkHardwareSku. Takes the product NAME as well as the code, because
+ * one code covers both a stand and a printed banner — see
+ * HARDWARE_SKU_NAME_EXCEPTIONS.
+ */
+export function isHardwareSku(sku, productName = '') {
   const s = String(sku ?? '');
-  return HARDWARE_SKUS.includes(s) || HARDWARE_SKU_PREFIXES.some((p) => s.startsWith(p));
+  const exception = HARDWARE_SKU_NAME_EXCEPTIONS[s];
+  if (exception && String(productName ?? '').toLowerCase().includes(exception.notHardwareWhenNameHas)) {
+    return false;
+  }
+  if (HARDWARE_SKUS.includes(s)) return true;
+  if (HARDWARE_SKU_PREFIXES.some((p) => s.startsWith(p))) return true;
+  // A code listed only in the exception table is hardware unless the name says
+  // otherwise (legacy treats SKU-DXB-B that way — it is in the hardware dict).
+  return Boolean(exception);
 }

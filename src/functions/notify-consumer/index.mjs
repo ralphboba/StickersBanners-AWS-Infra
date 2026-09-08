@@ -10,6 +10,8 @@
 import { sendProofReadyEmail } from '../../shared/zendesk.mjs';
 
 const PROOF_CDN_BASE = process.env.PROOF_CDN_BASE ?? '';
+const PROOF_PORTAL_BASE = process.env.PROOF_PORTAL_BASE ?? '';
+void PROOF_CDN_BASE; // tiles are loaded by the portal, not linked from the mail
 
 // Safety net: synthetic demo/test orders (DEMO-*, ZZ-*) never send a real
 // customer email, regardless of any other flag. Real orders are unaffected.
@@ -17,10 +19,16 @@ function isDemoOrder(name) {
   return typeof name === 'string' && /^(DEMO-|ZZ-)/i.test(name);
 }
 
-/** Best-effort proof link for the customer (single-item review image). */
+/**
+ * The customer link. Linh confirmed customers review AND approve on the proof
+ * portal, so the mail must point there — a bare CDN image gives them nothing to
+ * approve. Undefined falls back to the portal root inside zendesk.mjs.
+ *
+ * PROOF_CDN_BASE still serves the DZI tiles the portal itself loads.
+ */
 function proofUrl(orderName) {
-  if (!PROOF_CDN_BASE) return undefined;
-  return `${PROOF_CDN_BASE}/${encodeURIComponent(orderName)}/1-1v1.tif_review.jpg`;
+  if (!PROOF_PORTAL_BASE) return undefined;
+  return `${PROOF_PORTAL_BASE}?order=${encodeURIComponent(orderName)}`;
 }
 
 /**

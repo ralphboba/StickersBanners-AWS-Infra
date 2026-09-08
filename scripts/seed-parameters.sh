@@ -48,6 +48,10 @@ put "$PREFIX/orderdesk/store-id"     "${ORDERDESK_STORE_ID:-}"
 put "$PREFIX/zendesk/subdomain"      "${ZENDESK_SUBDOMAIN:-}"
 put "$PREFIX/zendesk/email"          "${ZENDESK_EMAIL:-}"
 put "$PREFIX/zendesk/api-token"      "${ZENDESK_API_TOKEN:-}"
+# Ticket routing, from Linh. assignee-id is the agent the proof ticket lands on;
+# field-id is the custom field that carries the order number.
+put "$PREFIX/zendesk/assignee-id"    "${ZENDESK_ASSIGNEE_ID:-}"
+put "$PREFIX/zendesk/field-id"       "${ZENDESK_FIELD_ID:-}"
 
 put "$PREFIX/ftp/host"               "${FTP_HOST:-}"
 put "$PREFIX/ftp/user"               "${FTP_USER:-}"

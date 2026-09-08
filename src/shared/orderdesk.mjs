@@ -20,7 +20,7 @@ import { routeOrder } from './routing.mjs';
 
 // All SKU-based rules live in one place — see src/shared/sku-config.mjs.
 import {
-  isInchSku, isNoFinishSku, isKnownSku, fixedDimensions,
+  isInchSku, isNoFinishSku, isKnownSku, isHardwareSku, fixedDimensions,
 } from './sku-config.mjs';
 
 /** @typedef {'shopify'|'qts'} Variant */
@@ -68,9 +68,11 @@ const GROMMETS_FINISHES_QTS = new Set([
 const GROMMETS_FINISHES_SHOPIFY = new Set([
   ...GROMMETS_FINISHES_QTS,
   'grommetwithbravotab',
-  // NOT in legacy. The live store also sells "Grommet with Bravo Tab (TOP only)",
-  // which legacy matches nowhere and therefore finishes not at all. Open question
-  // for Linh (docs/linh-requirements.md §4): top only, or all four sides?
+  // Not a legacy key. The live store also sells "Grommet with Bravo Tab (TOP
+  // only)", which legacy matches nowhere. Linh: bravo tabs are "treated the same
+  // as regular grommets" — the position is set by a sales rep afterwards, and a
+  // customer can only request one via SPECIAL INSTRUCTIONS (which sends the
+  // order to a person anyway). So all four sides, same as the plain key.
   'grommetwithbravotabtoponly',
 ]);
 
@@ -153,7 +155,8 @@ export function getFinishMode(finish, opts = {}) {
     case 'hemgrommetsourstandard':
     case 'bravotabswithgrommets':
       return fourSides();
-    // NOT in legacy — see GROMMETS_FINISHES_SHOPIFY. Pending Linh.
+    // Same treatment as regular grommets — Linh confirmed. See
+    // GROMMETS_FINISHES_SHOPIFY for why the position is not decided here.
     case 'grommetwithbravotabtoponly':
       return shopify ? fourSides() : {};
     case 'nohem/grommetsonly':
@@ -162,8 +165,9 @@ export function getFinishMode(finish, opts = {}) {
       return { grommets: { sides: ['top', 'left', 'right', 'bottom'] }, isOnly: true, descSuf: 'GO' };
     case 'nohemnogrommets':
       return { descSuf: 'CO' };
-    // NOT in legacy (neither class). Live-store spelling of "no hem, no
-    // grommets"; without it a "Cut Only" order gets no CO suffix. Pending Linh.
+    // Not a legacy key (neither class matches it). Live-store spelling of "no
+    // hem, no grommets"; without it a "Cut Only" order gets no CO suffix.
+    // Linh confirmed adding it is correct.
     case 'cutonly':
       return { descSuf: 'CO' };
     case 'hemonly':
@@ -351,10 +355,14 @@ export function cleanOrder(order) {
   const variant = orderVariant(order);
   const shopify = variant === SHOPIFY;
 
-  const items = (order.order_items ?? []).map((it) => {
+  // Legacy numbers the lines BEFORE dropping hardware (`index+1`, then
+  // `items.filter(Boolean)`), so removing a stand does not renumber the banner
+  // after it. itemNo is carried through to the workers for exactly that reason.
+  const items = (order.order_items ?? []).map((it, index) => {
     const vl = it.variation_list ?? {};
     const sku = it.code ?? vl.SKU;
     const quantity = Number(it.quantity ?? 1);
+    const itemNo = index + 1;
 
     // ShopifyDetails accepts the store's alternate field spellings; QTS reads
     // only the upper-case forms.
@@ -379,6 +387,12 @@ export function cleanOrder(order) {
       : getFinishObj(finish, width, height, unit, quantity, { variant, productName: it.name });
 
     return {
+      itemNo,
+      // OrderDesk line-item id. The transfer step renames each proof JPG to
+      // this before uploading to /proof, because the OrderDesk invoice looks
+      // the thumbnail up by it (Linh: "invoices will show them for production
+      // to use as reference").
+      proofName: it.id === undefined || it.id === null ? undefined : String(it.id),
       sku,
       name: it.name,
       quantity,
@@ -397,10 +411,19 @@ export function cleanOrder(order) {
       hasSpecialProduct: isSpecialProduct(it.name),
       hasSeeThru: isSeeThru(it.name),
       hasInstructions: hasInstructionsText(instructions),
+      // Physical goods with no artwork — dropped from the order below.
+      hardware: isHardwareSku(sku, it.name),
       // Flag a product the system hasn't been set up for, so staff can review it.
       ...(isKnownSku(sku) ? {} : { unknownSku: true }),
     };
   });
+
+  // Legacy checkHardwareSku + items.filter(Boolean): stands, carpets and poles
+  // leave the order entirely, so an order that mixes a banner with a separately
+  // ordered stand still processes the banner instead of stalling on the stand's
+  // missing artwork.
+  const hardwareItems = items.filter((it) => it.hardware);
+  const printItems = items.filter((it) => !it.hardware);
 
   const shipping = {
     state: order.shipping?.state,
@@ -409,9 +432,21 @@ export function cleanOrder(order) {
     name: [order.shipping?.first_name, order.shipping?.last_name].filter(Boolean).join(' '),
   };
 
-  const routing = routeOrder(shipping);
+  // See-thru decals are forced to NV and blocked from CA pickup (legacy
+  // determineProduction / getState), so routing needs the flag and the method.
+  const routing = routeOrder(shipping, {
+    seeThru: printItems.some((it) => it.hasSeeThru),
+  });
   const orderName = String(order.source_id ?? order.id ?? '');
-  const any = (k) => items.some((it) => it[k]);
+  const any = (k) => printItems.some((it) => it[k]);
+
+  // Legacy getProofName: proof JPG name -> OrderDesk line-item id, consumed by
+  // the transfer step's rename before the /proof upload.
+  const renameDict = Object.fromEntries(
+    printItems
+      .filter((it) => it.proofName)
+      .map((it) => [`${it.itemNo}-1`, it.proofName]),
+  );
 
   return {
     orderName,
@@ -433,14 +468,17 @@ export function cleanOrder(order) {
       hasInstructions: any('hasInstructions'),
       isDc: isDcOrder(orderName),
     },
+    renameDict,
+    // Hardware lines removed from processing, kept for the record/dashboard.
+    ...(hardwareItems.length ? { hardwareItems: hardwareItems.map((it) => ({ itemNo: it.itemNo, sku: it.sku, name: it.name })) } : {}),
     // True if any line item is a product the system hasn't been set up for.
-    ...(items.some((it) => it.unknownSku) ? { hasUnknownSku: true } : {}),
+    ...(printItems.some((it) => it.unknownSku) ? { hasUnknownSku: true } : {}),
     totals: {
       subtotal: num(order.product_total),
       grandTotal: num(order.order_total),
       currency: order.currency ?? 'USD',
     },
-    items,
+    items: printItems,
     source: { orderDeskId: String(order.id ?? '') },
   };
 }

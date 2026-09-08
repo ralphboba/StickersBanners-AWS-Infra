@@ -18,7 +18,9 @@ import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
 } from '../../shared/job-rows.mjs';
-import { updateOrderDeskDetails, orderDeskWritesEnabled } from '../../shared/orderdesk-write.mjs';
+import {
+  updateOrderDeskDetails, applyExpressUpgrade, orderDeskWritesEnabled,
+} from '../../shared/orderdesk-write.mjs';
 
 const sqs = new SQSClient({});
 // Real orders can carry undefined fields (missing totals/uploads); drop them.
@@ -325,6 +327,16 @@ export async function handler(event = {}) {
     if (await alreadySeen(job.orderName)) {
       skipped += 1;
       continue;
+    }
+
+    // Legacy changeExpress: a 3-day order inside the afternoon cutoff becomes
+    // 2-day, with a note on the order. routeOrder only reports the intent.
+    if (job.routing?.expressUpgrade) {
+      const up = await applyExpressUpgrade({
+        order, orderName: job.orderName, upgrade: job.routing.expressUpgrade, storeId, apiKey,
+      });
+      if (up.applied) job.shipping.method = job.routing.expressUpgrade.to;
+      job.routing = { ...job.routing, expressUpgradeApplied: Boolean(up.applied) };
     }
 
     // Legacy's five intake checks. An order that trips one is never queued —

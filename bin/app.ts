@@ -121,6 +121,9 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   intakeQueue: queueStack.queues['intake'],
   notifyQueue: queueStack.queues['notify'],
   proofCdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
+  // Linh's portal. Still served by his program today; when this takes over the
+  // portal has to be repointed at our API (open question with him).
+  proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
   description: `StickersBanners Lambda compute (${config.env})`,
 });
