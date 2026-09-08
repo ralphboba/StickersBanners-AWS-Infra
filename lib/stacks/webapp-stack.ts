@@ -19,13 +19,21 @@ export interface WebappStackProps extends cdk.StackProps {
 }
 
 /**
- * Staff dashboard hosting (post-Week-12).
+ * Static site hosting (post-Week-12).
  *
- * Serves `web/index.html` as a real website so **non-technical staff just visit
- * a URL and sign in** — no file editing, no config. The dashboard's settings
- * (API URL, Cognito client id, CDN) are generated into `config.json` **at
- * deploy time** and uploaded next to the page, so there is nothing to fill in
- * by hand.
+ * Serves two pages out of `web/`:
+ *   index.html  the staff dashboard (Cognito sign-in)
+ *   proof.html  the CUSTOMER proof approval page, opened from the link in the
+ *               proof-ready email. Public by design — the signed token in the
+ *               URL is the credential (see src/shared/approval-link.mjs). It
+ *               takes over from proof.stickersbanners.com once the SSM
+ *               parameters `approval/portal-base` and `approval/link-secret`
+ *               are seeded; that is what keeps approvals reaching us when
+ *               Linh's program is switched off.
+ *
+ * Both read the same deploy-time `config.json`, so neither has anything to fill
+ * in by hand: staff just visit a URL and sign in, customers just click the link
+ * in their email.
  *
  * Private S3 bucket behind CloudFront (OAC), SPA-style (404/403 -> index.html).
  * Static hosting on the free tier => $0.
@@ -62,7 +70,7 @@ export class WebappStack extends cdk.Stack {
       ],
     });
 
-    // Upload the page + a generated config.json (deploy-time substituted).
+    // Upload both pages + a generated config.json (deploy-time substituted).
     new s3deploy.BucketDeployment(this, 'DeployDashboard', {
       destinationBucket: siteBucket,
       distribution: this.distribution,

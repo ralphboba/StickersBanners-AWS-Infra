@@ -38,6 +38,13 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   { group: 'zendesk', key: 'email', description: 'Zendesk API user email' },
   { group: 'zendesk', key: 'api-token', description: 'Zendesk API token' },
 
+  // Customer proof approval links (shared/approval-link.mjs). Seeding BOTH of
+  // these is the switchover from Linh's portal to ours: with them set, the
+  // proof-ready email carries a signed link into our own approval route.
+  // Clearing either one falls back to the legacy portal with no deploy.
+  { group: 'approval', key: 'link-secret', description: 'HMAC secret signing customer proof-approval links (any long random string; rotating it invalidates outstanding links)' },
+  { group: 'approval', key: 'portal-base', description: 'Public URL of our proof approval page, e.g. https://<dashboard-domain>/proof.html — leave unset to keep using proof.stickersbanners.com' },
+
   // Production-facility FTP (GA/NJ/TX/NV transfers)
   { group: 'ftp', key: 'host', description: 'FTP host (e.g. 64.57.252.252)' },
   { group: 'ftp', key: 'user', description: 'FTP username' },

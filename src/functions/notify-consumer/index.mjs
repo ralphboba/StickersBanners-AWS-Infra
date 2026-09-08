@@ -8,6 +8,8 @@
 // Returning batchItemFailures lets SQS retry only the messages that failed.
 
 import { sendProofReadyEmail } from '../../shared/zendesk.mjs';
+import { signApprovalToken, approvalUrl } from '../../shared/approval-link.mjs';
+import { getGroup } from '../../shared/secrets.mjs';
 
 const PROOF_CDN_BASE = process.env.PROOF_CDN_BASE ?? '';
 const PROOF_PORTAL_BASE = process.env.PROOF_PORTAL_BASE ?? '';
@@ -20,13 +22,48 @@ function isDemoOrder(name) {
 }
 
 /**
- * The customer link. Linh confirmed customers review AND approve on the proof
- * portal, so the mail must point there — a bare CDN image gives them nothing to
- * approve. Undefined falls back to the portal root inside zendesk.mjs.
+ * The customer link.
  *
- * PROOF_CDN_BASE still serves the DZI tiles the portal itself loads.
+ * Two paths, and which one we take is decided entirely by SSM — no deploy:
+ *
+ *  1. `approval/link-secret` + `approval/portal-base` are seeded -> the mail
+ *     carries OUR page with a signed, single-order, expiring token, and the
+ *     approval lands in OUR pipeline. This is what has to be in place before
+ *     Linh's program can be switched off.
+ *  2. They are absent (today) -> we fall back to PROOF_PORTAL_BASE, which is
+ *     Linh's portal, exactly as before. Nothing changes while his program is
+ *     still the one running.
+ *
+ * Seeding those two parameters IS the switchover, and clearing them is the
+ * rollback. Deliberately not a code flag: it has to be reversible in seconds
+ * without a deploy, and a half-issued link must never go out.
+ *
+ * PROOF_CDN_BASE still serves the DZI tiles the page itself loads.
  */
-function proofUrl(orderName) {
+async function proofUrl(orderName) {
+  let group = {};
+  try {
+    group = await getGroup('approval');
+  } catch (err) {
+    // SSM unreachable: fall through to the legacy portal rather than fail the
+    // email. A customer with the old link is far better off than no mail.
+    console.warn('could not read approval settings, using the legacy portal', err);
+  }
+
+  const secret = group['link-secret'];
+  const portalBase = group['portal-base'];
+  if (secret && portalBase) {
+    return approvalUrl({ portalBase, token: signApprovalToken({ orderName, secret }) });
+  }
+  if (secret || portalBase) {
+    // Half-configured. Sending an unsigned link to our own page would show the
+    // customer a dead button, so stay on the legacy portal and say so loudly.
+    console.warn(JSON.stringify({
+      msg: 'approval link half-configured, using the legacy portal',
+      hasSecret: Boolean(secret), hasPortalBase: Boolean(portalBase),
+    }));
+  }
+
   if (!PROOF_PORTAL_BASE) return undefined;
   return `${PROOF_PORTAL_BASE}?order=${encodeURIComponent(orderName)}`;
 }
@@ -55,7 +92,7 @@ export async function handler(event) {
           orderName: n.orderName,
           customerEmail: n.customerEmail,
           customerName: n.customerName,
-          proofUrl: proofUrl(n.orderName),
+          proofUrl: await proofUrl(n.orderName),
         });
         console.log(JSON.stringify({ msg: 'proof email sent', orderName: n.orderName }));
       } else {

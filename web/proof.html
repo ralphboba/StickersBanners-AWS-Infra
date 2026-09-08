@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Approve your proof — StickersBanners</title>
+<!--
+  Customer proof approval page.
+
+  This is the page the proof-ready email links to once `approval/portal-base` and
+  `approval/link-secret` are seeded in SSM. It replaces the part of
+  proof.stickersbanners.com that posts approvals to Linh's program, so approvals
+  reach OUR pipeline when his program is switched off.
+
+  What is deliberately NOT here, per Linh (CLAUDE.md non-negotiables):
+    - no reject / disapprove button. "i said i didn't see the point in
+      disapproving." Changes are requested by emailing sales@.
+    - no file upload. Customers abused it with 5-6 re-proof files.
+
+  The whole page is driven by the `?t=` token from the email: it never asks for
+  an order number, because the token is the only thing that names an order.
+-->
+<style>
+  :root{
+    --ink:#16181d; --muted:#5b6270; --line:#e3e6ec; --bg:#f6f7f9;
+    --brand:#0f62fe; --ok:#0a7c42; --warn:#a4400b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:16px 20px}
+  header b{font-size:16px;letter-spacing:.2px}
+  main{max-width:900px;margin:0 auto;padding:24px 20px 64px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
+  .proof{margin-bottom:16px}
+  .proof img{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:6px;background:#fff}
+  .proof .cap{color:var(--muted);font-size:13px;margin:8px 2px 0}
+  .tip{background:#fffbe9;border:1px solid #f0e3b0;border-radius:8px;padding:12px 14px;margin-bottom:20px}
+  button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:13px 22px;cursor:pointer}
+  .approve{background:var(--brand);color:#fff;width:100%;font-size:16px}
+  .approve:disabled{background:#9db6e8;cursor:default}
+  .note{color:var(--muted);font-size:13px;margin-top:12px}
+  .state{padding:20px;border-radius:10px;border:1px solid var(--line);background:#fff}
+  .state.good{border-color:#bfe3cd;background:#f2fbf5;color:var(--ok)}
+  .state.bad{border-color:#f0d5c2;background:#fdf6f1;color:var(--warn)}
+  .state b{display:block;margin-bottom:4px;font-size:16px}
+  a{color:var(--brand)}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+<header><b>StickersBanners</b></header>
+<main>
+  <div id="loading" class="state">Loading your proof…</div>
+
+  <div id="problem" class="state bad" hidden>
+    <b id="problemTitle">We could not open this proof</b>
+    <span id="problemText"></span>
+  </div>
+
+  <div id="view" hidden>
+    <h1>Proof for order <span id="orderName"></span></h1>
+    <p class="sub">Please review every page carefully before approving.</p>
+
+    <div class="tip">
+      For best results, view this on a desktop or larger screen. Mobile viewing
+      is supported, but colours and detail may not display accurately. Zoom in to
+      check spelling, artwork and dimensions.
+    </div>
+
+    <div id="proofs"></div>
+
+    <div class="card">
+      <div id="approveBox">
+        <button id="approve" class="approve">Approve this proof</button>
+        <p class="note">
+          Approving sends the order straight to production, and all proofs on
+          this order are approved together.<br />
+          Need a change (artwork, size, product)? Please don't approve — email
+          <a href="mailto:sales@stickersbanners.com">sales@stickersbanners.com</a>
+          or reply to your proof email and we'll send a revised proof.
+        </p>
+      </div>
+      <div id="approved" class="state good" hidden>
+        <b>Thank you — your proof is approved.</b>
+        This order is now on its way to production. You do not need to do anything else.
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const CONFIG = { apiBase: '' };
+// The token from the email. Everything on this page hangs off it.
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+
+function problem(title, text) {
+  $('loading').hidden = true;
+  $('view').hidden = true;
+  $('problemTitle').textContent = title;
+  $('problemText').textContent = text;
+  $('problem').hidden = false;
+}
+
+function renderProofs(proofs) {
+  const box = $('proofs');
+  box.innerHTML = '';
+  if (!proofs || !proofs.length) {
+    // The images live on a separate CDN; if that isn't wired the customer can
+    // still approve from the proof they were emailed, so this is a note and
+    // not a failure.
+    box.innerHTML = '<div class="card">Your proof was sent with your email. '
+      + 'Please review it there, then approve below.</div>';
+    return;
+  }
+  for (const p of proofs) {
+    const fig = document.createElement('div');
+    fig.className = 'proof card';
+    const img = document.createElement('img');
+    img.src = p.review;
+    img.alt = 'Proof ' + p.itemNo;
+    img.loading = 'lazy';
+    // A missing derivative must not leave a broken-image icon on a page whose
+    // whole job is showing artwork.
+    img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
+    fig.appendChild(img);
+    const cap = document.createElement('p');
+    cap.className = 'cap';
+    cap.textContent = p.name ? (p.itemNo + '. ' + p.name) : ('Item ' + p.itemNo);
+    fig.appendChild(cap);
+    box.appendChild(fig);
+  }
+}
+
+function show(data) {
+  $('loading').hidden = true;
+  $('view').hidden = false;
+  $('orderName').textContent = data.orderName || '';
+  renderProofs(data.proofs);
+  if (data.status === 'approved') {
+    $('approveBox').hidden = true;
+    $('approved').hidden = false;
+  }
+}
+
+async function load() {
+  if (!TOKEN) {
+    problem('This link is incomplete',
+      'Please open your proof using the button in the email we sent you.');
+    return;
+  }
+  try {
+    const r = await fetch(CONFIG.apiBase + '/proof?t=' + encodeURIComponent(TOKEN),
+      { cache: 'no-store' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      problem('We could not open this proof',
+        data.error || 'Please email sales@stickersbanners.com and we will help.');
+      return;
+    }
+    show(data);
+  } catch {
+    problem('We could not reach our server',
+      'Please try again in a moment, or email sales@stickersbanners.com.');
+  }
+}
+
+$('approve').addEventListener('click', async () => {
+  const btn = $('approve');
+  btn.disabled = true;
+  btn.textContent = 'Approving…';
+  try {
+    const r = await fetch(CONFIG.apiBase + '/proof/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      problem('We could not record your approval',
+        data.error || 'Please email sales@stickersbanners.com and we will approve it for you.');
+      return;
+    }
+    $('approveBox').hidden = true;
+    $('approved').hidden = false;
+  } catch {
+    btn.disabled = false;
+    btn.textContent = 'Approve this proof';
+    problem('We could not reach our server',
+      'Please try again in a moment, or email sales@stickersbanners.com.');
+  }
+});
+
+(async () => {
+  // Same deploy-time config.json the dashboard uses (webapp-stack).
+  try {
+    const r = await fetch('config.json', { cache: 'no-store' });
+    if (r.ok) Object.assign(CONFIG, await r.json());
+  } catch { /* fall through to the not-configured message below */ }
+  if (!CONFIG.apiBase) {
+    problem('This page is not configured',
+      'Please email sales@stickersbanners.com and we will approve your proof for you.');
+    return;
+  }
+  load();
+})();
+</script>
+</body>
+</html>
