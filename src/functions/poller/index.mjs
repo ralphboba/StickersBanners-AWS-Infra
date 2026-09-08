@@ -14,6 +14,7 @@ import {
 import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
+import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
@@ -66,8 +67,8 @@ async function fetchFolder(storeId, apiKey, folderId, max) {
   const out = [];
   const pageSize = 500;
   for (let offset = 0; out.length < max; offset += pageSize) {
-    const u = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${pageSize}&offset=${offset}`;
-    const r = await fetch(u, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
+    const u = `${ORDERDESK_API}/orders?folder_id=${folderId}&limit=${pageSize}&offset=${offset}`;
+    const r = await orderDeskFetch(u, { headers: orderDeskHeaders(storeId, apiKey) });
     if (!r.ok) throw new Error(`OrderDesk ${r.status}: ${(await r.text()).slice(0, 200)}`);
     const page = (await r.json()).orders ?? [];
     out.push(...page);
@@ -166,8 +167,8 @@ export async function handler(event = {}) {
   // probe: read-only GET of an arbitrary OrderDesk API path, for investigating
   // what the API exposes (store settings, folders, rules …). Returns raw text.
   if (event?.probe) {
-    const u = `https://app.orderdesk.me/api/v2/${event.probe}`;
-    const r = await fetch(u, { headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey } });
+    const u = `${ORDERDESK_API}/${event.probe}`;
+    const r = await orderDeskFetch(u, { headers: orderDeskHeaders(storeId, apiKey) });
     const body = await r.text();
     return { probe: event.probe, status: r.status, body: body.slice(0, 12000) };
   }
@@ -283,10 +284,8 @@ export async function handler(event = {}) {
   const limit = Number(event?.limit) || 100;
   const folderId = event?.folderId || QTS_FOLDER_ID;
 
-  const url = `https://app.orderdesk.me/api/v2/orders?folder_id=${folderId}&limit=${limit}`;
-  const res = await fetch(url, {
-    headers: { 'ORDERDESK-STORE-ID': storeId, 'ORDERDESK-API-KEY': apiKey },
-  });
+  const url = `${ORDERDESK_API}/orders?folder_id=${folderId}&limit=${limit}`;
+  const res = await orderDeskFetch(url, { headers: orderDeskHeaders(storeId, apiKey) });
   if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const { orders = [] } = await res.json();
 
