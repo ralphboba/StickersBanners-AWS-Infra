@@ -19,8 +19,7 @@
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
 import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
-
-const OD = 'https://app.orderdesk.me/api/v2';
+import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
 
 /** Synthetic orders never touch OrderDesk, whatever the flag says. */
 function isSyntheticOrder(name) {
@@ -83,13 +82,9 @@ export async function updateOrderDeskDetails({
   // Legacy keeps the existing value when the lookup misses; ours cannot miss
   // (guarded above), but the spread-then-override shape is the same.
   const updated = { ...order, tag_name: tagValue, folder_id: folderId };
-  const res = await fetch(`${OD}/orders/${orderDeskId}`, {
+  const res = await orderDeskFetch(`${ORDERDESK_API}/orders/${orderDeskId}`, {
     method: 'PUT',
-    headers: {
-      'ORDERDESK-STORE-ID': storeId,
-      'ORDERDESK-API-KEY': apiKey,
-      'Content-Type': 'application/json',
-    },
+    headers: orderDeskHeaders(storeId, apiKey, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(updated),
   });
   if (!res.ok) {
@@ -143,13 +138,9 @@ export async function applyExpressUpgrade({ order, orderName, upgrade, storeId, 
       { username: 'SBBot', date_added: stamp, content: upgrade.note },
     ],
   };
-  const res = await fetch(`${OD}/orders/${orderDeskId}`, {
+  const res = await orderDeskFetch(`${ORDERDESK_API}/orders/${orderDeskId}`, {
     method: 'PUT',
-    headers: {
-      'ORDERDESK-STORE-ID': storeId,
-      'ORDERDESK-API-KEY': apiKey,
-      'Content-Type': 'application/json',
-    },
+    headers: orderDeskHeaders(storeId, apiKey, { 'Content-Type': 'application/json' }),
     body: JSON.stringify(updated),
   });
   if (!res.ok) {
