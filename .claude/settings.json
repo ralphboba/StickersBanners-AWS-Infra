@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Bash(npx cdk diff:*)",
+      "Bash(npx cdk synth:*)",
+      "Bash(npx cdk deploy:*)",
+      "Bash(aws lambda invoke --function-name sb-dev-poller:*)",
+      "Bash(aws cloudformation describe-stacks:*)",
+      "Bash(aws lambda get-function-configuration:*)",
+      "Bash(aws lambda list-functions:*)",
+      "Bash(aws scheduler get-schedule:*)",
+      "Bash(aws scheduler list-schedules:*)",
+      "Bash(aws logs filter-log-events:*)",
+      "Bash(aws logs describe-log-streams:*)",
+      "Bash(aws sts get-caller-identity:*)"
+    ],
+    "deny": [
+      "Bash(aws scheduler update-schedule:*)",
+      "Bash(aws scheduler create-schedule:*)",
+      "Bash(aws lambda update-function-configuration:*)",
+      "Bash(aws ssm put-parameter:*)",
+      "Bash(aws ssm delete-parameter:*)"
+    ]
+  }
+}

@@ -18,3 +18,8 @@ scripts/parameters.*.env
 # Python build artifacts
 __pycache__/
 *.pyc
+
+# Machine-local Claude Code settings. The committed .claude/settings.json holds
+# the permission rules (a project decision); this one holds per-machine setup
+# and must never be committed — the repo is public.
+.claude/settings.local.json
