@@ -88,6 +88,25 @@ Asked after diffing this port against his source. Quoted, then what we did.
   live" → pickup keywords, the 3–6pm ET express cutoff, the 3-day→2-day upgrade
   and see-thru→NV are all implemented.
 
+## Confirmed by Kai from the first live dry-run (2026-09)
+
+Both found by running 12 real QTS orders through the current code with every
+write switch off (`docs/go-live.md` stage 1).
+
+- **Vegas prints some orders regardless of destination.** Kai: "가끔씩 어떤
+  오더들은 그냥 베가스에서 프린팅 하는 경우가 있어." → the express rule is
+  correct as ported: inside the 3-6pm ET window, 1-day/2-day/overnight go to NV
+  whatever the shipping state. Live order S59129 ships to **Virginia** and was
+  routed to **NV** for exactly this reason. Note the same order placed at 2pm
+  routes to GA instead — the window, not the address, decides. Not a bug; do
+  not "fix" it.
+- **`SKU-608` is quoted in inches.** Kai: "SKU-608은 145x91ft 가 아니라 inch야."
+  → added to `INCH_SKUS_EXTRA` in `sku-config.mjs`. Its product name contains
+  "fabric", which opts out of `resolveDimensions`' remap, so the unit came only
+  from the inch-SKU lists — and it was in none of them. Live order S59121 was
+  resolving to 145x91 **feet**. The resizer scales to whatever number it gets,
+  so this would have produced a print file 12x oversized.
+
 ### Not answered yet
 
 1. The hardware SKU list. Ours is derived from the store's SKU catalogue

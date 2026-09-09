@@ -36,6 +36,23 @@ export const INCH_SKU_PREFIXES = [
   'SKUFPUD', // Fabric Pop Up Display (all sizes: SKUFPUD08X10, SKUFPUD10X10, …)
 ];
 
+/**
+ * NOT from legacy — kept separate so the lists above stay an honest record of
+ * what Linh's source contained.
+ *
+ * Same fabric pop-up display family as the SKUFPUD prefix, but catalogued under
+ * the numeric SKU scheme, so the prefix rule misses it. Caught on live order
+ * S59121: OrderDesk records 145x91 and the product name contains "fabric",
+ * which skips resolveDimensions' remap — so without this the order resolves to
+ * 145x91 FEET (a 44-metre banner). Kai confirmed the values are inches.
+ *
+ * A wrong unit here is not cosmetic: the resizer scales artwork to the number
+ * it is given, so feet-instead-of-inches produces a print file 12x oversized.
+ */
+export const INCH_SKUS_EXTRA = [
+  'SKU-608', // 10'x8' Fabric Pop Up Display Backdrop (Banner Only)
+];
+
 
 // --- 1b. Fixed-size products (print dimensions don't come from the order) ---
 // Some products are a fixed physical size — the customer doesn't pick W/H, so
@@ -136,6 +153,7 @@ export function isKnownSku(sku) {
 export function isInchSku(sku, { shopify = false } = {}) {
   const s = String(sku ?? '');
   if (INCH_SKUS.includes(s)) return true;
+  if (INCH_SKUS_EXTRA.includes(s)) return true;
   if (shopify && INCH_SKUS_SHOPIFY_ONLY.includes(s)) return true;
   return INCH_SKU_PREFIXES.some((p) => s.startsWith(p));
 }
