@@ -88,13 +88,19 @@ export async function handler(event) {
         // Demo order: show the flow on the dashboard, but send no real email.
         console.log(JSON.stringify({ msg: 'proof email skipped (demo)', orderName: n.orderName }));
       } else if (n.type === 'proof-ready') {
-        await sendProofReadyEmail({
+        // zendesk.mjs decides whether this actually goes out (ZENDESK_SENDS).
+        // Either way the pipeline continues to the approval gate, so the rest
+        // of the flow is observable with the email held.
+        const result = await sendProofReadyEmail({
           orderName: n.orderName,
           customerEmail: n.customerEmail,
           customerName: n.customerName,
           proofUrl: await proofUrl(n.orderName),
         });
-        console.log(JSON.stringify({ msg: 'proof email sent', orderName: n.orderName }));
+        console.log(JSON.stringify({
+          msg: result.sent ? 'proof email sent' : `proof email held (${result.skipped})`,
+          orderName: n.orderName,
+        }));
       } else {
         // order-complete / order-failed etc. — dashboard-only, no external send.
         console.log(JSON.stringify({ msg: 'notify (no-op)', type: n.type, orderName: n.orderName }));
