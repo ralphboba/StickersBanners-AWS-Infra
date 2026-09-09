@@ -398,6 +398,11 @@ export function cleanOrder(order) {
       quantity,
       width,
       height,
+      // What OrderDesk recorded, kept alongside the resolved values so a wrong
+      // size can be traced to our parse or to the source data. Carried through
+      // to the poller's dryRun report; nothing downstream reads them.
+      rawWidth,
+      rawHeight,
       unit,
       finishingRaw: finish,
       finishingObj,

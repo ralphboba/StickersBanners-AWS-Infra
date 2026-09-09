@@ -300,14 +300,34 @@ export async function handler(event = {}) {
         routing: job.routing,
         variant: job.variant,
         flags: job.flags,
+        // The proof gate's verdict. Reported because its direction is easy to
+        // get backwards (legacy opts OUT on "no proof"), and a silent flip
+        // would either skip every proof or email every customer.
+        needsProof: job.needsProof,
+        // The single field needsProof is derived from. Reported because the
+        // rule is opt-out ("no proof" turns it off) and an ABSENT field also
+        // reads as no-proof — so "did the customer really decline, or is the
+        // field just missing?" cannot be answered from the verdict alone.
+        proofField: order?.checkout_data?.[job.variant === 'shopify' ? 'Note' : 'Proof Option'] ?? null,
+        // Proof-JPG rename map. Was silently always {} once, which meant the
+        // /proof upload never happened — so it is reported, not assumed.
+        renameDict: job.renameDict,
         // What the intake gate would do with this order (nothing is moved).
         gate: gate ? { reason: gate.reason, folder: gate.folder, tag: gate.tag } : null,
         items: job.items.map((it) => ({
+          itemNo: it.itemNo,
           sku: it.sku,
           name: it.name,
+          // hardware line items are dropped before printing, so which side of
+          // that filter an item landed on has to be visible here.
+          hardware: it.hardware,
           width: it.width,
           height: it.height,
           unit: it.unit,
+          // What OrderDesk actually recorded, before resolveDimensions. Without
+          // it a wrong size cannot be blamed on our parse or on the source data.
+          rawWidth: it.rawWidth,
+          rawHeight: it.rawHeight,
           finishingRaw: it.finishingRaw,
           finishingObj: it.finishingObj,
         })),

@@ -72,6 +72,19 @@ test('resolveDimensions: SKUXBB is inch-quoted on the Shopify path only', () => 
   assert.equal(resolveDimensions('SKUXBB', 'X Banner Stand', '6', '5', QTS).unit, 'ft');
 });
 
+test('resolveDimensions: SKU-608 is inches, not feet', () => {
+  // Live order S59121. The product name contains "fabric", which opts out of
+  // the remap, so the unit comes purely from the inch-SKU lists — and this SKU
+  // was in none of them, resolving 145x91 to FEET (a 44-metre banner). The
+  // resizer scales artwork to whatever number it is handed, so the wrong unit
+  // means a print file 12x oversized, not a cosmetic label.
+  const name = "10'x8' Fabric Pop Up Display Backdrop (Banner Only)";
+  assert.deepEqual(resolveDimensions('SKU-608', name, '145', '91', SHOPIFY),
+    { width: 145, height: 91, unit: 'in' });
+  // Not a Shopify-only entry: the same product ordered through QTS is inches too.
+  assert.equal(resolveDimensions('SKU-608', name, '145', '91', QTS).unit, 'in');
+});
+
 // --- finishing labels ------------------------------------------------------
 
 test('getFinishMode: live-store label spellings resolve on the Shopify path', () => {
