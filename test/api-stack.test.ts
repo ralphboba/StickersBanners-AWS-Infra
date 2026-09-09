@@ -26,6 +26,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     webhookFn: fn('Webhook'),
     orderApiFn: fn('OrderApi'),
     approvalFn: fn('Approval'),
+    proofApprovalFn: fn('ProofApproval'),
     userPool,
     userPoolClient,
   });
@@ -44,9 +45,11 @@ describe('ApiStack', () => {
     expect(keys).toEqual([
       'GET /orders',
       'GET /orders/{name}',
+      'GET /proof',
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
+      'POST /proof/approve',
       'POST /webhook/orderdesk',
     ]);
   });
@@ -78,6 +81,37 @@ describe('ApiStack', () => {
     expect(byKey['POST /orders/{name}/reject'].AuthorizationType).toBe('JWT');
   });
 
+  test('the customer proof routes are public — the signed link is the credential', () => {
+    // Customers have no Cognito account and never will (Linh's portal is all
+    // they have ever seen), so a JWT here would mean nobody outside the company
+    // could approve a proof. Auth is the signed token, checked in the Lambda.
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const byKey = Object.fromEntries(
+      Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
+    );
+    expect(byKey['GET /proof'].AuthorizationType ?? 'NONE').toBe('NONE');
+    expect(byKey['POST /proof/approve'].AuthorizationType ?? 'NONE').toBe('NONE');
+  });
+
+  test('no public route can reject a proof or upload a file', () => {
+    // Linh's non-negotiables. The only reject is POST /orders/{name}/reject,
+    // which is staff-only behind Cognito; nothing accepts customer uploads.
+    const template = synth();
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
+    const publicKeys = routes
+      .filter((r) => (r.Properties.AuthorizationType ?? 'NONE') === 'NONE')
+      .map((r) => r.Properties.RouteKey);
+    expect(publicKeys.sort()).toEqual([
+      'GET /proof',
+      'POST /proof/approve',
+      'POST /webhook/orderdesk',
+    ]);
+    const allKeys = routes.map((r) => r.Properties.RouteKey);
+    expect(allKeys.filter((k) => /upload/i.test(k))).toEqual([]);
+    expect(allKeys.filter((k) => /reject/i.test(k))).toEqual(['POST /orders/{name}/reject']);
+  });
+
   test('has a JWT (Cognito) authorizer', () => {
     synth().hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
       AuthorizerType: 'JWT',
@@ -96,8 +130,9 @@ describe('ApiStack', () => {
 
   test('routes integrate with a Lambda', () => {
     const template = synth();
-    // webhook + order-api + one shared approval integration (approve & reject)
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 3);
+    // webhook + order-api + staff approval (approve & reject share one)
+    // + customer proof approval (view & approve share one)
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

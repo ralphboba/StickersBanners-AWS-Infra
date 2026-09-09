@@ -121,8 +121,13 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   intakeQueue: queueStack.queues['intake'],
   notifyQueue: queueStack.queues['notify'],
   proofCdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
-  // Linh's portal. Still served by his program today; when this takes over the
-  // portal has to be repointed at our API (open question with him).
+  // Fallback only. Linh's portal is still what customers see today, and it
+  // posts approvals to HIS program — so if it goes away, orders stall at the
+  // proof gate. Our own approval page (web/proof.html, served by the webapp
+  // distribution) takes over the moment the SSM parameters `approval/portal-base`
+  // and `approval/link-secret` are seeded; until then the mail keeps pointing
+  // here. That switchover is SSM, not CDK, precisely because the webapp
+  // distribution depends on this API and could not be passed in without a cycle.
   proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
   description: `StickersBanners Lambda compute (${config.env})`,
@@ -153,6 +158,7 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   webhookFn: computeStack.webhook,
   orderApiFn: computeStack.orderApi,
   approvalFn: computeStack.approval,
+  proofApprovalFn: computeStack.proofApproval,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,
   description: `StickersBanners HTTP API (${config.env})`,

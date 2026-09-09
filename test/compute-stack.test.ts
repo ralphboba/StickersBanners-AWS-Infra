@@ -42,6 +42,7 @@ describe('ComputeStack', () => {
       'sb-dev-notify-consumer',
       'sb-dev-order-api',
       'sb-dev-poller',
+      'sb-dev-proof-approval',
       'sb-dev-webhook',
     ]);
   });
@@ -68,6 +69,29 @@ describe('ComputeStack', () => {
         ]),
       }),
     });
+  });
+
+  test('the customer approval function can approve but cannot reject', () => {
+    // Linh: no disapprove. The customer route is public, so the guarantee is
+    // enforced in IAM as well as in code — SendTaskFailure is never granted to
+    // it, and only the staff approval function holds that permission.
+    const policies = Object.values(synth().findResources('AWS::IAM::Policy'));
+    const sids = (sid: string) =>
+      policies.filter((p) =>
+        (p.Properties.PolicyDocument.Statement as { Sid?: string }[])
+          .some((st) => st.Sid === sid));
+
+    const [customer] = sids('ResumeWorkflowOnCustomerApproval');
+    expect(customer).toBeDefined();
+    const statement = (customer.Properties.PolicyDocument.Statement as { Sid?: string, Action: unknown }[])
+      .find((st) => st.Sid === 'ResumeWorkflowOnCustomerApproval')!;
+    expect(statement.Action).toBe('states:SendTaskSuccess');
+
+    // The staff function keeps both — its routes are behind Cognito.
+    const [staff] = sids('ResumeWorkflow');
+    const staffStatement = (staff.Properties.PolicyDocument.Statement as { Sid?: string, Action: unknown }[])
+      .find((st) => st.Sid === 'ResumeWorkflow')!;
+    expect(staffStatement.Action).toEqual(['states:SendTaskSuccess', 'states:SendTaskFailure']);
   });
 
   test('functions that need secrets get scoped SSM read', () => {

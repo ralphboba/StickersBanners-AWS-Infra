@@ -13,9 +13,12 @@ authority: **Linh** (legacy author).
   captured — derive from real orders in the facility folders).
 - **Customers approve, but never reject and never upload.** Linh: "i said i
   didn't see the point in disapproving, not not letting them approve … right now
-  they'd still need to approve via the portal." Approval happens on
-  `proof.stickersbanners.com`; revisions come back by email. Do NOT add a reject
-  button or a customer upload path.
+  they'd still need to approve via the portal." Revisions come back by email.
+  Do NOT add a reject button or a customer upload path.
+  Today approval happens on Linh's `proof.stickersbanners.com`, which posts to
+  HIS program — so we also have our own path for when it is switched off:
+  `web/proof.html` + public `GET /proof` / `POST /proof/approve`, authenticated
+  by a signed link. See **`docs/customer-approval.md`**.
 - **Pipeline ends at the production folder** (`pickup_*`); production owns
   "completed". Don't build a completed transition.
 - **Zendesk** proof-ready email is the only external notification (Google Chat off).
@@ -32,6 +35,11 @@ authority: **Linh** (legacy author).
   can never write regardless.
 - Demo sandbox: synthetic `DEMO-*` orders + display-only mirror of real orders.
   `DEMO-*`/`ZZ-*` orders never send real email or transfer (hard guard).
+- **The customer approval path is off until `approval/link-secret` +
+  `approval/portal-base` are seeded in SSM.** Both set = the proof email points
+  at our page and approvals reach us; either missing = it keeps pointing at
+  Linh's portal, exactly as today. Two parameters, no deploy, reversible in
+  seconds — but it's still a go-live action (`docs/customer-approval.md`).
 - Rotate all pasted keys (OrderDesk/FTP/Zendesk) before real go-live.
 
 ## Working agreement

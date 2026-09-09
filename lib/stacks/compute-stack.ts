@@ -48,6 +48,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly orderApi: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
+  public readonly proofApproval: lambda.Function;
   public readonly demoFeeder: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
@@ -157,6 +158,35 @@ export class ComputeStack extends cdk.Stack {
         sid: 'ResumeWorkflow',
         actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'],
         resources: ['*'],
+      }),
+    );
+
+    // --- proof-approval: the CUSTOMER-facing half of the proof gate ---------
+    // Public (no Cognito): customers have never had a login, so the signed link
+    // in the proof email is the credential. Approve only — no reject route and
+    // no upload path exist here, per Linh (CLAUDE.md non-negotiables).
+    this.proofApproval = new lambda.Function(this, 'ProofApproval', {
+      ...base,
+      functionName: `${config.prefix}-proof-approval`,
+      // Bundles src/shared for approval-link + secrets.
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/proof-approval/index.handler',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        PROOF_CDN_BASE: props.proofCdnBase ?? '',
+        SB_ENV: config.env,
+      },
+      description: 'Customer proof approval via signed link -> resume the pipeline',
+    });
+    jobsTable.grantReadWriteData(this.proofApproval);
+    this.grantSecretsRead(this.proofApproval, config);
+    // Approve resumes the paused execution. SendTaskFailure is deliberately NOT
+    // granted: even a bug here cannot reject a customer's order.
+    this.proofApproval.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ResumeWorkflowOnCustomerApproval',
+        actions: ['states:SendTaskSuccess'],
+        resources: ['*'], // task tokens are not resource-scopable
       }),
     );
 
