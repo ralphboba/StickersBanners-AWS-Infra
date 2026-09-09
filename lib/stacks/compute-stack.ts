@@ -105,6 +105,12 @@ export class ComputeStack extends cdk.Stack {
         // dzi CloudFront base for the customer proof link (optional).
         PROOF_CDN_BASE: props.proofCdnBase ?? '',
         PROOF_PORTAL_BASE: props.proofPortalBase ?? '',
+        // Arms the only code that contacts a real customer (shared/zendesk.mjs).
+        // Held at "disabled" so real orders can run through the WHOLE pipeline —
+        // intake, resize, finish, proof — with the composed ticket logged and
+        // nobody's inbox touched. Flipping this to "enabled" is a go-live action
+        // and needs explicit approval — see CLAUDE.md "Safety".
+        ZENDESK_SENDS: 'disabled',
       },
     });
     // SqsEventSource also grants Receive/Delete on the queue.

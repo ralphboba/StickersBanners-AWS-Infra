@@ -9,11 +9,35 @@
 //   - revisions come back by email to sales@stickersbanners.com, not through
 //     the portal.
 // So the mail says "view and approve", and offers no upload path.
+//
+// ⚠️  THIS IS THE ONLY CODE THAT CONTACTS A REAL CUSTOMER. ⚠️
+//
+// Held behind ZENDESK_SENDS, the same shape as ORDERDESK_WRITES: the ticket is
+// composed in full, logged, and returned, but the HTTP POST does not happen
+// unless ZENDESK_SENDS is explicitly "enabled". That is what makes it safe to
+// run real orders through the whole pipeline — intake, resize, finish, proof —
+// and see exactly what each customer WOULD have received, without anyone's
+// inbox being touched. Arming it is a go-live action needing Kai's explicit
+// approval (see CLAUDE.md "Safety").
 
 import { getGroup } from './secrets.mjs';
 
 const PROOF_VIEWER_URL = 'https://proof.stickersbanners.com/proof-viewer';
 const SALES_EMAIL = 'sales@stickersbanners.com';
+
+/** Synthetic orders never email anyone, whatever the flag says. */
+function isSyntheticOrder(name) {
+  return /^(DEMO-|ZZ-)/i.test(String(name ?? ''));
+}
+
+/**
+ * Is the real customer email switched on? Defaults to OFF.
+ * Deliberately an exact match on "enabled" so a stray truthy value (e.g. "0",
+ * "false", "no") cannot arm it by accident — same rule as ORDERDESK_WRITES.
+ */
+export function zendeskSendsEnabled() {
+  return String(process.env.ZENDESK_SENDS ?? '').trim().toLowerCase() === 'enabled';
+}
 
 const esc = (s) => String(s ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -51,6 +75,29 @@ export function proofEmailHtml(orderName, proofUrl = PROOF_VIEWER_URL) {
  */
 export async function sendProofReadyEmail({ orderName, customerEmail, customerName, proofUrl }) {
   if (!customerEmail) throw new Error(`no customer email for order ${orderName}`);
+
+  // Composed before the gate, so the held path reports the real thing — the
+  // actual subject, the actual body, the actual signed approval link — and not
+  // a summary of what it might have been.
+  const subject = `Proof for Order ${orderName} is ready to be reviewed`;
+  const htmlBody = proofEmailHtml(orderName, proofUrl || PROOF_VIEWER_URL);
+  const preview = { to: customerEmail, subject, proofUrl: proofUrl || PROOF_VIEWER_URL };
+
+  if (isSyntheticOrder(orderName)) {
+    console.log(JSON.stringify({ msg: 'proof email skipped (synthetic order)', orderName, ...preview }));
+    return { sent: false, skipped: 'synthetic', preview };
+  }
+
+  if (!zendeskSendsEnabled()) {
+    // The prototype path: say exactly who would have been emailed and with
+    // what, contact nobody, and read no credentials.
+    console.log(JSON.stringify({
+      msg: 'proof email WOULD HAVE BEEN SENT (ZENDESK_SENDS disabled)',
+      orderName, ...preview, htmlBody,
+    }));
+    return { sent: false, skipped: 'disabled', preview };
+  }
+
   const g = await getGroup('zendesk');
   const auth = Buffer.from(`${g.email}/token:${g['api-token']}`).toString('base64');
 
@@ -58,8 +105,8 @@ export async function sendProofReadyEmail({ orderName, customerEmail, customerNa
   const fieldId = Number(g['field-id']);
 
   const ticket = {
-    subject: `Proof for Order ${orderName} is ready to be reviewed`,
-    comment: { html_body: proofEmailHtml(orderName, proofUrl || PROOF_VIEWER_URL) },
+    subject,
+    comment: { html_body: htmlBody },
     requester: { name: customerName || 'Customer', email: customerEmail },
     email_ccs: [{ user_email: customerEmail }],
     status: 'pending',
@@ -77,5 +124,6 @@ export async function sendProofReadyEmail({ orderName, customerEmail, customerNa
     body: JSON.stringify({ ticket }),
   });
   if (!res.ok) throw new Error(`Zendesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
+  console.log(JSON.stringify({ msg: 'proof email sent', orderName, ...preview }));
+  return { sent: true, preview, ticket: await res.json() };
 }
