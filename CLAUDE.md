@@ -39,6 +39,17 @@ authority: **Linh** (legacy author).
   approval link, and no credentials are even read — so real orders can run
   through the WHOLE pipeline (intake → resize → finish → proof) with nobody's
   inbox touched. Arming it is a go-live action needing Kai's explicit approval.
+- **`PRODUCTION_TRANSFER` stays `disabled`.** It arms the only code that puts
+  print files in front of the production team (`src/services/ftp/main.py` — real
+  FTP to the facilities, real Google Drive for CA). Held, the transfer step logs
+  "WOULD HAVE TRANSFERRED" and records itself done, so a real order can run the
+  whole pipeline and stop at the facility's door. This one matters most while
+  Linh's program is live: it is processing the same orders, so an unheld
+  transfer means two copies of every print file, and the second is only "extra"
+  until somebody prints it. `DEMO-*`/`ZZ-*` never transfer regardless.
+  ⚠️ The guard lives in a CONTAINER, not a Lambda — it only exists in ECR after
+  `build-images.yml` runs, which is restricted to the working branch. Verify the
+  running image has it before trusting the switch.
 - Demo sandbox: synthetic `DEMO-*` orders + display-only mirror of real orders.
   `DEMO-*`/`ZZ-*` orders never send real email or transfer (hard guard).
 - **The customer approval path is off until `approval/link-secret` +

@@ -15,8 +15,18 @@ stage can be turned on, watched, and turned back off on its own.
 2. **`ZENDESK_SENDS`** — `disabled`. The only code that contacts a customer.
 3. **`approval/link-secret` + `approval/portal-base`** — unseeded. The customer
    approval path (`docs/customer-approval.md`).
-4. **`ORDERDESK_WRITES`** — `disabled`. The only code that moves a real order in
+4. **`PRODUCTION_TRANSFER`** — `disabled`. The only code that puts print files
+   in front of the production team. Missing from the first version of this list,
+   which was a real gap: everything else was held, so "run a real order through"
+   read as safe when it would in fact have uploaded to the facility.
+5. **`ORDERDESK_WRITES`** — `disabled`. The only code that moves a real order in
    OrderDesk. **This is the actual handover point with Linh's program.**
+
+⚠️ Switches 1, 2 and 5 are Lambda environment variables and take effect on
+`cdk deploy`. Switch 4 lives in an ECS **container image**, which is built only
+by `build-images.yml` on the working branch — deploying the stack sets the
+variable, but the running image only honours it once that workflow has pushed a
+new `:latest`. Check the image before trusting the switch.
 
 ## Before stage 0: what is not done yet
 
@@ -69,8 +79,9 @@ Rotate credentials first, then enable the poll schedule:
 aws scheduler update-schedule --name sb-dev-poller --state ENABLED   # (plus its existing target/flexible-window args)
 ```
 
-`ZENDESK_SENDS` and `ORDERDESK_WRITES` both stay `disabled`. So a real order
-goes: intake → gate → resize → finish → proof generated → **stops**. The proof
+`ZENDESK_SENDS`, `PRODUCTION_TRANSFER` and `ORDERDESK_WRITES` all stay
+`disabled`. So a real order goes: intake → gate → resize → finish → proof
+generated → **stops**. The proof
 email is composed in full and logged as "WOULD HAVE BEEN SENT" with the real
 recipient, subject, body and signed approval link. Nobody is contacted, and no
 order moves in OrderDesk.
