@@ -282,12 +282,42 @@ export async function handler(event = {}) {
   // writing nothing and enqueuing nothing. Read-only — cannot affect real orders.
   const dryRun = event?.dryRun === true;
   const limit = Number(event?.limit) || 100;
-  const folderId = event?.folderId || QTS_FOLDER_ID;
+  // `folderId: null` means EVERY folder. Only `undefined` falls back to QTS, so
+  // an explicit null is how a census asks for orders that have already been
+  // filed away.
+  const folderId = event?.folderId === null ? null : (event?.folderId || QTS_FOLDER_ID);
 
-  const url = `${ORDERDESK_API}/orders?folder_id=${folderId}&limit=${limit}`;
-  const res = await orderDeskFetch(url, { headers: orderDeskHeaders(storeId, apiKey) });
-  if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const { orders = [] } = await res.json();
+  // A single dryRun poll only sees what is sitting in the folder at that moment.
+  // Linh's program drains it continuously, so sampling every 30 minutes missed
+  // roughly 60% of a day's orders — the count it produced was a sample, not a
+  // total. `since`/`until` (YYYY-MM-DD) plus `all: true` walk the date range
+  // with offset paging instead, so a whole day can be audited at once.
+  const { since, until } = event ?? {};
+  const paginate = event?.all === true;
+
+  const pageUrl = (offset) => {
+    const q = new URLSearchParams();
+    if (folderId) q.set('folder_id', String(folderId));
+    q.set('limit', String(limit));
+    if (offset) q.set('offset', String(offset));
+    if (since || until) {
+      q.set('date_type', 'date_added');
+      if (since) q.set('search_start_date', since);
+      if (until) q.set('search_end_date', until);
+    }
+    return `${ORDERDESK_API}/orders?${q}`;
+  };
+
+  const orders = [];
+  for (let offset = 0; ; offset += limit) {
+    const res = await orderDeskFetch(pageUrl(offset), { headers: orderDeskHeaders(storeId, apiKey) });
+    if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const page = (await res.json()).orders ?? [];
+    orders.push(...page);
+    // Stop on a short page, when paging was not asked for, or at a hard ceiling
+    // so a bad date range cannot walk the entire store.
+    if (!paginate || page.length < limit || orders.length >= 2000) break;
+  }
 
   if (dryRun) {
     const inspected = orders.map((order) => {
@@ -296,6 +326,11 @@ export async function handler(event = {}) {
       return {
         orderName: job.orderName,
         folder: job.folder,
+        // Where the order ACTUALLY sits in OrderDesk right now. folder_name is
+        // absent from the list response (job.folder is always null), but the id
+        // is there — and it is the only way to compare our verdict against what
+        // Linh's program actually did with the same order.
+        folderIdNow: order.folder_id === undefined ? null : String(order.folder_id),
         shipping: job.shipping,
         routing: job.routing,
         variant: job.variant,

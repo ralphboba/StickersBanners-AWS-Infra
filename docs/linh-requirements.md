@@ -106,6 +106,29 @@ write switch off (`docs/go-live.md` stage 1).
   from the inch-SKU lists — and it was in none of them. Live order S59121 was
   resolving to 145x91 **feet**. The resizer scales to whatever number it gets,
   so this would have produced a print file 12x oversized.
+- **`SKU-604`, `SKU-607`, `SKUXBS` are quoted in inches too.** Kai: "응 셋 다
+  인치야." → added to `INCH_SKUS_EXTRA` alongside `SKU-608`. Found by the
+  2026-09-10 full-day census of 350 real orders, which listed every line still
+  resolving to an implausible number of feet, then confirmed by product name:
+
+  | SKU | Product | Raw | Was |
+  |---|---|---|---|
+  | `SKU-604` | Fabric Pop Up Display Backdrop **with Stand** | 145x91 | 145 ft |
+  | `SKU-607` | **8'x8'** Fabric Pop Up Display Backdrop (Banner Only) | 115x91 | 115 ft |
+  | `SKUXBS` | X-Banner | 30x69 | 30 ft |
+
+  `SKU-604` is the same print as `SKU-608` — the backdrop sold with its stand —
+  which is why it carries the identical 145x91.
+
+  Two cases in the same census are **still wrong** and cannot be fixed with a
+  SKU list:
+  - `SKUAB` (Adhesive Banners / Window Decals) arrived as `'48 in'` x `'80 in'`.
+    The unit is inside the value and the parser discards it, so it reads as 48
+    feet. Needs a parse fix, not a list entry.
+  - `SKUVB` (Custom Vinyl Banners) carried `144 x 18` on one order. SKUVB is
+    genuinely quoted in feet normally, so this needs a magnitude rule ("too
+    large to be feet"), which no SKU list can express. Worth asking Linh how
+    his program handles it before inventing one.
 
 ### Not answered yet
 
