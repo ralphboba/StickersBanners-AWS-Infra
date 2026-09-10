@@ -326,6 +326,11 @@ export async function handler(event = {}) {
       return {
         orderName: job.orderName,
         folder: job.folder,
+        // Where the order ACTUALLY sits in OrderDesk right now. folder_name is
+        // absent from the list response (job.folder is always null), but the id
+        // is there — and it is the only way to compare our verdict against what
+        // Linh's program actually did with the same order.
+        folderIdNow: order.folder_id === undefined ? null : String(order.folder_id),
         shipping: job.shipping,
         routing: job.routing,
         variant: job.variant,
