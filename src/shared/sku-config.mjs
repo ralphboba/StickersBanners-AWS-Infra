@@ -40,17 +40,31 @@ export const INCH_SKU_PREFIXES = [
  * NOT from legacy — kept separate so the lists above stay an honest record of
  * what Linh's source contained.
  *
- * Same fabric pop-up display family as the SKUFPUD prefix, but catalogued under
- * the numeric SKU scheme, so the prefix rule misses it. Caught on live order
- * S59121: OrderDesk records 145x91 and the product name contains "fabric",
- * which skips resolveDimensions' remap — so without this the order resolves to
- * 145x91 FEET (a 44-metre banner). Kai confirmed the values are inches.
+ * Mostly the fabric pop-up display family, catalogued under the numeric SKU
+ * scheme instead of the SKUFPUD prefix, so the prefix rule misses them. Caught
+ * on live order S59121: OrderDesk records 145x91 and the product name contains
+ * "fabric", which skips resolveDimensions' remap — so without this the order
+ * resolves to 145x91 FEET (a 44-metre banner).
  *
- * A wrong unit here is not cosmetic: the resizer scales artwork to the number
- * it is given, so feet-instead-of-inches produces a print file 12x oversized.
+ * The rest of the family surfaced in the 2026-09-10 full-day census of 350 real
+ * orders, which listed every line still resolving to an implausible number of
+ * feet. Each entry below is a SKU Kai confirmed by name; nothing is here on a
+ * guess, because a wrong unit is not cosmetic — the resizer scales artwork to
+ * the number it is given, so feet-instead-of-inches produces a print file 12x
+ * oversized.
+ *
+ * Still unresolved, and deliberately NOT fixed here because no SKU list can
+ * express them:
+ *   - SKUAB  raw values arrive as '48 in' x '80 in' — the unit is inside the
+ *            value and the parser discards it, so it reads as 48 feet.
+ *   - SKUVB  one order carried 144x18; SKUVB is genuinely in feet normally, so
+ *            this needs a magnitude rule, not a SKU entry.
  */
 export const INCH_SKUS_EXTRA = [
-  'SKU-608', // 10'x8' Fabric Pop Up Display Backdrop (Banner Only)
+  'SKU-608', // 10'x8' Fabric Pop Up Display Backdrop (Banner Only) — 145x91
+  'SKU-604', // Fabric Pop Up Display Backdrop with Stand — 145x91, same print as SKU-608
+  'SKU-607', // 8'x8' Fabric Pop Up Display Backdrop (Banner Only) — 115x91
+  'SKUXBS',  // X-Banner — 30x69, a standard X-banner panel
 ];
 
 
