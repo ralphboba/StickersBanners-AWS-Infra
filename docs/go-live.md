@@ -28,6 +28,37 @@ by `build-images.yml` on the working branch — deploying the stack sets the
 variable, but the running image only honours it once that workflow has pushed a
 new `:latest`. Check the image before trusting the switch.
 
+## What enforces this
+
+Kai: "절대로 내가 라이브화 하라고 하기 전까지 일어나지 않는 일들은 일어나면
+안된다." So the holds are not a matter of remembering. Three layers:
+
+1. **`test/safety-switches.test.ts`** asserts, against the SYNTHESIZED
+   CloudFormation, that all four switches are `disabled` — in prod as well as
+   dev, so a prod deploy is not a way around it. Nothing enforced this before:
+   flipping any switch to `enabled` in the source would have passed CI in
+   silence and shipped on the next deploy. Verified by flipping all four (6/6
+   fail).
+
+   **If one of those tests fails, that is the point.** Do not "fix" the test.
+   Either the flip is a mistake, or it is a deliberate go-live and that diff is
+   the record of the decision.
+
+2. **`.claude/settings.json` deny rules** block every way to arm a switch
+   without going through code review: `lambda update-function-configuration`,
+   `ecs register-task-definition`, `ecs run-task` (its `--overrides` can set
+   env vars directly), `scheduler update-schedule`, `ssm put-parameter`, plus
+   `stepfunctions start-execution` and `sqs send-message`, which inject an
+   order into the pipeline without any switch at all.
+
+3. **The poller's allow rule is scoped to `--payload {"dryRun":true`.** It used
+   to permit any payload, which meant a single invocation with no `dryRun` would
+   have processed real orders end to end. A real-order run now needs an explicit
+   approval at the moment it happens.
+
+None of this constrains Kai — it constrains everything that is not a deliberate,
+visible decision.
+
 ## Before stage 0: what is not done yet
 
 - **No real order has ever been through this code.** Every test to date is
