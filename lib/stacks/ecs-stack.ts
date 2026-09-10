@@ -101,6 +101,15 @@ export class EcsStack extends cdk.Stack {
           FINISHED_BUCKET: `${config.prefix}-finished-${this.account}`,
           DZI_BUCKET: `${config.prefix}-dzi-${this.account}`,
           JOBS_TABLE: `${config.prefix}-jobs`,
+          // Arms the only code that puts files in front of the production team
+          // (src/services/ftp/main.py). Held at "disabled" so real orders can
+          // run the whole pipeline -- intake, resize, finish, proof -- and stop
+          // at the facility's door. Linh's program is processing these same
+          // orders today, so an unheld transfer means two copies of every print
+          // file. Flipping this to "enabled" is a go-live action needing
+          // explicit approval -- see CLAUDE.md "Safety".
+          // Only the ftp task reads it; harmless on the others.
+          PRODUCTION_TRANSFER: 'disabled',
         },
       });
 

@@ -22,6 +22,7 @@ import tempfile
 import boto3
 import ftputil
 
+from guards import is_demo_order, transfers_enabled
 from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
@@ -109,11 +110,6 @@ def record_step(order_name, state, detail=""):
     })
 
 
-def is_demo_order(name):
-    """Synthetic demo/test orders (DEMO-*, ZZ-*) never touch real FTP/Drive."""
-    return isinstance(name, str) and name.upper().startswith(("DEMO-", "ZZ-"))
-
-
 def main():
     order_name = os.environ["ORDER_NAME"]
     job = json.loads(os.environ["JOB"])
@@ -132,6 +128,24 @@ def main():
         raise ValueError(f"Invalid production facility: {facility}")
 
     rename_dict = job.get("renameDict") or {}
+
+    # The prototype path. Everything upstream -- intake, resize, finish, proof
+    # -- has already run on the real order and the finished TIFFs are sitting in
+    # the finished bucket; this is only the step that puts them in front of the
+    # production team. Held while Linh's program is still the one running,
+    # because it is processing these same orders: an unheld transfer means two
+    # copies of every print file in the facility's folder, and the second one is
+    # only "extra" until somebody prints it.
+    #
+    # Arming it is a go-live action needing Kai's explicit approval
+    # (see CLAUDE.md "Safety" and docs/go-live.md).
+    if not transfers_enabled():
+        detail = (f"WOULD HAVE TRANSFERRED to {facility} "
+                  f"({len(rename_dict)} invoice image(s)) -- PRODUCTION_TRANSFER disabled")
+        record_step(order_name, "done", detail=detail)
+        print(json.dumps({"orderName": order_name, "facility": facility,
+                          "detail": detail, "held": True}))
+        return
 
     with tempfile.TemporaryDirectory() as scratch:
         local_dir = download_finished(order_name, scratch)

@@ -16,7 +16,13 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 
 const sqs = new SQSClient({});
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+// cleanOrder leaves some keys undefined by design (folder when OrderDesk sends
+// no folder_name, proofName when a line item has no id). The document client
+// throws on those unless told to drop them — the poller has always been
+// configured this way; this one was not, and inherited the same job shape.
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
