@@ -9,6 +9,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { EnvironmentConfig } from '../config/types';
@@ -228,6 +229,30 @@ export class WorkflowStack extends cdk.Stack {
         includeExecutionData: true,
       },
     });
+
+    // EcsRunTask grants ecs:RunTask on the task definition's EXACT revision, and
+    // every image rebuild or container-env change makes a new revision. That is
+    // a silent trap: the state machine picks up the new revision immediately,
+    // the IAM policy keeps pointing at the old one, and every execution then
+    // fails at the first ECS step with AccessDeniedException.
+    //
+    // Worse, `cdk diff` cannot see it. The policy resource is a
+    // `Fn::GetStackOutput` placeholder that the CLI substitutes at deploy time,
+    // so the unresolved templates compare equal and the stack reports "no
+    // changes" — a redeploy, even with --force, does nothing.
+    //
+    // That is exactly what happened when PRODUCTION_TRANSFER was added: every
+    // pipeline run failed at Resize until this was fixed. Granting the family
+    // (all revisions) removes the whole class.
+    this.stateMachine.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'RunAnyRevisionOfOurTaskDefinitions',
+        actions: ['ecs:RunTask'],
+        resources: Object.keys(taskDefinitions).map(
+          (key) => `arn:aws:ecs:${this.region}:${this.account}:task-definition/${config.prefix}-${key}:*`,
+        ),
+      }),
+    );
 
     // --- trigger: intake.fifo -> starter Lambda -> StartExecution ---
     this.starter = new lambda.Function(this, 'PipelineStarter', {
