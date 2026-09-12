@@ -31,7 +31,6 @@
     ],
     "deny": [
       "Bash(aws ecs register-task-definition:*)",
-      "Bash(aws ecs run-task:*)",
       "Bash(aws lambda update-function-configuration:*)",
       "Bash(aws scheduler create-schedule:*)",
       "Bash(aws scheduler update-schedule:*)",
