@@ -16,11 +16,11 @@ import json
 import os
 import sys
 import tempfile
-import urllib.request
 
 import boto3
 
 from converter import check_pdf_pages, infer_unit, process_image
+from fetch import download
 
 s3 = boto3.client("s3")
 ddb = boto3.resource("dynamodb")
@@ -41,7 +41,10 @@ def fetch_artwork(item, dest_dir, name):
         key = url.replace("s3://", "").split("/", 1)[-1] if url.startswith("s3://") else url
         s3.download_file(bucket, key, local)
     else:
-        urllib.request.urlretrieve(url, local)
+        # Somebody else's server. Bounded in time and size, and retried — see
+        # fetch.py for why the bare urlretrieve this replaces was a hazard.
+        size = download(url, local)
+        print(f"resize: fetched {size} bytes for {name} from {url.split('?')[0]}")
 
     if not os.path.exists(local) or os.path.getsize(local) == 0:
         raise RuntimeError(f"Cannot verify downloaded file for {name}")

@@ -154,3 +154,74 @@ the same decision.
 At this point every path a customer or an order can take runs through this
 system. Keep the dashboard watched for the first days; the mirror no longer
 means "someone else is handling it".
+
+## The Sunday 2026-09-13 window (16:00–21:00 UTC)
+
+Linh agreed to stop his QTS scanning for five hours — noon to 5PM **New York**
+time — while leaving his API up so customers can still see and approve proofs on
+his portal. His one condition, verbatim:
+
+> "Also create separate folders when you test in case something goes wrong so we
+> don't have to figure out which orders need to be processed again"
+
+This is the first window in which our pipeline can run on live orders without
+racing his program for the same folder.
+
+### What the window is actually for
+
+Not the decision layer — that is already verified on 374 real orders in a single
+day, with the routing, the intake gate, the proof verdict, the finishing parse
+and both express branches all confirmed against live data. What has **never**
+run on a real order is everything after it: resize, finish, proof. Those have
+only ever seen `DEMO-*` orders carrying one synthetic image from our own bucket.
+So the goal is the image pipeline on real customer artwork, and nothing beyond
+it. `ZENDESK_SENDS` and `PRODUCTION_TRANSFER` stay `disabled` throughout —
+customers keep using Linh's portal, and no print file goes near a facility.
+
+### The express window overlaps, and that decides the running order
+
+The 3–6pm ET express cutoff is 19:00–22:00 UTC, so the last two hours of the
+test sit inside it. That matters because the express upgrade is not a folder
+move — `applyExpressUpgrade` rewrites `shipping_method` on the real order and
+appends an order note. A folder move is trivially reversible; an edited order
+record is what Linh's program sees when it comes back at 5PM.
+
+So any phase with `ORDERDESK_WRITES` armed runs **before 19:00 UTC**:
+
+| UTC | ET | `ORDERDESK_WRITES` | What it proves |
+|---|---|---|---|
+| 16:00–17:00 | 12–1pm | `disabled` | Image pipeline on real artwork. Nothing is written to OrderDesk at all, so the orders stay in QTS and Linh processes them normally at 5PM. Zero risk. |
+| 17:00–19:00 | 1–3pm | `enabled` | Folder move and tag, into the test folders. Outside the express window, so no order record is edited. |
+| 19:00–20:30 | 3–4:30pm | `disabled` | Express window open: the NV pull and the 3-day upgrade are decided and logged, not written. |
+| 20:30–21:00 | 4:30–5pm | `disabled` | Restore, verify, hand Linh the manifest. |
+
+Arming `ORDERDESK_WRITES` for the middle phase is a go-live action and needs
+Kai's explicit approval on the day. Declining it costs little: the first phase
+alone covers the gap the window exists to close.
+
+### Prepared in advance
+
+- **Artwork download bounds** (`src/services/resize/fetch.py`). The HTTP fetch
+  was a bare `urlretrieve` with no timeout, no size cap and no retry — three
+  ways one uncooperative server could eat the window. Now bounded and retried;
+  see the module for the reasoning and `test/python/test_artwork_fetch.py` for
+  the failure modes it pins.
+- **Restore script** (`scripts/restore-folders.mjs`). Linh's condition, met:
+  moves everything out of the test folders back to QTS. Dry run by default,
+  `--apply` to act, `--out` writes the manifest to hand him. Must run somewhere
+  that can reach app.orderdesk.me — the dev container's egress proxy blocks that
+  host, so not from here.
+
+### Still needed before the window
+
+- The **test folder IDs**. `ORDERDESK_FOLDERS` in `src/shared/intake-gate.mjs`
+  is a hardcoded map, so pointing the gate at test folders is a code change and
+  a deploy, not a setting. Needs the eight ids (manual, sales, processing,
+  proofing, GA, NJ, TX, NV) created in OrderDesk first.
+- **`SKU-603` and `SKU08X08FPUD`** confirmed as inches. Both are the fabric
+  pop-up display family at 115x91 and both still resolve to feet. Every pop-up
+  display order seen so far is held at the gate as `special-product`, so none
+  reaches print automatically — but the window is the first time these become
+  real print files rather than a line in a report.
+- **Pause the demo feeder** for the five hours. It runs every 10 minutes and
+  would interleave synthetic executions through the logs we need to read.
