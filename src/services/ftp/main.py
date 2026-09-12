@@ -5,7 +5,7 @@ I. Facility transfer — ported from legacy ftpWorker.py /stp:
   - GA/NJ/TX/NV -> FTP upload of the finished folder to /{facility}/{orderId}
   - CA          -> Google Drive (service account, CA_DRIVE_ID parent)
   - before transfer: optional proof rename (renameDict) + invoice proof jpgs
-    uploaded to FTP /proof
+    uploaded to FTP /Proof
 
 Plumbing changes only: files come from the finished S3 bucket instead of the
 local disk; FTP/Drive credentials come from SSM Parameter Store
@@ -26,6 +26,13 @@ from guards import is_demo_order, transfers_enabled
 from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
+
+# The invoice-proof folder on the facility FTP. Capital P: that is the folder
+# Linh's program has been filling for years — 382,374 files when it was listed
+# on 2026-09-12. An all-lowercase spelling was a transcription slip; on a
+# case-sensitive server it would have created a second folder nobody watches,
+# and the proof would have silently never reached production.
+PROOF_DIR = "/Proof"
 
 s3 = boto3.client("s3")
 ssm = boto3.client("ssm")
@@ -91,12 +98,12 @@ def upload_folder_ftp(local_dir, remote_dir, host, user, passwd):
 
 
 def upload_invoice_images(local_dir, image_names, host, user, passwd):
-    """Legacy upload_invoice_image: proof jpgs -> FTP /proof."""
+    """Legacy upload_invoice_image: proof jpgs -> FTP /Proof."""
     with ftputil.FTPHost(host, user, passwd) as ftp_host:
         for image in image_names:
             local = os.path.join(local_dir, f"{image}.jpg")
             if os.path.exists(local):
-                ftp_host.upload(local, ftp_host.path.join("/proof", f"{image}.jpg"))
+                ftp_host.upload(local, ftp_host.path.join(PROOF_DIR, f"{image}.jpg"))
 
 
 def record_step(order_name, state, detail=""):
