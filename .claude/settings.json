@@ -27,7 +27,8 @@
       "Bash(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY npx cdk diff:*)",
       "Bash(npx cdk deploy:*)",
       "Bash(npx cdk diff:*)",
-      "Bash(npx cdk synth:*)"
+      "Bash(npx cdk synth:*)",
+      "Bash(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY aws ecs run-task --cluster sb-dev-cluster --task-definition sb-dev-ftp:*)"
     ],
     "deny": [
       "Bash(aws ecs register-task-definition:*)",
