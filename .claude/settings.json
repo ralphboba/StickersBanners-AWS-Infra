@@ -35,8 +35,7 @@
       "Bash(aws lambda update-function-configuration:*)",
       "Bash(aws scheduler create-schedule:*)",
       "Bash(aws sqs send-message:*)",
-      "Bash(aws ssm delete-parameter:*)",
-      "Bash(aws stepfunctions start-execution:*)"
+      "Bash(aws ssm delete-parameter:*)"
     ]
   }
 }
