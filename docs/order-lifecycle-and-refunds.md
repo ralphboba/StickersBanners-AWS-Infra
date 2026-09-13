@@ -258,7 +258,49 @@ modifiable = folderId NOT IN AWAITING_SHIPMENT_FOLDERS
 | Awaiting Shipment **이전** | 업그레이드 선택 가능, 차액 표시, 인보이스 요청 |
 | Awaiting Shipment **이후** | 옵션 전부 비활성 + 사유 안내 + "취소는 팀에 문의" |
 
-### 열린 질문 하나 — 취소를 셀프서비스로 열 것인가
+### 취소는 셀프서비스로 열지 않는다 (Kai 확정)
 
-목업에서는 **일부러 열지 않았다.** 이미 만들어진 주문에서 50%가 나가는 건이라
-사람이 한 번 보는 게 맞다고 판단했다. 셀프서비스로 원하시면 바꾼다.
+이미 만들어진 주문에서 50%가 나가는 건이라 사람이 한 번 본다. 고객 화면은
+"팀에 문의"로 라우팅만 한다. **버튼을 만들지 않는다.**
+
+## 그래서 폴더를 어떻게 읽는가 — 이미 돌고 있다
+
+"오더데스크와 연동이 되나"의 답: **읽기는 이미 붙어 있고 지금도 5분마다 돌고 있다.**
+새로 만들 배관이 없다.
+
+| 부품 | 상태 | 위치 |
+| --- | --- | --- |
+| OrderDesk HTTP 클라이언트 | 있음 (429 재시도/예산 처리 포함) | `src/shared/orderdesk-fetch.mjs` |
+| 자격증명 | SSM (`getSecret('orderdesk', …)`) | — |
+| 폴더 → 상태 매핑 | 있음, **10개 폴더** | `MIRROR_FOLDERS` (poller) |
+| 미러 스케줄 | **enabled, 5분 주기** | `<prefix>-mirror-sync` |
+| 저장소 | DynamoDB `JOBS_TABLE`, `orderName` 키 | — |
+| 주문 단건 조회 경로 | 있음 (`pathParameters.name`) | `src/functions/order-api` |
+
+**비활성인 것은 인테이크 폴러(`sb-dev-poller`)뿐이다.** 그건 주문을 실제로 *처리*하는
+쪽이라 계속 꺼둔다. 미러 브랜치는 절대 큐에 넣지 않고 OrderDesk에 쓰지도 않으므로
+`ORDERDESK_WRITES`와 무관하다.
+
+### 빠진 것 — 폴더 10개
+
+`MIRROR_FOLDERS`에 **생산 폴더와 Awaiting Shipment 폴더가 없다.** 그래서 지금은
+"In production" / "Ready to ship"을 표시할 수도, 컷오프를 판정할 수도 없다.
+
+```
+생산            GA 73068 · NJ 73069 · TX 73070 · NV 674352 · CA 42928
+Awaiting Shipment  GA 3571 · NJ 43256 · TX 43257 · NV 674353 · CA 79040
+```
+
+**이 10줄 추가가 Phase 02의 첫 작업이고, 읽기 전용이라 위험이 없다.**
+
+### 읽기를 두 단계로 나눈다
+
+| | 무엇을 읽나 | 왜 |
+| --- | --- | --- |
+| **화면 표시** | DynamoDB 미러 | 고객 트래픽이 OrderDesk에 안 간다. 새로고침 연타로 429를 맞을 일이 없다 |
+| **결제 직전** | OrderDesk **직접 1회** | 미러는 최대 5분 늦다. 그 사이 창고가 Awaiting Shipment로 옮겼을 수 있다 |
+
+두 번째가 핵심이다. 미러만 믿으면 **이미 라벨이 나간 주문에 업그레이드 요금을 받는
+5분짜리 창**이 생긴다. `orderEditCommit` 직전에 폴더를 한 번 다시 읽고, 옮겨졌으면
+거절하고 화면을 잠금 상태로 새로 그린다. 호출은 실제 업그레이드 건당 1회뿐이라
+rate limit에 영향이 없다.
