@@ -34,7 +34,6 @@
       "Bash(aws ecs register-task-definition:*)",
       "Bash(aws lambda update-function-configuration:*)",
       "Bash(aws scheduler create-schedule:*)",
-      "Bash(aws scheduler update-schedule:*)",
       "Bash(aws sqs send-message:*)",
       "Bash(aws ssm delete-parameter:*)",
       "Bash(aws stepfunctions start-execution:*)"
