@@ -20,6 +20,7 @@ import tempfile
 import boto3
 
 from converter import check_pdf_pages, infer_unit, process_image
+from artwork import artwork_extension
 from fetch import download
 
 s3 = boto3.client("s3")
@@ -33,7 +34,7 @@ JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
 def fetch_artwork(item, dest_dir, name):
     """Download the artwork to local scratch. URL (legacy path) or s3:// key."""
     url = item.get("artworkUrl") or ""
-    ext = (os.path.splitext(url.split("?")[0])[1][1:] or "pdf").lower()
+    ext = artwork_extension(item, url)
     local = os.path.join(dest_dir, f"{name}.{ext}")
 
     if url.startswith("s3://") or (UPLOADS_BUCKET and not url.startswith("http")):
