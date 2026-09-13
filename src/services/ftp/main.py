@@ -24,11 +24,9 @@ import boto3
 from jobload import load_job
 import ftputil
 
-from guards import (drive_would_escape_review, is_demo_order, remote_path,
-                    transfers_enabled)
+from guards import is_demo_order, transfer_destination, transfers_enabled
 from drive_helper import upload_print_folder
 
-FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
 
 # The invoice-proof folder on the facility FTP. Capital P: that is the folder
 # Linh's program has been filling for years — 382,374 files when it was listed
@@ -144,10 +142,23 @@ def main():
                           "detail": detail, "demo": True}))
         return
 
-    if facility not in FACILITIES:
-        raise ValueError(f"Invalid production facility: {facility}")
-
     rename_dict = job.get("renameDict") or {}
+
+    # Where these files go, and whether they may go at all, is decided in one
+    # place for every transport -- see guards.transfer_destination. Resolved
+    # before anything is downloaded, so a held order costs nothing.
+    dest = transfer_destination(facility, order_name)
+
+    # A transport the review path cannot divert. Held rather than sent to the
+    # real destination -- somebody chose the review path, and the point of that
+    # choice is that no facility sees a file until a person promotes it.
+    if dest["kind"] == "hold":
+        detail = (f"WOULD HAVE TRANSFERRED to {facility} "
+                  f"({len(rename_dict)} invoice image(s)) -- {dest['reason']}")
+        record_step(order_name, "done", detail=detail)
+        print(json.dumps({"orderName": order_name, "facility": facility,
+                          "detail": detail, "held": True}))
+        return
 
     # The prototype path. Everything upstream -- intake, resize, finish, proof
     # -- has already run on the real order and the finished TIFFs are sitting in
@@ -171,24 +182,7 @@ def main():
         local_dir = download_finished(order_name, scratch)
         rename_results = rename_proof(local_dir, rename_dict)
 
-        if drive_would_escape_review(facility):
-            # The review path is FTP-only: FTP_BASE_PATH prefixes every remote
-            # FTP path, but CA does not go over FTP at all -- it uploads into the
-            # real production Drive parent (google/ca-drive-id), which has no
-            # prefix to divert. So a run that believes it is safely writing to a
-            # review folder was putting CA print files exactly where the CA
-            # facility collects them. Hold CA instead: a prefix set at all means
-            # somebody chose the review path, and the whole point of that choice
-            # is that no facility sees a file until a person promotes it.
-            detail = (f"WOULD HAVE UPLOADED to the CA Drive "
-                      f"({len(rename_dict)} invoice image(s)) -- review path is "
-                      f"FTP-only and cannot divert Drive")
-            record_step(order_name, "done", detail=detail)
-            print(json.dumps({"orderName": order_name, "facility": facility,
-                              "detail": detail, "held": True}))
-            return
-
-        if facility == "CA":
+        if dest["kind"] == "drive":
             sa_json = get_secret("google", "service-account-json")
             ca_drive_id = get_secret("google", "ca-drive-id")
             sa_path = os.path.join(scratch, "service_account.json")
@@ -206,9 +200,8 @@ def main():
             passwd = get_secret("ftp", "password")
             invoice_images = list(rename_dict.values())
             upload_invoice_images(local_dir, invoice_images, host, user, passwd)
-            dest = remote_path(facility, order_name)
-            upload_folder_ftp(local_dir, dest, host, user, passwd)
-            detail = f"FTP {dest}"
+            upload_folder_ftp(local_dir, dest["path"], host, user, passwd)
+            detail = f"FTP {dest['path']}"
 
     record_step(order_name, "done", detail=detail)
     print(json.dumps({"orderName": order_name, "facility": facility,

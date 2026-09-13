@@ -60,23 +60,70 @@ def remote_path(*parts, env=None):
     return f"{ftp_base_path(env)}/{tail}"
 
 
-def drive_would_escape_review(facility, env=None):
-    """Is this a CA transfer that the review path cannot actually divert?
+# How each facility's print files travel. A facility that is not here has no
+# transport and must never be guessed at.
+TRANSPORTS = {
+    "GA": "ftp",
+    "NJ": "ftp",
+    "TX": "ftp",
+    "NV": "ftp",
+    "CA": "drive",
+}
 
-    FTP_BASE_PATH prefixes every remote FTP path, so GA/NJ/TX/NV land under the
-    review folder and wait for a person. CA does not go over FTP at all: it
-    uploads into the real production Drive parent (google/ca-drive-id), and
-    there is no prefix to apply. During the 2026-09-13 window S59977 put six
-    print files exactly where the CA facility collects them while every other
-    facility that hour was correctly diverted.
+FACILITIES = tuple(TRANSPORTS)
 
-    A prefix set at all means somebody chose the review path, and the point of
-    that choice is that no facility sees a file until a person promotes it. So
-    CA is held rather than uploaded.
+# Transports the review path can actually divert.
+#
+# FTP can: every remote path is built through remote_path(), so FTP_BASE_PATH
+# reaches all of them. Drive cannot: it uploads into a parent folder id read
+# from SSM, and there is no prefix to apply.
+#
+# Deliberately a whitelist. Review mode used to be decided inside each
+# transport, so Drive simply never asked the question and S59977 put six print
+# files in the folder the CA facility collects from while every other facility
+# that hour was correctly diverted. With a whitelist, a transport added later is
+# undivertible until somebody says otherwise -- so the cost of forgetting is a
+# held order, not a file in front of production.
+DIVERTIBLE = frozenset({"ftp"})
 
-    Note this cannot be exercised end to end: in main.py the DEMO check and the
-    PRODUCTION_TRANSFER check both return before it, so reaching it for real
-    requires arming live transfers. Hence a predicate that can be tested on its
-    own.
+
+def review_mode(env=None):
+    """Is output being diverted so a person sees it before production does?
+
+    Setting a path prefix at all is the choice: it exists only to send a run
+    somewhere a person reviews.
     """
-    return facility == "CA" and bool(ftp_base_path(env))
+    return bool(ftp_base_path(env))
+
+
+def transfer_destination(facility, order_name, env=None):
+    """Where this order's print files go, and how -- decided in one place.
+
+    Returns one of:
+      {"kind": "ftp",   "path": ..., "review": bool}
+      {"kind": "drive", "review": False}
+      {"kind": "hold",  "reason": ...}
+
+    The point of routing every transport through here is the default: in review
+    mode a transport that cannot be diverted is HELD, never sent to the real
+    destination.
+    """
+    transport = TRANSPORTS.get(facility)
+    if transport is None:
+        raise ValueError(f"Invalid production facility: {facility}")
+
+    reviewing = review_mode(env)
+    if reviewing and transport not in DIVERTIBLE:
+        return {
+            "kind": "hold",
+            "reason": (f"review path cannot divert {transport} - "
+                       f"{facility} would have gone to the real destination"),
+        }
+
+    if transport == "ftp":
+        return {
+            "kind": "ftp",
+            "path": remote_path(facility, order_name, env=env),
+            "review": reviewing,
+        }
+    return {"kind": "drive", "review": False}

@@ -12,11 +12,13 @@ These pin that the switch stays off unless deliberately armed. Run with
 import os
 import sys
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "services", "ftp"))
 
 from guards import (transfers_enabled, is_demo_order, remote_path,  # noqa: E402
-                    ftp_base_path, drive_would_escape_review)
+                    ftp_base_path, review_mode, transfer_destination,
+                    TRANSPORTS, DIVERTIBLE)
 
 
 class TransferSwitch(unittest.TestCase):
@@ -100,39 +102,74 @@ class TrialPathPrefix(unittest.TestCase):
         self.assertEqual(remote_path("GA", "", "S1", env={}), "/GA/S1")
 
 
-class CaDriveRespectsReviewPath(unittest.TestCase):
-    """The review path is FTP-only, so CA has to be held rather than diverted.
+REVIEW = {"FTP_BASE_PATH": "/AWS-TEST"}
+REAL = {"FTP_BASE_PATH": ""}
 
-    FTP_BASE_PATH prefixes every remote FTP path, but CA uploads into the real
-    production Drive parent and there is no prefix to apply. During the
-    2026-09-13 window S59977's six print files went straight into the folder the
-    CA facility collects from, while every other facility was safely diverted.
 
-    WHAT THIS DOES NOT COVER: the full path. In main.py the DEMO check and the
-    PRODUCTION_TRANSFER check both return before this one, so reaching it for
-    real means arming live transfers. These test the decision, not the transfer.
+class ReviewModeIsOneDecision(unittest.TestCase):
+    """Setting a path prefix at all is the choice to divert for review."""
+
+    def test_a_prefix_means_review(self):
+        self.assertTrue(review_mode(REVIEW))
+
+    def test_no_prefix_is_the_real_facility_layout(self):
+        self.assertFalse(review_mode(REAL))
+        self.assertFalse(review_mode({}))
+
+
+class EveryFtpFacilityIsDiverted(unittest.TestCase):
+    def test_the_prefix_reaches_all_four(self):
+        for facility in ("GA", "NJ", "TX", "NV"):
+            dest = transfer_destination(facility, "S1", REVIEW)
+            self.assertEqual(dest["kind"], "ftp")
+            self.assertTrue(dest["review"])
+            self.assertEqual(dest["path"], f"/AWS-TEST/{facility}/S1")
+
+    def test_without_review_they_go_to_the_real_facility_folder(self):
+        dest = transfer_destination("GA", "S1", REAL)
+        self.assertEqual(dest["path"], "/GA/S1")
+        self.assertFalse(dest["review"])
+
+
+class DriveCannotBeDiverted(unittest.TestCase):
+    """The failure this whole resolver exists to prevent.
+
+    Review mode used to be decided inside each transport, so Drive never asked
+    the question: S59977 put six print files in the folder the CA facility
+    collects from while every other facility that hour was correctly diverted.
     """
 
-    REVIEW = {"FTP_BASE_PATH": "/AWS-TEST"}
-    REAL = {"FTP_BASE_PATH": ""}
+    def test_ca_is_held_in_review_mode_not_sent(self):
+        dest = transfer_destination("CA", "S59977", REVIEW)
+        self.assertEqual(dest["kind"], "hold")
+        self.assertIn("drive", dest["reason"])
 
-    def test_ca_is_held_while_the_review_path_is_on(self):
-        self.assertTrue(drive_would_escape_review("CA", self.REVIEW))
+    def test_ca_uploads_normally_when_nothing_is_being_reviewed(self):
+        self.assertEqual(transfer_destination("CA", "S59977", REAL)["kind"], "drive")
+        self.assertEqual(transfer_destination("CA", "S59977", {})["kind"], "drive")
 
-    def test_every_ftp_facility_is_divertible_and_so_is_not_held(self):
-        for facility in ("GA", "NJ", "TX", "NV"):
-            self.assertFalse(drive_would_escape_review(facility, self.REVIEW),
-                             f"{facility} goes over FTP and the prefix diverts it")
 
-    def test_ca_uploads_normally_when_there_is_no_review_path(self):
-        # No prefix means the real facility layout -- the ordinary arrangement
-        # where CA is supposed to reach the Drive.
-        self.assertFalse(drive_would_escape_review("CA", self.REAL))
-        self.assertFalse(drive_would_escape_review("CA", {}))
+class ForgettingIsSafe(unittest.TestCase):
+    """A transport added later must default to held, not to production.
 
-    def test_a_prefix_means_the_reviewer_chose_to_hold_everything(self):
-        self.assertTrue(ftp_base_path(self.REVIEW))
+    This is the structural half of the fix. The old code's default was to fall
+    through to the real destination, so a transport nobody thought about reached
+    production silently -- which is exactly what happened.
+    """
 
-    def test_no_prefix_is_the_real_layout_where_ca_may_upload(self):
-        self.assertEqual(ftp_base_path(self.REAL), "")
-        self.assertEqual(ftp_base_path({}), "")
+    def test_an_undivertible_transport_is_held_rather_than_shipped(self):
+        transports = dict(TRANSPORTS, ZZ="courier")   # a transport nobody taught review mode
+        with unittest.mock.patch.dict("guards.TRANSPORTS", transports, clear=True):
+            self.assertEqual(transfer_destination("ZZ", "S1", REVIEW)["kind"], "hold")
+
+    def test_the_divertible_set_is_a_whitelist_not_a_blacklist(self):
+        self.assertIn("ftp", DIVERTIBLE)
+        self.assertNotIn("drive", DIVERTIBLE)
+        self.assertNotIn("courier", DIVERTIBLE)
+
+
+class AnUnknownFacilityIsRefused(unittest.TestCase):
+    def test_it_raises_rather_than_guessing_a_destination(self):
+        for facility in ("XX", "", None):
+            with self.assertRaises(ValueError):
+                transfer_destination(facility, "S1", REVIEW)
