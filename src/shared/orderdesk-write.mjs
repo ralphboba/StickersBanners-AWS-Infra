@@ -18,7 +18,7 @@
 // way, so the flow is fully observable with writes off.
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
-import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
+import { folderIds, ORDERDESK_TAGS } from './intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
 
 /** Synthetic orders never touch OrderDesk, whatever the flag says. */
@@ -55,7 +55,7 @@ export function orderDeskWritesEnabled() {
 export async function updateOrderDeskDetails({
   order, orderName, tag, folder, storeId, apiKey,
 }) {
-  const folderId = ORDERDESK_FOLDERS[folder];
+  const folderId = folderIds()[folder];
   const tagValue = ORDERDESK_TAGS[tag];
   const intent = { folder, folderId, tag, tagValue };
 

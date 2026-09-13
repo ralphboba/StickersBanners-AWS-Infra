@@ -415,6 +415,25 @@ export async function handler(event = {}) {
     try {
       await enqueue(job);
       enqueued += 1;
+      // Take the order OUT of the QTS folder now that we own it.
+      //
+      // Without this an order we processed stays in Linh's unprocessed queue,
+      // which has two consequences: nobody can tell which orders this system
+      // handled, and the moment his scanner resumes it processes every one of
+      // them again — a second proof email to the customer and a second copy of
+      // every print file in the facility folder.
+      //
+      // Only the gated orders were being moved before, because that is all
+      // legacy's updateOrderdeskDetails was called for in the batch loop; the
+      // queued ones left the folder by a different route in his program. This
+      // is the equivalent move for ours. Held by ORDERDESK_WRITES like every
+      // other write, so with the switch off it only logs what it would do.
+      const claimed = await updateOrderDeskDetails({
+        order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey,
+      });
+      if (claimed.error) {
+        console.error('claim move failed', job.orderName, claimed.error);
+      }
     } catch (err) {
       if (err?.name === 'ConditionalCheckFailedException') {
         skipped += 1; // lost the race, another invocation took it

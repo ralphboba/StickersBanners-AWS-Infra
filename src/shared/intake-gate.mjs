@@ -6,6 +6,11 @@
 // out of the automatic flow: the bot re-tags it and moves it to a staff folder
 // in OrderDesk, then skips it. Only orders that clear all five are processed.
 //
+// A sixth check is ours, added when the production transfer was about to be
+// armed for real: an item whose size is implausibly large (MAX_SIDE_INCHES).
+// It runs LAST so it can never change which of Linh's reasons an order reports,
+// and like his it only diverts the order to a person.
+//
 // The legacy order is significant and preserved here — an order that trips more
 // than one check is reported under the first one legacy would have hit:
 //
@@ -32,6 +37,48 @@ export const ORDERDESK_FOLDERS = {
   NV: '674352',
   CA: '42928',
 };
+
+/**
+ * Temporary redirection of the folders above, as JSON in ORDERDESK_FOLDER_IDS.
+ *
+ * A trial run has to park orders somewhere other than the live staff folders —
+ * Linh's condition for switching his scanner off was that he could still tell
+ * which orders had been touched. The redirection is a deployed setting rather
+ * than an edit to the table above, because that table is the record of his real
+ * folder ids and has to survive the trial intact: ending the trial is removing
+ * the variable, not remembering five numbers correctly under time pressure.
+ *
+ * Unparsable JSON is ignored with a loud log rather than throwing — a typo here
+ * must not take the poller down, and the fallback (the real folders) is the
+ * behaviour we already have.
+ *
+ * @returns {Record<string,string>} folder key -> id, overrides applied
+ */
+export function folderIds(env = process.env) {
+  const raw = String(env.ORDERDESK_FOLDER_IDS ?? '').trim();
+  if (!raw) return { ...ORDERDESK_FOLDERS };
+  try {
+    const parsed = JSON.parse(raw);
+    const overrides = {};
+    for (const [key, id] of Object.entries(parsed)) {
+      if (!(key in ORDERDESK_FOLDERS)) {
+        console.warn(JSON.stringify({ msg: 'unknown folder key in ORDERDESK_FOLDER_IDS', key }));
+        continue;
+      }
+      if (!/^\d+$/.test(String(id))) {
+        console.warn(JSON.stringify({ msg: 'folder id is not numeric, ignored', key, id }));
+        continue;
+      }
+      overrides[key] = String(id);
+    }
+    return { ...ORDERDESK_FOLDERS, ...overrides };
+  } catch (err) {
+    console.error(JSON.stringify({
+      msg: 'ORDERDESK_FOLDER_IDS is not valid JSON — using the real folders', error: String(err),
+    }));
+    return { ...ORDERDESK_FOLDERS };
+  }
+}
 
 /** Legacy tagLib (same file): colour name -> OrderDesk tag value. */
 export const ORDERDESK_TAGS = {
@@ -85,7 +132,50 @@ export const GATES = [
     folder: 'manual',
     explain: 'Artwork missing, or its file type is not one the workers accept',
   },
+  // OURS, not legacy's — and deliberately LAST, so an order that also trips one
+  // of Linh's five still reports his reason and lands where his bot would send
+  // it. This only ever HOLDS an order for a human; it never alters a print.
+  // See MAX_SIDE_INCHES below for why the threshold is where it is.
+  {
+    test: (job) => Boolean(oversizedItem(job)),
+    reason: 'oversize',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'An item is implausibly large — almost always inches read as feet',
+  },
 ];
+
+/**
+ * Largest side, in inches, an item may have before a human has to look at it.
+ *
+ * NOT a legacy number — legacy has no size check at all, and neither did we
+ * until the transfer was about to be armed for real. Every dimension bug found
+ * so far has the same shape: a value quoted in inches is read as feet, so the
+ * size comes out twelve times too big. Measured across 397 real line items, the
+ * largest legitimate side was 228 in (a 19ft banner) and the next values up were
+ * 1380 in — SKU-603 and SKU-607 recorded as "115x91 ft", which are 115x91
+ * INCHES. The two populations are six times apart, so one threshold separates
+ * them with room to spare: p90 of real items is 96 in, p99 is 216 in.
+ *
+ * 300 in also catches the two parse cases that are still unresolved: SKUAB
+ * arriving as '48 in' (read as 48 ft = 576 in) and SKUVB 144x18 (144 ft).
+ */
+export const MAX_SIDE_INCHES = 300;
+
+/** The first item whose finished size is implausible, or null. */
+export function oversizedItem(job) {
+  for (const item of job?.items ?? []) {
+    const scale = item?.unit === 'ft' ? 12 : 1;
+    const width = Number(item?.width) * scale;
+    const height = Number(item?.height) * scale;
+    // NaN compares false, so an unparsable size falls through to the workers
+    // exactly as it does today — this check is about magnitude, nothing else.
+    if (width > MAX_SIDE_INCHES || height > MAX_SIDE_INCHES) {
+      return { item, widthIn: width, heightIn: height };
+    }
+  }
+  return null;
+}
 
 /**
  * Decide whether an order may be auto-processed.
@@ -98,12 +188,12 @@ export const GATES = [
 export function intakeGate(job) {
   const flags = job?.flags ?? {};
   for (const gate of GATES) {
-    if (flags[gate.flag]) {
+    if (gate.test ? gate.test(job) : flags[gate.flag]) {
       return {
         reason: gate.reason,
         tag: gate.tag,
         folder: gate.folder,
-        folderId: ORDERDESK_FOLDERS[gate.folder],
+        folderId: folderIds()[gate.folder],
         tagValue: ORDERDESK_TAGS[gate.tag],
         explain: gate.explain,
       };
