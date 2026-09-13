@@ -225,3 +225,118 @@ alone covers the gap the window exists to close.
   real print files rather than a line in a report.
 - **Pause the demo feeder** for the five hours. It runs every 10 minutes and
   would interleave synthetic executions through the logs we need to read.
+
+---
+
+## Runbook: the 2026-09-13 window, as decided
+
+Kai's decision, in his words: *"5시간동안 정말로 go-live시키는거야"* — a real
+five hours, with orders moved into OrderDesk folders he created, real Zendesk
+proof emails to real customers, and print files diverted to a review path so a
+person sees them before production does.
+
+All times **America/New_York (EDT)**; the UTC equivalent is in brackets because
+every AWS console and log is in UTC.
+
+### The shape of it
+
+| | |
+|---|---|
+| Orders leave | the QTS folder (665685) — so Linh's scanner will not redo them |
+| Orders land in | `Kai-TEST-processed` 711436, `Kai-TEST-manual` 711437, `Kai-TEST-sales` 711438 |
+| Customers get | a real proof email with a link to **our** approval page |
+| Print files go to | `/AWS-TEST/{facility}/{order}` — **not** the facility folder |
+| Production prints | nothing automatically. A person promotes the files afterwards |
+
+Why the print files divert: the run is real in every respect a person can check
+afterwards, and the one irreversible step — a file appearing where the GA/NJ/TX
+team collects work — keeps a human in front of it. Our output was compared
+against Linh's real files on 2026-09-12 and matched to the pixel, but that
+comparison covered two finishing families out of seven.
+
+### Before noon
+
+Already done on the night of 09-12, all with every switch still held:
+
+- `sb-dev-compute`, `sb-dev-api`, `sb-dev-webapp`, `sb-dev-ecs` deployed
+- the four container images rebuilt and **probed in a running task** —
+  `PROOF_DIR=/Proof`, `remote_path` honouring the prefix, transfers still off
+- `GET /proof` and `POST /proof/approve` live, correctly returning 503
+  ("Approvals are not available yet") until the two parameters are seeded
+- the armed synth checked: the flags produce exactly the values above
+
+### Noon [16:00 UTC] — arm
+
+Run in this order. Each step is independently reversible.
+
+1. Deploy with the flags:
+
+```
+env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY npx cdk deploy sb-dev-compute sb-dev-ecs \
+  --context env=dev --require-approval never \
+  -c armOrderDeskWrites=true \
+  -c armZendeskSends=true \
+  -c armProductionTransfer=true \
+  -c orderDeskFolderIds='{"processing":"711436","manual":"711437","sales":"711438"}' \
+  -c ftpBasePath=/AWS-TEST
+```
+
+2. Seed the customer approval path (this is what turns the 503 into a page):
+
+```
+aws ssm put-parameter --name /sb/dev/approval/link-secret --type SecureString \
+  --value "$(openssl rand -hex 32)" --region us-east-1
+aws ssm put-parameter --name /sb/dev/approval/portal-base --type String \
+  --value https://d1z2r5w66e9a93.cloudfront.net/proof.html --region us-east-1
+```
+
+3. Start the intake:
+
+```
+aws scheduler update-schedule --name sb-dev-poller --region us-east-1 --state ENABLED \
+  ... (the CLI requires the full schedule definition; read it first with get-schedule)
+```
+
+Then verify, before walking away: the poller's environment shows
+`ORDERDESK_WRITES=enabled`, the first order to arrive moves to 711436, and the
+Zendesk log line says SENT rather than "WOULD HAVE BEEN SENT".
+
+### 5PM [21:00 UTC] — disarm
+
+The whole point of making arming a flag: disarming is the same command with the
+flags removed. Nothing has to be remembered or edited.
+
+```
+env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY npx cdk deploy sb-dev-compute sb-dev-ecs \
+  --context env=dev --require-approval never
+aws scheduler update-schedule --name sb-dev-poller --region us-east-1 --state DISABLED ...
+```
+
+**The two approval parameters stay.** Kai chose this deliberately. The link in
+every email already sent is signed with that secret, and customers answer on
+their own schedule — deleting it at 5PM would kill every outstanding link. The
+page is reachable only with a valid signed link; there is no index and no login,
+so leaving it up costs nothing.
+
+### Afterwards
+
+1. Inspect `/AWS-TEST` with the read-only FTP tool
+   (`src/services/ftp/ftp_inspect.py`) and check every file's pixel size, dpi
+   and mode against what the order data says it should be.
+2. Promote the files a person is happy with into the real facility folders.
+   Until that happens those orders are **not printed** — that is the trade the
+   review path buys.
+3. Orders sitting in the three Kai-TEST folders are the record of what this
+   system did. The ones in `-manual` and `-sales` still need a person, exactly
+   as they would have in Linh's flow.
+
+### What is still unverified going in
+
+- Finishing families other than Hem & Grommets and Pole Pocket Top Only: PPTB,
+  PPBO, RET, GO, CO, HO have no side-by-side against Linh's output.
+- Whether his program re-sends a proof email for an order it reprocesses. It
+  should not come up — the orders leave his queue — but it is the assumption
+  behind that claim, and only he can confirm it.
+- `SKU-603` and `SKU08X08FPUD` are still resolved as feet. The oversize gate
+  (MAX_SIDE_INCHES) now catches SKU-603 at 1380 in and holds it for a person, so
+  it cannot reach print — but the underlying SKU entry is still missing.
