@@ -45,8 +45,17 @@ else
     --value "$(openssl rand -hex 32)" --region "$REGION" >/dev/null
   echo "link-secret created"
 fi
-$AWS ssm put-parameter --name /sb/dev/approval/portal-base --type String --overwrite \
-  --value "$PORTAL_BASE" --region "$REGION" >/dev/null
+# NOT --value: the AWS CLI treats an argument beginning with http:// or
+# https:// as a URL to FETCH, so passing the portal address directly makes the
+# CLI try to download it instead of storing it. Behind this environment's proxy
+# that fails TLS verification, and with `set -e` it killed the arm midway --
+# after the deploy had armed the switches but before the poller was enabled.
+# Sending it as JSON keeps the value literal.
+PB_JSON="$(mktemp)"
+trap 'rm -f "$PB_JSON"' EXIT
+printf '{"Name":"/sb/dev/approval/portal-base","Type":"String","Overwrite":true,"Value":"%s"}\n' \
+  "$PORTAL_BASE" > "$PB_JSON"
+$AWS ssm put-parameter --cli-input-json "file://$PB_JSON" --region "$REGION" >/dev/null
 echo "portal-base -> $PORTAL_BASE"
 
 echo
