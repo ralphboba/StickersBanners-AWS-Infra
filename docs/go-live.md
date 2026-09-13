@@ -267,35 +267,38 @@ Already done on the night of 09-12, all with every switch still held:
 
 ### Noon [16:00 UTC] — arm
 
-Run in this order. Each step is independently reversible.
-
-1. Deploy with the flags:
+One command, which does the four steps below in order:
 
 ```
-env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY npx cdk deploy sb-dev-compute sb-dev-ecs \
-  --context env=dev --require-approval never \
-  -c armOrderDeskWrites=true \
-  -c armZendeskSends=true \
-  -c armProductionTransfer=true \
-  -c orderDeskFolderIds='{"processing":"711436","manual":"711437","sales":"711438"}' \
-  -c ftpBasePath=/AWS-TEST
+scripts/window-arm.sh
 ```
 
-2. Seed the customer approval path (this is what turns the 503 into a page):
+Each step is independently reversible, and each is worth knowing on its own:
 
-```
-aws ssm put-parameter --name /sb/dev/approval/link-secret --type SecureString \
-  --value "$(openssl rand -hex 32)" --region us-east-1
-aws ssm put-parameter --name /sb/dev/approval/portal-base --type String \
-  --value https://d1z2r5w66e9a93.cloudfront.net/proof.html --region us-east-1
-```
+1. **Deploy with the flags.** `cdk deploy sb-dev-compute sb-dev-ecs` plus
+   `-c armOrderDeskWrites=true -c armZendeskSends=true
+   -c armProductionTransfer=true`, the folder-id redirection, and
+   `-c ftpBasePath=/AWS-TEST`. The diff this produces is **exactly five
+   env-var changes and nothing else** — no IAM, no new resources. Anything
+   more than those five means something drifted: stop and look.
 
-3. Start the intake:
+2. **Seed the customer approval path** — `approval/link-secret` and
+   `approval/portal-base`. This is what turns the 503 into a page. The secret
+   is written only if absent; it is never rotated, because every link already
+   emailed is signed with it.
 
-```
-aws scheduler update-schedule --name sb-dev-poller --region us-east-1 --state ENABLED \
-  ... (the CLI requires the full schedule definition; read it first with get-schedule)
-```
+3. **Pause the mirror.** `scripts/schedule-state.sh sb-dev-mirror-sync DISABLED`.
+   It calls OrderDesk ~10 times a minute and is why the poller has already hit
+   "rate limited: gave up after 5 attempts". It is display-only, so this costs
+   a stale dashboard and nothing else. Approved by Kai for the window.
+
+4. **Start the intake.** `scripts/schedule-state.sh sb-dev-poller ENABLED`.
+
+Why a helper for steps 3 and 4: `aws scheduler update-schedule` **replaces** the
+schedule rather than patching it, so any field left off the command line is
+silently dropped — and the mirror carries `Input {"mirror":true}`. A mirror that
+loses it is no longer display-only; it starts calling the poller's ordinary
+enqueue path. The helper reads the definition back and changes only `State`.
 
 Then verify, before walking away: the poller's environment shows
 `ORDERDESK_WRITES=enabled`, the first order to arrive moves to 711436, and the
@@ -307,10 +310,17 @@ The whole point of making arming a flag: disarming is the same command with the
 flags removed. Nothing has to be remembered or edited.
 
 ```
-env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY npx cdk deploy sb-dev-compute sb-dev-ecs \
-  --context env=dev --require-approval never
-aws scheduler update-schedule --name sb-dev-poller --region us-east-1 --state DISABLED ...
+scripts/window-disarm.sh
 ```
+
+It stops the intake *first*, then redeploys without the flags, then puts the
+mirror back. Stopping the poller before the deploy matters: otherwise a poll can
+land mid-deploy and enqueue an order whose containers are being swapped
+underneath it.
+
+Executions still RUNNING at 5PM keep the armed task-definition revision and
+finish as armed. That is intended — let them complete rather than killing an
+order halfway.
 
 **The two approval parameters stay.** Kai chose this deliberately. The link in
 every email already sent is signed with that secret, and customers answer on
