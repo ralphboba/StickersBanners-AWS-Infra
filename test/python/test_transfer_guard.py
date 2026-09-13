@@ -15,7 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "services", "ftp"))
 
-from guards import transfers_enabled, is_demo_order, remote_path  # noqa: E402
+from guards import transfers_enabled, is_demo_order, remote_path, ftp_base_path  # noqa: E402
 
 
 class TransferSwitch(unittest.TestCase):
@@ -97,3 +97,20 @@ class TrialPathPrefix(unittest.TestCase):
 
     def test_empty_segments_do_not_produce_double_slashes(self):
         self.assertEqual(remote_path("GA", "", "S1", env={}), "/GA/S1")
+
+
+class CaDriveRespectsReviewPath(unittest.TestCase):
+    """The review path is FTP-only, so CA has to be held rather than diverted.
+
+    FTP_BASE_PATH prefixes every remote FTP path, but CA uploads into the real
+    production Drive parent and there is no prefix to apply. During the
+    2026-09-13 window S59977's six print files went straight into the folder the
+    CA facility collects from, while every other facility was safely diverted.
+    """
+
+    def test_a_prefix_means_the_reviewer_chose_to_hold_everything(self):
+        self.assertTrue(ftp_base_path({"FTP_BASE_PATH": "/AWS-TEST"}))
+
+    def test_no_prefix_is_the_real_layout_where_ca_may_upload(self):
+        self.assertEqual(ftp_base_path({"FTP_BASE_PATH": ""}), "")
+        self.assertEqual(ftp_base_path({}), "")

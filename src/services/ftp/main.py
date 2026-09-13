@@ -22,7 +22,7 @@ import tempfile
 import boto3
 import ftputil
 
-from guards import is_demo_order, remote_path, transfers_enabled
+from guards import ftp_base_path, is_demo_order, remote_path, transfers_enabled
 from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
@@ -167,6 +167,23 @@ def main():
     with tempfile.TemporaryDirectory() as scratch:
         local_dir = download_finished(order_name, scratch)
         rename_results = rename_proof(local_dir, rename_dict)
+
+        if facility == "CA" and ftp_base_path():
+            # The review path is FTP-only: FTP_BASE_PATH prefixes every remote
+            # FTP path, but CA does not go over FTP at all -- it uploads into the
+            # real production Drive parent (google/ca-drive-id), which has no
+            # prefix to divert. So a run that believes it is safely writing to a
+            # review folder was putting CA print files exactly where the CA
+            # facility collects them. Hold CA instead: a prefix set at all means
+            # somebody chose the review path, and the whole point of that choice
+            # is that no facility sees a file until a person promotes it.
+            detail = (f"WOULD HAVE UPLOADED to the CA Drive "
+                      f"({len(rename_dict)} invoice image(s)) -- review path is "
+                      f"FTP-only and cannot divert Drive")
+            record_step(order_name, "done", detail=detail)
+            print(json.dumps({"orderName": order_name, "facility": facility,
+                              "detail": detail, "held": True}))
+            return
 
         if facility == "CA":
             sa_json = get_secret("google", "service-account-json")
