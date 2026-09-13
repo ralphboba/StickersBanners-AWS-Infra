@@ -58,7 +58,12 @@ export class EcsStack extends cdk.Stack {
     });
 
     const specs: ServiceSpec[] = [
-      { id: 'Resize', key: 'resize', purpose: 'PIL resize, ft/in -> px @72dpi, TIFF', cpu: 1024, memoryMiB: 2048 },
+      // 8 GB, not 2: the output size says nothing about the peak. S59963 is two
+      // 3x7ft banners -- 2592x6048px each -- and still killed the container,
+      // because PIL decompresses the customer's UPLOADED file in full and
+      // Image.MAX_IMAGE_PIXELS is disabled, so a single very large source image
+      // can hold hundreds of megapixels in memory at once.
+      { id: 'Resize', key: 'resize', purpose: 'PIL resize, ft/in -> px @72dpi, TIFF', cpu: 1024, memoryMiB: 8192 },
       { id: 'Finish', key: 'finish', purpose: 'print finishing (grommets/pole pockets/etc.)', cpu: 1024, memoryMiB: 2048 },
       { id: 'Proof', key: 'proof', purpose: 'proof/preview generation', cpu: 512, memoryMiB: 1024 },
       { id: 'Ftp', key: 'ftp', purpose: 'FTP transfer to production facilities', cpu: 512, memoryMiB: 1024 },
