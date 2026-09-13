@@ -37,7 +37,6 @@
       "Bash(aws scheduler update-schedule:*)",
       "Bash(aws sqs send-message:*)",
       "Bash(aws ssm delete-parameter:*)",
-      "Bash(aws ssm put-parameter:*)",
       "Bash(aws stepfunctions start-execution:*)"
     ]
   }
