@@ -20,6 +20,8 @@ import sys
 import tempfile
 
 import boto3
+
+from jobload import load_job
 from PIL import Image
 
 from finishing_config import build_finishing_obj, final_tif_name
@@ -80,7 +82,7 @@ def set_stage(order_name, stage):
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "finishing")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     grommet = GrommetsAdder()
     pockets = PolePocketsAdder()

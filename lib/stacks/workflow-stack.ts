@@ -105,9 +105,14 @@ export class WorkflowStack extends cdk.Stack {
         containerOverrides: [
           {
             containerDefinition: taskDef.defaultContainer!,
+            // Only the order name. The whole job used to ride along here as
+            // JOB, but ECS caps container overrides at 8192 bytes and a real
+            // 19-item order serialized to 16,004 — the task could not start and
+            // the order failed every retry. The container reads the job from
+            // its META row instead, which the poller has already written in
+            // full. See src/services/_common/jobload.py.
             environment: [
               { name: 'ORDER_NAME', value: sfn.JsonPath.stringAt('$.orderName') },
-              { name: 'JOB', value: sfn.JsonPath.jsonToString(sfn.JsonPath.entirePayload) },
             ],
           },
         ],

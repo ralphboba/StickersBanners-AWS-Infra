@@ -19,6 +19,8 @@ import tempfile
 
 import boto3
 
+from jobload import load_job
+
 from converter import check_pdf_pages, infer_unit, process_image
 from artwork import artwork_extension
 from fetch import download
@@ -83,7 +85,7 @@ def set_stage(order_name, stage):
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "resizing")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     produced = []
 

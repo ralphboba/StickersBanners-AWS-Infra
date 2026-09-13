@@ -20,6 +20,8 @@ import sys
 import tempfile
 
 import boto3
+
+from jobload import load_job
 import ftputil
 
 from guards import ftp_base_path, is_demo_order, remote_path, transfers_enabled
@@ -129,7 +131,7 @@ def record_step(order_name, state, detail=""):
 
 def main():
     order_name = os.environ["ORDER_NAME"]
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     facility = (job.get("routing") or {}).get("facility")
 
     # Safety net: demo orders show the full flow on the dashboard (status ->
