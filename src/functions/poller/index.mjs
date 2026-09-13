@@ -375,6 +375,8 @@ export async function handler(event = {}) {
   let skipped = 0;
   let held = 0;
   const holdReasons = {};
+  /** Orders we queued but failed to take out of the QTS folder — see below. */
+  const claimFailed = [];
   for (const order of orders) {
     const job = cleanOrder(order);
     if (!job.orderName) continue;
@@ -431,8 +433,22 @@ export async function handler(event = {}) {
       const claimed = await updateOrderDeskDetails({
         order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey,
       });
+      // A failed claim is the one error here that is worse than it looks. The
+      // order is already queued, so it gets processed and the customer gets a
+      // proof — but it is still sitting in Linh's queue, so when his scanner
+      // resumes he processes it too: a second email and a second copy of every
+      // print file. OrderDesk rate-limits (the mirror alone makes ~10 calls a
+      // minute), so this is not hypothetical.
+      //
+      // Counted into the poll summary rather than only logged, so a run that
+      // lost claims says so in the line a person actually reads, and the order
+      // names are there to re-claim by hand.
       if (claimed.error) {
-        console.error('claim move failed', job.orderName, claimed.error);
+        claimFailed.push(job.orderName);
+        console.error(JSON.stringify({
+          msg: 'CLAIM FAILED — order stays in the QTS folder and will be reprocessed',
+          orderName: job.orderName, error: claimed.error,
+        }));
       }
     } catch (err) {
       if (err?.name === 'ConditionalCheckFailedException') {
@@ -446,6 +462,9 @@ export async function handler(event = {}) {
   const summary = {
     polled: orders.length, enqueued, skipped, held, holdReasons,
     orderDeskWrites: orderDeskWritesEnabled() ? 'ENABLED' : 'disabled',
+    // Empty on every healthy run. Non-empty means those orders were processed
+    // by us AND left in Linh's queue for him to process again.
+    claimFailed,
   };
   console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
   return summary;
