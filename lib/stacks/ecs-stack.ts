@@ -7,6 +7,7 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { EnvironmentConfig } from '../config/types';
+import { trialConfig } from '../config/trial';
 
 export interface EcsStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
@@ -45,6 +46,9 @@ export class EcsStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, taskRole } = props;
+    // Held by default — see lib/config/trial.ts for why arming is a deploy-time
+    // flag rather than an edit to the literal below.
+    const trial = trialConfig(this);
     const isProd = config.env === 'prod';
 
     this.cluster = new ecs.Cluster(this, 'Cluster', {
@@ -109,7 +113,11 @@ export class EcsStack extends cdk.Stack {
           // file. Flipping this to "enabled" is a go-live action needing
           // explicit approval -- see CLAUDE.md "Safety".
           // Only the ftp task reads it; harmless on the others.
-          PRODUCTION_TRANSFER: 'disabled',
+          PRODUCTION_TRANSFER: trial.productionTransfer,
+          // Prefix for every remote FTP path. Empty is the real facility
+          // layout; a value sends the same run to a folder a person reviews
+          // before anything reaches production.
+          FTP_BASE_PATH: trial.ftpBasePath,
         },
       });
 

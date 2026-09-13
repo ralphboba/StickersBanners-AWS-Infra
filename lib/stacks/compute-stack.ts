@@ -9,6 +9,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { EnvironmentConfig } from '../config/types';
 import { secretsArnPattern } from '../config/secrets';
+import { trialConfig } from '../config/trial';
 
 export interface ComputeStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
@@ -55,6 +56,9 @@ export class ComputeStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, jobsTable, intakeQueue, notifyQueue } = props;
+    // Held by default — see lib/config/trial.ts for why arming is a deploy-time
+    // flag rather than an edit to the literals below.
+    const trial = trialConfig(this);
 
     const base = {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -85,7 +89,10 @@ export class ComputeStack extends cdk.Stack {
         // still decides and the dashboard still shows what it would do, but no
         // real order is moved. Flipping this to "enabled" is a go-live action
         // and needs explicit approval — see CLAUDE.md "Safety".
-        ORDERDESK_WRITES: 'disabled',
+        ORDERDESK_WRITES: trial.orderDeskWrites,
+        // Redirects the gate's folder ids for a bounded trial. Empty means
+        // Linh's real folders, which is what an ordinary deploy produces.
+        ORDERDESK_FOLDER_IDS: trial.orderDeskFolderIds,
       },
       description: 'Poll the OrderDesk QTS folder, clean jobs, enqueue intake',
     });
@@ -110,7 +117,7 @@ export class ComputeStack extends cdk.Stack {
         // intake, resize, finish, proof — with the composed ticket logged and
         // nobody's inbox touched. Flipping this to "enabled" is a go-live action
         // and needs explicit approval — see CLAUDE.md "Safety".
-        ZENDESK_SENDS: 'disabled',
+        ZENDESK_SENDS: trial.zendeskSends,
       },
     });
     // SqsEventSource also grants Receive/Delete on the queue.
