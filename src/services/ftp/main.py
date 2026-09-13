@@ -101,6 +101,15 @@ def upload_folder_ftp(local_dir, remote_dir, host, user, passwd):
 def upload_invoice_images(local_dir, image_names, host, user, passwd):
     """Legacy upload_invoice_image: proof jpgs -> FTP /Proof."""
     with ftputil.FTPHost(host, user, passwd) as ftp_host:
+        # The real /Proof has existed for years (hundreds of thousands of files),
+        # so the legacy code never had to create it and neither did we -- until
+        # FTP_BASE_PATH pointed the same run at a fresh tree, where nothing
+        # exists yet and every proof upload failed on the missing directory.
+        # upload_folder_ftp already guards itself this way; this is the half that
+        # was missing.
+        proof_dir = remote_path(PROOF_DIR)
+        if not ftp_host.path.exists(proof_dir):
+            ftp_host.makedirs(proof_dir)
         for image in image_names:
             local = os.path.join(local_dir, f"{image}.jpg")
             if os.path.exists(local):
