@@ -58,3 +58,25 @@ def remote_path(*parts, env=None):
     """Join a remote path under the (possibly empty) trial prefix."""
     tail = "/".join(str(p).strip("/") for p in parts if str(p).strip("/"))
     return f"{ftp_base_path(env)}/{tail}"
+
+
+def drive_would_escape_review(facility, env=None):
+    """Is this a CA transfer that the review path cannot actually divert?
+
+    FTP_BASE_PATH prefixes every remote FTP path, so GA/NJ/TX/NV land under the
+    review folder and wait for a person. CA does not go over FTP at all: it
+    uploads into the real production Drive parent (google/ca-drive-id), and
+    there is no prefix to apply. During the 2026-09-13 window S59977 put six
+    print files exactly where the CA facility collects them while every other
+    facility that hour was correctly diverted.
+
+    A prefix set at all means somebody chose the review path, and the point of
+    that choice is that no facility sees a file until a person promotes it. So
+    CA is held rather than uploaded.
+
+    Note this cannot be exercised end to end: in main.py the DEMO check and the
+    PRODUCTION_TRANSFER check both return before it, so reaching it for real
+    requires arming live transfers. Hence a predicate that can be tested on its
+    own.
+    """
+    return facility == "CA" and bool(ftp_base_path(env))

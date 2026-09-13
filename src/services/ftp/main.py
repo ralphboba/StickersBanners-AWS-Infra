@@ -24,7 +24,8 @@ import boto3
 from jobload import load_job
 import ftputil
 
-from guards import ftp_base_path, is_demo_order, remote_path, transfers_enabled
+from guards import (drive_would_escape_review, is_demo_order, remote_path,
+                    transfers_enabled)
 from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
@@ -170,7 +171,7 @@ def main():
         local_dir = download_finished(order_name, scratch)
         rename_results = rename_proof(local_dir, rename_dict)
 
-        if facility == "CA" and ftp_base_path():
+        if drive_would_escape_review(facility):
             # The review path is FTP-only: FTP_BASE_PATH prefixes every remote
             # FTP path, but CA does not go over FTP at all -- it uploads into the
             # real production Drive parent (google/ca-drive-id), which has no

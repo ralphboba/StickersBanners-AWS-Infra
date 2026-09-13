@@ -15,7 +15,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "services", "ftp"))
 
-from guards import transfers_enabled, is_demo_order, remote_path, ftp_base_path  # noqa: E402
+from guards import (transfers_enabled, is_demo_order, remote_path,  # noqa: E402
+                    ftp_base_path, drive_would_escape_review)
 
 
 class TransferSwitch(unittest.TestCase):
@@ -106,11 +107,32 @@ class CaDriveRespectsReviewPath(unittest.TestCase):
     production Drive parent and there is no prefix to apply. During the
     2026-09-13 window S59977's six print files went straight into the folder the
     CA facility collects from, while every other facility was safely diverted.
+
+    WHAT THIS DOES NOT COVER: the full path. In main.py the DEMO check and the
+    PRODUCTION_TRANSFER check both return before this one, so reaching it for
+    real means arming live transfers. These test the decision, not the transfer.
     """
 
+    REVIEW = {"FTP_BASE_PATH": "/AWS-TEST"}
+    REAL = {"FTP_BASE_PATH": ""}
+
+    def test_ca_is_held_while_the_review_path_is_on(self):
+        self.assertTrue(drive_would_escape_review("CA", self.REVIEW))
+
+    def test_every_ftp_facility_is_divertible_and_so_is_not_held(self):
+        for facility in ("GA", "NJ", "TX", "NV"):
+            self.assertFalse(drive_would_escape_review(facility, self.REVIEW),
+                             f"{facility} goes over FTP and the prefix diverts it")
+
+    def test_ca_uploads_normally_when_there_is_no_review_path(self):
+        # No prefix means the real facility layout -- the ordinary arrangement
+        # where CA is supposed to reach the Drive.
+        self.assertFalse(drive_would_escape_review("CA", self.REAL))
+        self.assertFalse(drive_would_escape_review("CA", {}))
+
     def test_a_prefix_means_the_reviewer_chose_to_hold_everything(self):
-        self.assertTrue(ftp_base_path({"FTP_BASE_PATH": "/AWS-TEST"}))
+        self.assertTrue(ftp_base_path(self.REVIEW))
 
     def test_no_prefix_is_the_real_layout_where_ca_may_upload(self):
-        self.assertEqual(ftp_base_path({"FTP_BASE_PATH": ""}), "")
+        self.assertEqual(ftp_base_path(self.REAL), "")
         self.assertEqual(ftp_base_path({}), "")
