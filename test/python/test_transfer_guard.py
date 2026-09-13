@@ -15,7 +15,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "services", "ftp"))
 
-from guards import transfers_enabled, is_demo_order  # noqa: E402
+from guards import transfers_enabled, is_demo_order, remote_path  # noqa: E402
 
 
 class TransferSwitch(unittest.TestCase):
@@ -66,3 +66,34 @@ class SyntheticOrderGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TrialPathPrefix(unittest.TestCase):
+    """Where a print file lands is the other half of 'does production see it'."""
+
+    def test_unset_means_the_real_facility_layout(self):
+        self.assertEqual(remote_path("GA", "S59911", env={}), "/GA/S59911")
+        self.assertEqual(remote_path("/Proof", "569315285.jpg", env={}),
+                         "/Proof/569315285.jpg")
+
+    def test_a_prefix_diverts_both_the_order_folder_and_the_proof(self):
+        env = {"FTP_BASE_PATH": "/AWS-TEST"}
+        self.assertEqual(remote_path("GA", "S59911", env=env), "/AWS-TEST/GA/S59911")
+        self.assertEqual(remote_path("/Proof", "569315285.jpg", env=env),
+                         "/AWS-TEST/Proof/569315285.jpg")
+
+    def test_slashes_are_forgiving(self):
+        for raw in ("/AWS-TEST", "AWS-TEST", "/AWS-TEST/", "  /AWS-TEST/  "):
+            with self.subTest(raw=raw):
+                self.assertEqual(remote_path("GA", "S1", env={"FTP_BASE_PATH": raw}),
+                                 "/AWS-TEST/GA/S1")
+
+    def test_an_empty_or_slash_only_value_is_the_real_layout(self):
+        # Otherwise a blanked-out variable would write to "//GA/S1" and the
+        # facility would quietly stop seeing files.
+        for raw in ("", "   ", "/", "///"):
+            with self.subTest(raw=raw):
+                self.assertEqual(remote_path("GA", "S1", env={"FTP_BASE_PATH": raw}), "/GA/S1")
+
+    def test_empty_segments_do_not_produce_double_slashes(self):
+        self.assertEqual(remote_path("GA", "", "S1", env={}), "/GA/S1")

@@ -92,7 +92,7 @@ class ProofFolderCasing(unittest.TestCase):
         self.assertNotIn("'/proof'", self.text)
 
     def test_the_upload_uses_the_constant_rather_than_a_literal(self):
-        self.assertIn('ftp_host.path.join(PROOF_DIR,', self.text)
+        self.assertIn('remote_path(PROOF_DIR,', self.text)
 
 
 if __name__ == '__main__':

@@ -22,7 +22,7 @@ import tempfile
 import boto3
 import ftputil
 
-from guards import is_demo_order, transfers_enabled
+from guards import is_demo_order, remote_path, transfers_enabled
 from drive_helper import upload_print_folder
 
 FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
@@ -33,6 +33,7 @@ FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
 # case-sensitive server it would have created a second folder nobody watches,
 # and the proof would have silently never reached production.
 PROOF_DIR = "/Proof"
+
 
 s3 = boto3.client("s3")
 ssm = boto3.client("ssm")
@@ -103,7 +104,7 @@ def upload_invoice_images(local_dir, image_names, host, user, passwd):
         for image in image_names:
             local = os.path.join(local_dir, f"{image}.jpg")
             if os.path.exists(local):
-                ftp_host.upload(local, ftp_host.path.join(PROOF_DIR, f"{image}.jpg"))
+                ftp_host.upload(local, remote_path(PROOF_DIR, f"{image}.jpg"))
 
 
 def record_step(order_name, state, detail=""):
@@ -176,8 +177,9 @@ def main():
             passwd = get_secret("ftp", "password")
             invoice_images = list(rename_dict.values())
             upload_invoice_images(local_dir, invoice_images, host, user, passwd)
-            upload_folder_ftp(local_dir, f"/{facility}/{order_name}", host, user, passwd)
-            detail = f"FTP /{facility}/{order_name}"
+            dest = remote_path(facility, order_name)
+            upload_folder_ftp(local_dir, dest, host, user, passwd)
+            detail = f"FTP {dest}"
 
     record_step(order_name, "done", detail=detail)
     print(json.dumps({"orderName": order_name, "facility": facility,
