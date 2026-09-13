@@ -79,7 +79,7 @@ hex"는 빼도 된다. 우리 버튼도 `{{ shop.email_accent_color }}`를 쓰�
     <tr>
       <td class="actions__cell">
         <p style="margin:0 0 12px 0; font-size:14px; line-height:20px; color:#6b6b6b;">
-          Need it sooner? You can upgrade your shipping yourself — no phone call needed.
+          Need it sooner? You can upgrade your shipping yourself, any time before your order moves to shipping.
         </p>
         <table cellpadding="0" cellspacing="0" border="0">
           <tr>
