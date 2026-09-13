@@ -78,9 +78,15 @@ hex"는 빼도 된다. 우리 버튼도 `{{ shop.email_accent_color }}`를 쓰�
   <table class="row actions" cellpadding="0" cellspacing="0" border="0">
     <tr>
       <td class="actions__cell">
-        <p style="margin:0 0 12px 0; font-size:14px; line-height:20px; color:#6b6b6b;">
-          Need it sooner? You can upgrade your shipping yourself, any time before your order moves to shipping.
+        <p style="margin:0 0 10px 0; font-size:14px; line-height:20px; color:#6b6b6b;">
+          Until your order moves to shipping, you can still:
         </p>
+        <table cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px 0;">
+          <tr><td style="padding:0 0 4px 0; font-size:14px; line-height:20px; color:#333;">
+            &bull;&nbsp; Upgrade your shipping speed</td></tr>
+          <tr><td style="padding:0 0 0 0; font-size:14px; line-height:20px; color:#333;">
+            &bull;&nbsp; Add another product to your order</td></tr>
+        </table>
         <table cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td align="center"
@@ -107,6 +113,8 @@ hex"는 빼도 된다. 우리 버튼도 `{{ shop.email_accent_color }}`를 쓰�
 | `order_name \| remove: '#'` | `#S59131` → `S59131`. 우리 `orderName`과 표기를 맞춘다 |
 | `order_status_url \| url_encode` **통째로** | 위 §1 참조. 형식 변화에 안 깨진다 |
 | `&amp;` | Liquid가 아니라 HTML 이슈. 메일 클라이언트에서 `&`를 그대로 두면 일부가 엔티티로 잘못 파싱한다 |
+| **목록도 `table`** | `<ul>`/`<li>`는 Outlook에서 들여쓰기가 깨진다. 불릿을 `&bull;` 문자로 직접 찍는 게 안전하다 |
+| 항목 두 줄 | 배송 업그레이드 **와** 제품 추가, 둘 다 광고한다 (Kai). 그래서 라벨 후보 중 `Upgrade my shipping`은 절반만 설명하는 셈이 됐다 |
 
 ## 서버 쪽 계약
 
