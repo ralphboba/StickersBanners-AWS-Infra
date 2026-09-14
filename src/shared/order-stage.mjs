@@ -47,10 +47,18 @@ export const STEPS = ['Order received', 'Proof approved', 'In production', 'Read
 // the page would tell the customer they are already on 1-Day when they are not.
 const OFF_LADDER = ['saturday', 'sat overnight', 'ground', 'pickup', 'pick-up', 'pick up'];
 
+// `to` is written verbatim into OrderDesk's shipping_method, so it must be the
+// string the legacy bot writes, not a prettier one. routing.mjs (ported from
+// Linh's changeExpress) writes '2-day Shipping' — lower-case d. Deviating would
+// give the same service two spellings in one store, and any OrderDesk rule or
+// ShipStation mapping that matches on the exact text would miss one of them.
+//
+// ⚠️ '1-day Shipping' is inferred from that pattern, not observed. Confirm the
+// exact text on a real 1-day order before arming ORDERDESK_UPGRADE_WRITES.
 const LADDER = [
-  { match: ['3-day', '3 day', 'three day'], from: '3-Day Shipping', to: '2-Day Shipping' },
-  { match: ['2-day', '2 day', '2day', 'two day'], from: '2-Day Shipping', to: '1-Day Shipping' },
-  { match: ['1-day', '1 day', 'overnight', 'one day'], from: '1-Day Shipping', to: null },
+  { match: ['3-day', '3 day', 'three day'], from: '3-day Shipping', to: '2-day Shipping' },
+  { match: ['2-day', '2 day', '2day', 'two day'], from: '2-day Shipping', to: '1-day Shipping' },
+  { match: ['1-day', '1 day', 'overnight', 'one day'], from: '1-day Shipping', to: null },
 ];
 
 /**
@@ -88,11 +96,26 @@ export function orderStage({ folderId, shippingMethod } = {}) {
   const modifiable = isModifiable(folderId);
   const ladder = nextService(shippingMethod);
 
-  // Three separate reasons to refuse, and the customer is told which.
+  // ── never charge for what the legacy bot may hand over for free ──────────
+  // Linh's changeExpress upgrades a 3-day order to 2-day for nothing when it is
+  // routed between 3pm and 6pm ET (routing.mjs). That decision is made when the
+  // order leaves for a facility. So while an order is still unrouted we cannot
+  // know whether it is about to be upgraded free, and selling it the same
+  // upgrade would take money for something the customer was going to get.
+  //
+  // Once the order sits in a facility folder the legacy bot has already had its
+  // say: if it is still on 3-day, it was not upgraded, and the upgrade is
+  // genuinely ours to sell. Time is not consulted — the rule holds whenever the
+  // page is opened.
+  const routed = Boolean(folder?.facility);
+  const legacyMayUpgradeFree = ladder?.from === '3-day Shipping' && !routed;
+
+  // The reasons to refuse, in the order they are checked.
   let blockedBy = null;
   if (!modifiable) blockedBy = folder ? 'shipping' : 'unknown_folder';
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
+  else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';
 
   return {
     stage,

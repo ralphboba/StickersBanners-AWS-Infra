@@ -9,14 +9,14 @@ import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
   test('3-Day buys 2-Day, 2-Day buys 1-Day, 1-Day buys nothing', () => {
-    assert.deepEqual(nextService('3-Day Shipping'), { from: '3-Day Shipping', to: '2-Day Shipping', top: false });
-    assert.deepEqual(nextService('2-Day Shipping'), { from: '2-Day Shipping', to: '1-Day Shipping', top: false });
-    assert.deepEqual(nextService('1-Day Shipping'), { from: '1-Day Shipping', to: null, top: true });
+    assert.deepEqual(nextService('3-Day Shipping'), { from: '3-day Shipping', to: '2-day Shipping', top: false });
+    assert.deepEqual(nextService('2-Day Shipping'), { from: '2-day Shipping', to: '1-day Shipping', top: false });
+    assert.deepEqual(nextService('1-Day Shipping'), { from: '1-day Shipping', to: null, top: true });
   });
 
   test('the spellings that actually appear on orders all match', () => {
     for (const m of ['2-day', '2 Day', '2DAY', '2-Day Shipping', 'FedEx 2-day']) {
-      assert.equal(nextService(m)?.to, '1-Day Shipping', `"${m}" should be a 2-day order`);
+      assert.equal(nextService(m)?.to, '1-day Shipping', `"${m}" should be a 2-day order`);
     }
     for (const m of ['1-day', 'Overnight', 'FedEx Overnight', '1 Day']) {
       assert.equal(nextService(m)?.top, true, `"${m}" should already be fastest`);
@@ -30,7 +30,7 @@ describe('the upgrade ladder', () => {
   });
 
   test('two notches are never offered — 3-Day cannot reach 1-Day', () => {
-    assert.equal(nextService('3-day').to, '2-Day Shipping');
+    assert.equal(nextService('3-day').to, '2-day Shipping');
   });
 });
 
@@ -64,7 +64,7 @@ describe('canUpgrade', () => {
   test('in production on 2-Day: yes, and the offer is 1-Day', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: '2-Day Shipping' });
     assert.equal(s.canUpgrade, true);
-    assert.equal(s.upgradeTo, '1-Day Shipping');
+    assert.equal(s.upgradeTo, '1-day Shipping');
     assert.equal(s.blockedBy, null);
   });
 
@@ -112,7 +112,7 @@ describe('the facility never changes on an upgrade', () => {
   test('an order upgraded in GA is still reported as GA', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: '2-Day Shipping' });
     assert.equal(s.facility, 'GA', 'upgrading must not re-route to NV');
-    assert.equal(s.upgradeTo, '1-Day Shipping');
+    assert.equal(s.upgradeTo, '1-day Shipping');
   });
 
   test('each facility keeps its own orders through the ladder', () => {
@@ -120,5 +120,43 @@ describe('the facility never changes on an upgrade', () => {
     for (const [fac, id] of Object.entries(production)) {
       assert.equal(orderStage({ folderId: id, shippingMethod: '3-day' }).facility, fac);
     }
+  });
+});
+
+describe('never collide with the legacy bot', () => {
+  test('the strings written back match what routing.mjs writes', () => {
+    // Same service, same spelling, whichever program set it.
+    assert.equal(nextService('3-day').to, '2-day Shipping',
+      "must match routing.mjs's expressUpgrade target exactly");
+  });
+
+  test('an unrouted 3-day order is NOT sold an upgrade the legacy bot may give free', () => {
+    for (const id of ['665685', '653109', '661019', '73066', '73067', '31358']) {
+      const s = orderStage({ folderId: id, shippingMethod: '3-day Shipping' });
+      assert.equal(s.canUpgrade, false, `folder ${id} must not sell a 3-day upgrade`);
+      assert.equal(s.blockedBy, 'awaiting_routing');
+    }
+  });
+
+  test('once routed, a 3-day order is ours to sell — the bot already decided', () => {
+    for (const id of ['73068', '73069', '73070', '674352', '42928']) {
+      const s = orderStage({ folderId: id, shippingMethod: '3-day Shipping' });
+      assert.equal(s.canUpgrade, true, `folder ${id} should sell the upgrade`);
+      assert.equal(s.upgradeTo, '2-day Shipping');
+    }
+  });
+
+  test('2-day is unaffected — the legacy bot never gives 1-day away', () => {
+    assert.equal(orderStage({ folderId: '665685', shippingMethod: '2-day' }).canUpgrade, true);
+    assert.equal(orderStage({ folderId: '73068', shippingMethod: '2-day' }).canUpgrade, true);
+  });
+
+  test('the guard does not depend on the clock', () => {
+    // The legacy cutoff is 3-6pm ET, but the page is opened at any hour and the
+    // routing may happen later. Refusing by folder, not by time, holds always.
+    const a = orderStage({ folderId: '665685', shippingMethod: '3-day' });
+    const b = orderStage({ folderId: '665685', shippingMethod: '3-day' });
+    assert.deepEqual(a, b);
+    assert.equal(a.canUpgrade, false);
   });
 });

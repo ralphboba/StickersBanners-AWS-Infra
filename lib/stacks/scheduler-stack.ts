@@ -16,7 +16,17 @@ export interface SchedulerStackProps extends cdk.StackProps {
   readonly demoFeederFn?: lambda.IFunction;
   /** How often the demo feeder runs (default 15 min). */
   readonly demoIntervalMinutes?: number;
-  /** How often the display-only real-order mirror sync runs (default 5 min). */
+  /**
+   * How often the display-only real-order mirror sync runs (default 10 min).
+   *
+   * Was 5. The mirror now reads 20 OrderDesk folders per run instead of 10
+   * (production and Awaiting Shipment were added), and Linh's legacy bot is
+   * still polling the same store. Halving the frequency keeps our request rate
+   * exactly where it was, so widening the mirror cannot eat into the rate limit
+   * the legacy bot depends on. Cost: the staff board is up to 10 minutes stale.
+   * The customer-facing money path does not rely on it — it reads OrderDesk
+   * directly immediately before charging.
+   */
   readonly mirrorIntervalMinutes?: number;
 }
 
@@ -47,7 +57,7 @@ export class SchedulerStack extends cdk.Stack {
 
     const {
       config, pollerFn, intervalMinutes = 15,
-      demoFeederFn, demoIntervalMinutes = 15, mirrorIntervalMinutes = 5,
+      demoFeederFn, demoIntervalMinutes = 15, mirrorIntervalMinutes = 10,
     } = props;
 
     this.pollerSchedule = new scheduler.Schedule(this, 'PollerFallback', {
