@@ -7,12 +7,18 @@
 <title>Approve your proof — StickersBanners</title>
 <!--
   OpenSeadragon reads the Deep Zoom pyramid the proof service already writes.
-  Loaded from a CDN rather than vendored, but the page never depends on it: if
-  the script does not arrive, every proof falls back to the flat review image,
-  which is exactly what this page showed before the viewer existed. A customer
-  approving a print order must not be blocked by somebody else's outage.
+  Served from our own bucket, next to this page, rather than from a public CDN:
+  a customer approving a print order must not be blocked by somebody else's
+  outage, and the version cannot change under us. It is also the only way the
+  viewer can be rendered and looked at before it ships -- the first version of
+  this feature went out blank because the library could not be fetched in the
+  environment it was built in, so nobody ever saw it draw.
+
+  The page still never depends on it. If the script does not arrive, every proof
+  falls back to the flat review image, which is what this page showed before the
+  viewer existed.
 -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js" defer></script>
+<script src="vendor/openseadragon/openseadragon.min.js" defer></script>
 <!--
   Customer proof approval page.
 
@@ -50,7 +56,11 @@
      and tall enough that 1:1 on a print file shows a useful amount of it. */
   .viewer{position:relative;height:min(70vh,560px);border:1px solid var(--line);
           border-radius:6px;background:#fff;overflow:hidden}
-  .viewer .osd{position:absolute;inset:0}
+  /* OpenSeadragon overwrites this element's `position` with `relative` when it
+     takes it over, which throws away `inset:0` and collapses the box to zero
+     height -- its own container is height:100% of that, so the canvas comes
+     out 816x1 and draws nothing. An explicit size survives the takeover. */
+  .viewer .osd{position:absolute;inset:0;width:100%;height:100%}
   .zoombar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 0}
   .zoombar button{padding:7px 12px;font-size:13px;background:#eef1f6;color:var(--ink)}
   .zoombar button:hover{background:#e2e7ef}
@@ -266,7 +276,15 @@ function deepZoom(p, openNow) {
     });
 
     viewer.addHandler('open', () => { bar.hidden = false; readout(); });
+    // `zoom` fires when the spring is aimed at a new value, not when it gets
+    // there, and readout() asks for the CURRENT zoom -- so on its own it always
+    // printed the previous number. Clicking 100% left "13%" on screen while the
+    // picture behind it really was at 1:1, which is the one number on this page
+    // a customer is meant to trust. `animation` tracks the spring and
+    // `animation-finish` lands the final value.
     viewer.addHandler('zoom', readout);
+    viewer.addHandler('animation', readout);
+    viewer.addHandler('animation-finish', readout);
     viewer.addHandler('resize', readout);
     viewer.addHandler('open-failed', () => {
       // Tiles missing or unreadable: fall back rather than show an empty box.
