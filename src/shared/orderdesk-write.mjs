@@ -17,14 +17,22 @@
 // CLAUDE.md "Safety"). Everything else in the pipeline works the same either
 // way, so the flow is fully observable with writes off.
 //
-// Both writes here are the LEGACY intake behaviour, so both stay on the
-// ORDERDESK_WRITES switch. The customer-driven shipping upgrade is a different
-// feature on its own switch (ORDERDESK_UPGRADE_WRITES) — see write-gates.mjs.
+// Two features live here, on two different switches, because keeping every
+// OrderDesk write in one file is worth more than splitting them by feature —
+// "what can write to a real order?" has one answer, and it is this file.
+//
+//   ORDERDESK_WRITES          updateOrderDeskDetails, applyExpressUpgrade
+//                             (legacy intake behaviour, ported from Linh)
+//   ORDERDESK_UPGRADE_WRITES  applyShippingUpgrade
+//                             (the customer-paid upgrade — see write-gates.mjs)
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
 import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
-import { isSyntheticOrder, orderDeskWritesEnabled } from './write-gates.mjs';
+import {
+  isSyntheticOrder, orderDeskWritesEnabled,
+  orderDeskUpgradeWritesEnabled, blockedReason,
+} from './write-gates.mjs';
 
 // Re-exported so existing importers (poller, tests) keep their import path.
 export { orderDeskWritesEnabled };
@@ -143,4 +151,136 @@ export async function applyExpressUpgrade({ order, orderName, upgrade, storeId, 
   }
   console.log(JSON.stringify({ msg: 'express upgrade applied', orderName, ...intent }));
   return { applied: true };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// The customer-paid shipping upgrade.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Money in cents, so 278.11 + 33.96 cannot drift to 312.06999999999996. */
+const cents = (v) => Math.round(Number(v ?? 0) * 100);
+const dollars = (c) => (c / 100).toFixed(2);
+
+/**
+ * Has this exact upgrade already been written? Shopify delivers a webhook more
+ * than once often enough that assuming otherwise is a money bug — a second
+ * delivery would add the difference to the total a second time.
+ *
+ * The invoice number is the natural idempotency key: one invoice, one upgrade.
+ */
+export function upgradeAlreadyApplied(order, invoiceRef) {
+  if (!invoiceRef) return false;
+  return (order?.order_notes ?? []).some(
+    (n) => String(n?.content ?? '').includes(invoiceRef),
+  );
+}
+
+/**
+ * Write a paid shipping upgrade onto the OrderDesk order: the service, and the
+ * money that came with it.
+ *
+ * Three things this does that applyExpressUpgrade does not:
+ *
+ *  1. RE-READS the order immediately before writing and merges onto that copy.
+ *     Legacy PUTs a record it read earlier, which silently reverts anything the
+ *     office changed in between (docs/shopify-intake-lambda.md, H2). This runs
+ *     while staff are working the same order, so the window is real.
+ *  2. Moves the money. shipping_total and order_total both shift by the
+ *     difference; leaving order_total alone would make OrderDesk disagree with
+ *     what the customer actually paid.
+ *  3. Refuses a repeat. See upgradeAlreadyApplied.
+ *
+ * It does NOT move the order between folders. The upgrade keeps the order with
+ * whichever production team already has it — see the ladder rule in
+ * docs/order-lifecycle-and-refunds.md.
+ *
+ * @param {object}   p
+ * @param {string}   p.orderDeskId    OrderDesk order id (we always know it)
+ * @param {string}   p.orderName      for the synthetic-order guard and logs
+ * @param {string}   p.toMethod       e.g. "1-day Shipping" — legacy's spelling
+ * @param {number}   p.amount         the difference paid, in dollars
+ * @param {string}   p.invoiceRef     e.g. "D169" — the idempotency key
+ * @param {string}   p.storeId
+ * @param {string}   p.apiKey
+ * @param {typeof fetch} [p.fetchImpl]
+ */
+export async function applyShippingUpgrade({
+  orderDeskId, orderName, toMethod, amount, invoiceRef, storeId, apiKey, fetchImpl,
+}) {
+  const deltaCents = cents(amount);
+  const intent = { orderDeskId, toMethod, amount: dollars(deltaCents), invoiceRef };
+  const opts = fetchImpl ? { fetchImpl } : {};
+
+  const blocked = blockedReason(orderName, orderDeskUpgradeWritesEnabled);
+  if (blocked) {
+    console.log(JSON.stringify({
+      msg: `shipping upgrade WOULD HAVE RUN (${blocked.skipped})`, orderName, ...intent,
+    }));
+    return { applied: false, ...blocked, intent };
+  }
+
+  if (!orderDeskId || !toMethod) return { applied: false, error: 'missing order id or target' };
+  if (deltaCents <= 0) return { applied: false, error: 'upgrade amount must be positive' };
+
+  // 1. Re-read. This copy, not one fetched minutes ago, is what we merge onto.
+  const url = `${ORDERDESK_API}/orders/${orderDeskId}`;
+  const getRes = await orderDeskFetch(url, { headers: orderDeskHeaders(storeId, apiKey) }, opts);
+  if (!getRes.ok) {
+    const body = (await getRes.text()).slice(0, 200);
+    return { applied: false, error: `OrderDesk GET ${getRes.status}: ${body}` };
+  }
+  const fresh = (await getRes.json())?.order;
+  if (!fresh) return { applied: false, error: 'OrderDesk returned no order' };
+
+  // 2. Already done? A duplicate webhook must not charge the record twice.
+  if (upgradeAlreadyApplied(fresh, invoiceRef)) {
+    console.log(JSON.stringify({ msg: 'shipping upgrade already applied', orderName, ...intent }));
+    return { applied: false, skipped: 'duplicate', intent };
+  }
+
+  // 3. Merge. Only these fields change; everything else is the fresh copy.
+  const stamp = new Date().toLocaleString('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).replace(',', '');
+
+  const from = fresh.shipping_method;
+  const updated = {
+    ...fresh,
+    shipping_method: toMethod,
+    order_total: dollars(cents(fresh.order_total) + deltaCents),
+    order_notes: [
+      ...(fresh.order_notes ?? []),
+      {
+        username: 'SBBot',
+        date_added: stamp,
+        content: `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} (${invoiceRef})`,
+      },
+    ],
+  };
+  // shipping_total is only touched when the record actually carries it, so a
+  // store that does not use the field does not gain a spurious one.
+  if (fresh.shipping_total !== undefined && fresh.shipping_total !== null) {
+    updated.shipping_total = dollars(cents(fresh.shipping_total) + deltaCents);
+  }
+
+  const putRes = await orderDeskFetch(url, {
+    method: 'PUT',
+    headers: orderDeskHeaders(storeId, apiKey, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(updated),
+  }, opts);
+  if (!putRes.ok) {
+    const body = (await putRes.text()).slice(0, 200);
+    return { applied: false, error: `OrderDesk PUT ${putRes.status}: ${body}` };
+  }
+
+  console.log(JSON.stringify({ msg: 'shipping upgrade applied', orderName, from, ...intent }));
+  return {
+    applied: true,
+    from,
+    to: toMethod,
+    orderTotal: updated.order_total,
+    shippingTotal: updated.shipping_total,
+  };
 }

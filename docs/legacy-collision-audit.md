@@ -77,7 +77,8 @@ const legacyMayUpgradeFree = ladder?.from === '3-day Shipping' && !routed;
 
 완전 제거는 불가능하다. 창을 줄인다:
 
-- PUT **직전에** 재조회해서 변경 필드만 병합 (`applyExpressUpgrade`도 이렇게 고쳐야 함)
+- PUT **직전에** 재조회해서 변경 필드만 병합 — `applyShippingUpgrade`는 ✅ 이렇게 한다.
+  `applyExpressUpgrade`(레거시 포팅)는 아직 아니다
 - 우리 쓰기는 **주문당 평생 1회**다 (업그레이드는 한 번뿐). 레거시는 인테이크에서 몇 번
   쓰는데, 그 구간엔 우리가 아예 안 쓴다(C2 가드가 미라우팅 주문을 막으므로)
 
@@ -156,5 +157,6 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 - [ ] **C1** 테스트 초안 1건 결제 → 5분 뒤 QTS에 안 들어오는지 확인. 들어오면 차단부터
 - [ ] **C5** 실제 1-day 주문의 `shipping_method` 문자열 확인
 - [ ] **C4** OrderDesk rate limit이 키 단위인지 스토어 단위인지 확인
-- [ ] **C3** `applyExpressUpgrade`에 재조회·병합 추가
+- [x] **C3** `applyShippingUpgrade`에 재조회·병합 — 완료
+- [ ] **C3b** `applyExpressUpgrade`(레거시 경로)에도 같은 수정
 - [ ] 레거시가 도는 시간대에 미러를 10분 주기로 하루 돌려보고 429 로그 확인
