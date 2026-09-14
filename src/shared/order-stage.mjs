@@ -52,18 +52,20 @@ const OFF_LADDER = ['saturday', 'sat overnight', 'pickup', 'pick-up', 'pick up']
 // store actually uses. Anything else gives one service two spellings, and an
 // OrderDesk rule or ShipStation mapping that matches on the text misses one.
 //
-//   'FedEx 1-Day'  OBSERVED on order S60338 (2026-09-14, NV) — trusted
-//   the rest      INFERRED from that pattern — confirm against a real order
-//                 of each kind before arming ORDERDESK_UPGRADE_WRITES
+// All four confirmed against the live store (Kai, 2026-09-14; 'FedEx 1-Day'
+// also seen on order S60338). Note the plural: three and two are "-Days", one
+// is "-Day". Guessing a consistent scheme would have written 'FedEx 2-Day' and
+// left the store holding two spellings of one service.
 //
-// ⚠️ routing.mjs's express upgrade writes '2-day Shipping' instead, which does
-// not match the observed shape. One of the two is wrong in the live store; see
-// docs/legacy-collision-audit.md C5.
+// ⚠️ routing.mjs's express upgrade writes '2-day Shipping', which is none of
+// these. That legacy write is behind ORDERDESK_WRITES and still off, so it has
+// not done damage — but it is wrong and would set an unrecognised service on a
+// real order the day that switch is armed. See docs/legacy-collision-audit.md C5.
 const SERVICE = {
   ground: 'FedEx Ground',
-  d3: 'FedEx 3-Day',
-  d2: 'FedEx 2-Day',
-  d1: 'FedEx 1-Day',      // observed
+  d3: 'FedEx 3-Days',
+  d2: 'FedEx 2-Days',
+  d1: 'FedEx 1-Day',
 };
 
 // One rung at a time. Ground is the bottom of the ladder, not off it: it is
@@ -74,6 +76,8 @@ const SERVICE = {
 // would misquote by $71.
 const LADDER = [
   { match: ['ground'], from: SERVICE.ground, to: SERVICE.d3 },
+  // Substring matches, so '3-day' also catches 'FedEx 3-Days'. Reading is
+  // forgiving; writing uses SERVICE above and is exact.
   { match: ['3-day', '3 day', 'three day'], from: SERVICE.d3, to: SERVICE.d2 },
   { match: ['2-day', '2 day', '2day', 'two day'], from: SERVICE.d2, to: SERVICE.d1 },
   { match: ['1-day', '1 day', 'overnight', 'one day'], from: SERVICE.d1, to: null },

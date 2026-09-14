@@ -107,15 +107,31 @@ OrderDesk를 직접 읽는다(주문당 1회).
 
 ---
 
-## C5 — `shipping_method` 표기 ✅ 레거시에 맞췄다
+## C5 — `shipping_method` 표기 ⚠️ 레거시 쪽이 틀렸다
 
-레거시가 쓰는 값(`routing.mjs`): `'2-day Shipping'` — **소문자 d**.
+실제 스토어가 쓰는 값 (Kai 확인, 2026-09-14):
 
-처음에 `'2-Day Shipping'`(대문자 D)로 썼다가 고쳤다. 같은 서비스가 스토어 안에서 두 표기로
-갈리면, 정확한 문자열로 매칭하는 OrderDesk 룰이나 ShipStation 매핑이 한쪽을 놓친다.
+```
+FedEx Ground · FedEx 3-Days · FedEx 2-Days · FedEx 1-Day
+```
 
-> ⚠️ `'1-day Shipping'`은 **패턴에서 추론한 것이지 실물을 본 게 아니다.**
-> 실제 1-day 주문의 `shipping_method`를 확인하고 나서 `ORDERDESK_UPGRADE_WRITES`를 켠다.
+우리 사다리는 이 넷을 그대로 쓴다. ✅
+
+**그런데 `routing.mjs`의 레거시 익스프레스 업그레이드는 `'2-day Shipping'`을 쓴다 —
+넷 중 아무것도 아니다.**
+
+| | 쓰는 값 | 스토어가 아는가 |
+| --- | --- | --- |
+| 우리 업그레이드 | `FedEx 1-Day` | ✅ |
+| 레거시 익스프레스 (`routing.mjs`) | `2-day Shipping` | ❌ |
+
+`ORDERDESK_WRITES`가 꺼져 있어서 **아직 실제로 쓰인 적은 없다.** 하지만 인테이크를
+go-live하는 순간 3-day 주문이 컷오프에 걸릴 때마다 인식 불가능한 서비스명이 박히고,
+ShipStation 매핑이 그걸 못 찾는다.
+
+> **인테이크 go-live 전 필수 수정.** 우리 업그레이드 기능과는 무관하므로 이 기능을
+> 막지는 않는다. 다만 Linh 확인 대상인지 판단이 필요하다 — 레거시 동작을 바꾸는 게
+> 아니라 **레거시가 의도한 대로 되게 하는 수정**으로 보인다.
 
 ---
 
@@ -155,7 +171,8 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 `SHOPIFY_WRITES` / `ORDERDESK_UPGRADE_WRITES`를 켜기 전에 **전부** 통과해야 한다.
 
 - [ ] **C1** 테스트 초안 1건 결제 → 5분 뒤 QTS에 안 들어오는지 확인. 들어오면 차단부터
-- [ ] **C5** 실제 1-day 주문의 `shipping_method` 문자열 확인
+- [x] **C5** 실제 문자열 확인 — `FedEx Ground / 3-Days / 2-Days / 1-Day`
+- [ ] **C5b** `routing.mjs`의 `'2-day Shipping'` 수정 (인테이크 go-live 전)
 - [ ] **C4** OrderDesk rate limit이 키 단위인지 스토어 단위인지 확인
 - [x] **C3** `applyShippingUpgrade`에 재조회·병합 — 완료
 - [ ] **C3b** `applyExpressUpgrade`(레거시 경로)에도 같은 수정

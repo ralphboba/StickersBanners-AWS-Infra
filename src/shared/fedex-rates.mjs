@@ -63,8 +63,9 @@ const BANDS = [
  */
 const COLUMN = {
   'ground': 2, 'fedex ground': 2,
-  '3-day': 3, 'fedex 3-day': 3, '3-day shipping': 3,
-  '2-day': 4, 'fedex 2-day': 4, '2-day shipping': 4,
+  // The store writes the plural for three and two days, the singular for one.
+  '3-day': 3, '3-days': 3, 'fedex 3-day': 3, 'fedex 3-days': 3, '3-day shipping': 3,
+  '2-day': 4, '2-days': 4, 'fedex 2-day': 4, 'fedex 2-days': 4, '2-day shipping': 4,
   '1-day': 5, 'fedex 1-day': 5, '1-day shipping': 5, '1-day economical': 5,
   'saturday overnight': 6, 'sat-overnight rush': 6,
 };

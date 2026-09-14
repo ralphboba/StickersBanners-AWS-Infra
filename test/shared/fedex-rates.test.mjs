@@ -126,7 +126,7 @@ describe('quoting an upgrade', () => {
 
   test('every spelling in play prices the same column', () => {
     // card / OrderDesk (observed) / legacy
-    for (const two of ['2-day', 'FedEx 2-Day', '2-Day Shipping', '2-DAY']) {
+    for (const two of ['2-day', 'FedEx 2-Days', 'FedEx 2-Day', '2-Day Shipping', '2-DAY']) {
       assert.equal(priceOf(150, two), 128.11, `"${two}" should be 2-day`);
     }
     for (const one of ['1-day', 'FedEx 1-Day', '1-Day Economical']) {
@@ -139,7 +139,7 @@ describe('quoting an upgrade', () => {
     // $15.70 is the Ground rate only up to a $98 subtotal; by the $134-194
     // band it is $25.67. Quoting from the wrong band is how a customer gets
     // billed the wrong amount, so the band is part of the assertion.
-    const q = quoteUpgrade(150, 'FedEx Ground', 'FedEx 3-Day');
+    const q = quoteUpgrade(150, 'FedEx Ground', 'FedEx 3-Days');
     assert.deepEqual(q.band, [134, 194]);
     assert.equal(q.fromPrice, 25.67);
     assert.equal(q.toPrice, 86.73);

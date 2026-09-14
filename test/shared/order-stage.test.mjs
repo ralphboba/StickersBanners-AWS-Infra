@@ -9,8 +9,8 @@ import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
   test('3-Day buys 2-Day, 2-Day buys 1-Day, 1-Day buys nothing', () => {
-    assert.deepEqual(nextService('3-Day Shipping'), { from: 'FedEx 3-Day', to: 'FedEx 2-Day', top: false });
-    assert.deepEqual(nextService('2-Day Shipping'), { from: 'FedEx 2-Day', to: 'FedEx 1-Day', top: false });
+    assert.deepEqual(nextService('3-Day Shipping'), { from: 'FedEx 3-Days', to: 'FedEx 2-Days', top: false });
+    assert.deepEqual(nextService('2-Day Shipping'), { from: 'FedEx 2-Days', to: 'FedEx 1-Day', top: false });
     assert.deepEqual(nextService('1-Day Shipping'), { from: 'FedEx 1-Day', to: null, top: true });
   });
 
@@ -24,8 +24,8 @@ describe('the upgrade ladder', () => {
   });
 
   test('Ground is the bottom rung, not off the ladder', () => {
-    assert.deepEqual(nextService('FedEx Ground'), { from: 'FedEx Ground', to: 'FedEx 3-Day', top: false });
-    assert.equal(nextService('Ground')?.to, 'FedEx 3-Day');
+    assert.deepEqual(nextService('FedEx Ground'), { from: 'FedEx Ground', to: 'FedEx 3-Days', top: false });
+    assert.equal(nextService('Ground')?.to, 'FedEx 3-Days');
   });
 
   test('anything off the ladder gets no offer at all', () => {
@@ -35,8 +35,8 @@ describe('the upgrade ladder', () => {
   });
 
   test('two notches are never offered', () => {
-    assert.equal(nextService('3-day').to, 'FedEx 2-Day');
-    assert.equal(nextService('ground').to, 'FedEx 3-Day', 'Ground must not jump to 2-Day');
+    assert.equal(nextService('3-day').to, 'FedEx 2-Days');
+    assert.equal(nextService('ground').to, 'FedEx 3-Days', 'Ground must not jump to 2-Day');
   });
 });
 
@@ -90,7 +90,7 @@ describe('canUpgrade', () => {
   test('Ground in production: yes, one rung to 3-Day', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: 'FedEx Ground' });
     assert.equal(s.canUpgrade, true);
-    assert.equal(s.upgradeTo, 'FedEx 3-Day');
+    assert.equal(s.upgradeTo, 'FedEx 3-Days');
   });
 
   test('Saturday Overnight in production: no, it is off the ladder', () => {
@@ -136,6 +136,18 @@ describe('the facility never changes on an upgrade', () => {
 });
 
 describe('never collide with the legacy bot', () => {
+  test('the exact strings the live store uses, plural and all', () => {
+    assert.equal(nextService('FedEx Ground').to, 'FedEx 3-Days');
+    assert.equal(nextService('FedEx 3-Days').to, 'FedEx 2-Days');
+    assert.equal(nextService('FedEx 2-Days').to, 'FedEx 1-Day', 'one day is singular');
+    assert.equal(nextService('FedEx 1-Day').top, true);
+  });
+
+  test('reading tolerates the singular too, in case an order carries it', () => {
+    assert.equal(nextService('FedEx 2-Day').to, 'FedEx 1-Day');
+    assert.equal(nextService('2-day Shipping').to, 'FedEx 1-Day');
+  });
+
   test('the strings written back match what routing.mjs writes', () => {
     // Same service, same spelling, whichever program set it.
     // The observed spelling on a real order (S60338) is 'FedEx 1-Day', so the
@@ -145,7 +157,7 @@ describe('never collide with the legacy bot', () => {
 
   test('an unrouted 3-day order is NOT sold an upgrade the legacy bot may give free', () => {
     for (const id of ['665685', '653109', '661019', '73066', '73067', '31358']) {
-      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Day' });
+      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Days' });
       assert.equal(s.canUpgrade, false, `folder ${id} must not sell a 3-day upgrade`);
       assert.equal(s.blockedBy, 'awaiting_routing');
     }
@@ -153,9 +165,9 @@ describe('never collide with the legacy bot', () => {
 
   test('once routed, a 3-day order is ours to sell — the bot already decided', () => {
     for (const id of ['73068', '73069', '73070', '674352', '42928']) {
-      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Day' });
+      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Days' });
       assert.equal(s.canUpgrade, true, `folder ${id} should sell the upgrade`);
-      assert.equal(s.upgradeTo, 'FedEx 2-Day');
+      assert.equal(s.upgradeTo, 'FedEx 2-Days');
     }
   });
 
