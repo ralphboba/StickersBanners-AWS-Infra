@@ -1,5 +1,9 @@
 *.js
 !jest.config.js
+# Vendored browser libraries are source, not build output: the proof page
+# serves them from our own bucket so a public CDN outage cannot blank a
+# customer's proof, and so the viewer can be rendered and checked locally.
+!web/vendor/**/*.js
 *.d.ts
 node_modules
 

@@ -15,6 +15,8 @@ import tempfile
 
 import boto3
 
+from jobload import load_job
+
 from dzi import prepare_proof
 
 s3 = boto3.client("s3")
@@ -72,7 +74,7 @@ def set_stage(order_name, stage):
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "making proof")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     uploaded_total = 0
 

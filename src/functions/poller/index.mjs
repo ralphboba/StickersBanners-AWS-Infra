@@ -375,6 +375,8 @@ export async function handler(event = {}) {
   let skipped = 0;
   let held = 0;
   const holdReasons = {};
+  /** Orders we queued but failed to take out of the QTS folder — see below. */
+  const claimFailed = [];
   for (const order of orders) {
     const job = cleanOrder(order);
     if (!job.orderName) continue;
@@ -415,6 +417,39 @@ export async function handler(event = {}) {
     try {
       await enqueue(job);
       enqueued += 1;
+      // Take the order OUT of the QTS folder now that we own it.
+      //
+      // Without this an order we processed stays in Linh's unprocessed queue,
+      // which has two consequences: nobody can tell which orders this system
+      // handled, and the moment his scanner resumes it processes every one of
+      // them again — a second proof email to the customer and a second copy of
+      // every print file in the facility folder.
+      //
+      // Only the gated orders were being moved before, because that is all
+      // legacy's updateOrderdeskDetails was called for in the batch loop; the
+      // queued ones left the folder by a different route in his program. This
+      // is the equivalent move for ours. Held by ORDERDESK_WRITES like every
+      // other write, so with the switch off it only logs what it would do.
+      const claimed = await updateOrderDeskDetails({
+        order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey,
+      });
+      // A failed claim is the one error here that is worse than it looks. The
+      // order is already queued, so it gets processed and the customer gets a
+      // proof — but it is still sitting in Linh's queue, so when his scanner
+      // resumes he processes it too: a second email and a second copy of every
+      // print file. OrderDesk rate-limits (the mirror alone makes ~10 calls a
+      // minute), so this is not hypothetical.
+      //
+      // Counted into the poll summary rather than only logged, so a run that
+      // lost claims says so in the line a person actually reads, and the order
+      // names are there to re-claim by hand.
+      if (claimed.error) {
+        claimFailed.push(job.orderName);
+        console.error(JSON.stringify({
+          msg: 'CLAIM FAILED — order stays in the QTS folder and will be reprocessed',
+          orderName: job.orderName, error: claimed.error,
+        }));
+      }
     } catch (err) {
       if (err?.name === 'ConditionalCheckFailedException') {
         skipped += 1; // lost the race, another invocation took it
@@ -427,6 +462,9 @@ export async function handler(event = {}) {
   const summary = {
     polled: orders.length, enqueued, skipped, held, holdReasons,
     orderDeskWrites: orderDeskWritesEnabled() ? 'ENABLED' : 'disabled',
+    // Empty on every healthy run. Non-empty means those orders were processed
+    // by us AND left in Linh's queue for him to process again.
+    claimFailed,
   };
   console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
   return summary;

@@ -16,11 +16,14 @@ import json
 import os
 import sys
 import tempfile
-import urllib.request
 
 import boto3
 
+from jobload import load_job
+
 from converter import check_pdf_pages, infer_unit, process_image
+from artwork import artwork_extension
+from fetch import download
 
 s3 = boto3.client("s3")
 ddb = boto3.resource("dynamodb")
@@ -33,7 +36,7 @@ JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
 def fetch_artwork(item, dest_dir, name):
     """Download the artwork to local scratch. URL (legacy path) or s3:// key."""
     url = item.get("artworkUrl") or ""
-    ext = (os.path.splitext(url.split("?")[0])[1][1:] or "pdf").lower()
+    ext = artwork_extension(item, url)
     local = os.path.join(dest_dir, f"{name}.{ext}")
 
     if url.startswith("s3://") or (UPLOADS_BUCKET and not url.startswith("http")):
@@ -41,7 +44,10 @@ def fetch_artwork(item, dest_dir, name):
         key = url.replace("s3://", "").split("/", 1)[-1] if url.startswith("s3://") else url
         s3.download_file(bucket, key, local)
     else:
-        urllib.request.urlretrieve(url, local)
+        # Somebody else's server. Bounded in time and size, and retried — see
+        # fetch.py for why the bare urlretrieve this replaces was a hazard.
+        size = download(url, local)
+        print(f"resize: fetched {size} bytes for {name} from {url.split('?')[0]}")
 
     if not os.path.exists(local) or os.path.getsize(local) == 0:
         raise RuntimeError(f"Cannot verify downloaded file for {name}")
@@ -79,7 +85,7 @@ def set_stage(order_name, stage):
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "resizing")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     produced = []
 

@@ -20,9 +20,11 @@ import sys
 import tempfile
 
 import boto3
+
+from jobload import load_job
 from PIL import Image
 
-from finishing_config import build_finishing_obj
+from finishing_config import build_finishing_obj, final_tif_name
 from grommets import GrommetsAdder
 from pole_pockets import PolePocketsAdder
 
@@ -80,7 +82,7 @@ def set_stage(order_name, stage):
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "finishing")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     grommet = GrommetsAdder()
     pockets = PolePocketsAdder()
@@ -131,11 +133,7 @@ def main():
                 )
 
             # 5. final naming: "{orderId}-{itemNo} {descSuf}[ qty N].tif"
-            desc = finishing_obj.get("descSuf", "")
-            qty = int(finishing_obj.get("quantity", 1))
-            if qty > 1:
-                desc = f"{desc} qty {qty}".strip()
-            final_name = f"{order_name}-{item_no} {desc}".rstrip() + ".tif"
+            final_name = final_tif_name(order_name, item_no, finishing_obj)
             final_key = f"{order_name}/{final_name}"
             s3.upload_file(work, FINISHED_BUCKET, final_key)
             produced.append(final_key)

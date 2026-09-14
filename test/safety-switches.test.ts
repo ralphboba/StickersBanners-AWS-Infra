@@ -32,8 +32,8 @@ function envOf(props: { Environment?: { Variables?: Record<string, string> } }) 
   return props.Environment?.Variables ?? {};
 }
 
-function computeTemplate() {
-  const app = new cdk.App();
+function computeTemplate(context?: Record<string, unknown>) {
+  const app = new cdk.App({ context });
   const deps = new cdk.Stack(app, 'deps', { env });
   const stack = new ComputeStack(app, `${config.prefix}-compute`, {
     env,
@@ -48,8 +48,8 @@ function computeTemplate() {
   return Template.fromStack(stack);
 }
 
-function ecsTemplate() {
-  const app = new cdk.App();
+function ecsTemplate(context?: Record<string, unknown>) {
+  const app = new cdk.App({ context });
   const deps = new cdk.Stack(app, 'deps', { env });
   const vpc = new ec2.Vpc(deps, 'Vpc');
   const stack = new EcsStack(app, `${config.prefix}-ecs`, {
@@ -146,5 +146,77 @@ describe('go-live switches are all off', () => {
     const notify = fns.find((f) => f.Properties.FunctionName === 'sb-prod-notify-consumer')!;
     expect(envOf(poller.Properties).ORDERDESK_WRITES).toBe('disabled');
     expect(envOf(notify.Properties).ZENDESK_SENDS).toBe('disabled');
+  });
+});
+
+/**
+ * The bounded live trial (2026-09-13, 16:00-21:00 UTC).
+ *
+ * Kai asked for five hours where this system really does the work: orders moved
+ * into his own OrderDesk folders, real proof emails, print files diverted to a
+ * path a person reviews before production sees them. Arming is a deploy-time
+ * flag so that ENDING it is a redeploy without the flags, not an edit to three
+ * string literals at the end of a long day.
+ *
+ * What these pin is the thing that would be catastrophic and silent: that a
+ * value which merely LOOKS affirmative cannot arm anything.
+ */
+describe('the trial flags', () => {
+  /** The poller's environment from a compute template built with this context. */
+  function pollerEnv(context?: Record<string, unknown>) {
+    const t = computeTemplate(context);
+    const fn = Object.values(t.findResources('AWS::Lambda::Function',
+      { Properties: { FunctionName: `${config.prefix}-poller` } }))[0] as any;
+    return envOf(fn.Properties);
+  }
+
+  test('a plain deploy arms nothing at all', () => {
+    const vars = pollerEnv();
+    expect(vars.ORDERDESK_WRITES).toBe('disabled');
+    expect(vars.ORDERDESK_FOLDER_IDS).toBe('');
+  });
+
+  test('only the exact string "true" arms a switch', () => {
+    for (const value of ['1', 'yes', 'TRUE', 'True', 'enabled', 'on', '']) {
+      expect(pollerEnv({ armOrderDeskWrites: value }).ORDERDESK_WRITES).toBe('disabled');
+    }
+  });
+
+  test('each flag arms only its own switch', () => {
+    const t = computeTemplate({ armOrderDeskWrites: 'true' });
+    const notify = Object.values(t.findResources('AWS::Lambda::Function',
+      { Properties: { FunctionName: `${config.prefix}-notify-consumer` } }))[0] as any;
+    expect(pollerEnv({ armOrderDeskWrites: 'true' }).ORDERDESK_WRITES).toBe('enabled');
+    expect(envOf(notify.Properties).ZENDESK_SENDS).toBe('disabled');
+  });
+
+  test('the folder redirection reaches the poller verbatim', () => {
+    const ids = '{"processing":"711436","manual":"711437","sales":"711438"}';
+    expect(pollerEnv({ orderDeskFolderIds: ids }).ORDERDESK_FOLDER_IDS).toBe(ids);
+  });
+
+  test('the transfer and its path prefix are independent', () => {
+    const held = ecsTemplate({ ftpBasePath: '/AWS-TEST' });
+    for (const task of Object.values(held.findResources('AWS::ECS::TaskDefinition')) as any[]) {
+      for (const c of task.Properties.ContainerDefinitions) {
+        const vars = Object.fromEntries(
+          (c.Environment ?? []).map((e: any) => [e.Name, e.Value]));
+        // A prefix on its own must NOT arm the transfer; it only says where
+        // files would go if it were armed.
+        expect(vars.PRODUCTION_TRANSFER).toBe('disabled');
+        expect(vars.FTP_BASE_PATH).toBe('/AWS-TEST');
+      }
+    }
+  });
+
+  test('armed, the transfer is enabled on every task', () => {
+    const armed = ecsTemplate({ armProductionTransfer: 'true', ftpBasePath: '/AWS-TEST' });
+    for (const task of Object.values(armed.findResources('AWS::ECS::TaskDefinition')) as any[]) {
+      for (const c of task.Properties.ContainerDefinitions) {
+        const vars = Object.fromEntries(
+          (c.Environment ?? []).map((e: any) => [e.Name, e.Value]));
+        expect(vars.PRODUCTION_TRANSFER).toBe('enabled');
+      }
+    }
   });
 });

@@ -6,6 +6,20 @@
 <meta name="robots" content="noindex, nofollow" />
 <title>Approve your proof — StickersBanners</title>
 <!--
+  OpenSeadragon reads the Deep Zoom pyramid the proof service already writes.
+  Served from our own bucket, next to this page, rather than from a public CDN:
+  a customer approving a print order must not be blocked by somebody else's
+  outage, and the version cannot change under us. It is also the only way the
+  viewer can be rendered and looked at before it ships -- the first version of
+  this feature went out blank because the library could not be fetched in the
+  environment it was built in, so nobody ever saw it draw.
+
+  The page still never depends on it. If the script does not arrive, every proof
+  falls back to the flat review image, which is what this page showed before the
+  viewer existed.
+-->
+<script src="vendor/openseadragon/openseadragon.min.js" defer></script>
+<!--
   Customer proof approval page.
 
   This is the page the proof-ready email links to once `approval/portal-base` and
@@ -38,6 +52,27 @@
   .proof{margin-bottom:16px}
   .proof img{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:6px;background:#fff}
   .proof .cap{color:var(--muted);font-size:13px;margin:8px 2px 0}
+  /* Deep-zoom viewer. Fixed height so the page does not jump as tiles load,
+     and tall enough that 1:1 on a print file shows a useful amount of it. */
+  .viewer{position:relative;height:min(70vh,560px);border:1px solid var(--line);
+          border-radius:6px;background:#fff;overflow:hidden}
+  /* OpenSeadragon overwrites this element's `position` with `relative` when it
+     takes it over, which throws away `inset:0` and collapses the box to zero
+     height -- its own container is height:100% of that, so the canvas comes
+     out 816x1 and draws nothing. An explicit size survives the takeover. */
+  .viewer .osd{position:absolute;inset:0;width:100%;height:100%}
+  .zoombar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 0}
+  .zoombar button{padding:7px 12px;font-size:13px;background:#eef1f6;color:var(--ink)}
+  .zoombar button:hover{background:#e2e7ef}
+  .zoombar button.primary{background:var(--brand);color:#fff}
+  .zoombar .pct{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;
+                margin-left:auto;padding-left:8px}
+  .zoombar .pct b{color:var(--ink);font-weight:600}
+  .opener{position:absolute;inset:0;width:100%;height:100%;border-radius:0;
+          background:transparent;display:flex;align-items:flex-end;justify-content:center;
+          padding:0 0 16px;cursor:zoom-in}
+  .opener span{background:rgba(22,24,29,.82);color:#fff;font-size:13px;font-weight:600;
+               padding:9px 16px;border-radius:999px}
   .tip{background:#fffbe9;border:1px solid #f0e3b0;border-radius:8px;padding:12px 14px;margin-bottom:20px}
   button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:13px 22px;cursor:pointer}
   .approve{background:var(--brand);color:#fff;width:100%;font-size:16px}
@@ -65,10 +100,22 @@
     <h1>Proof for order <span id="orderName"></span></h1>
     <p class="sub">Please review every page carefully before approving.</p>
 
-    <div class="tip">
-      For best results, view this on a desktop or larger screen. Mobile viewing
-      is supported, but colours and detail may not display accurately. Zoom in to
-      check spelling, artwork and dimensions.
+    <!-- Two tips, and only one is ever shown. Describing zoom controls on a
+         page that has none is the bug this viewer was added to fix; if the
+         viewer does not load, the instructions must not survive it. -->
+    <div class="tip" id="tipZoom" hidden>
+      Drag to move around the proof, scroll or pinch to zoom. Press
+      <b>100%</b> to see it at the exact size it will print &mdash; one print
+      pixel per screen pixel, the same view as Photoshop at 100%. That is the
+      setting to use for checking whether artwork is sharp enough.
+      Colours on screen are a guide only and will not match the printed piece
+      exactly.
+    </div>
+    <div class="tip" id="tipFlat" hidden>
+      Please check the spelling, artwork and dimensions carefully.
+      For a closer look, view this on a desktop or larger screen.
+      Colours on screen are a guide only and will not match the printed piece
+      exactly.
     </div>
 
     <div id="proofs"></div>
@@ -117,23 +164,207 @@ function renderProofs(proofs) {
       + 'Please review it there, then approve below.</div>';
     return;
   }
-  for (const p of proofs) {
+  // Zoom is offered only when the library arrived and the pyramid exists.
+  const zoomable = Boolean(window.OpenSeadragon) && proofs.some((p) => p.dzi);
+  const tipZoom = $('tipZoom');
+  const tipFlat = $('tipFlat');
+  if (tipZoom) tipZoom.hidden = !zoomable;
+  if (tipFlat) tipFlat.hidden = zoomable;
+
+  const pending = [];
+
+  proofs.forEach((p, i) => {
     const fig = document.createElement('div');
     fig.className = 'proof card';
-    const img = document.createElement('img');
-    img.src = p.review;
-    img.alt = 'Proof ' + p.itemNo;
-    img.loading = 'lazy';
-    // A missing derivative must not leave a broken-image icon on a page whose
-    // whole job is showing artwork.
-    img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
-    fig.appendChild(img);
+
     const cap = document.createElement('p');
     cap.className = 'cap';
     cap.textContent = p.name ? (p.itemNo + '. ' + p.name) : ('Item ' + p.itemNo);
+
+    // Deep zoom when the library and the tiles are both there; otherwise the
+    // flat review image, which is what this page showed before zoom existed.
+    if (window.OpenSeadragon && p.dzi) {
+      const wrap = deepZoom(p, i === 0);
+      if (i === 0) pending.push(wrap);
+      fig.appendChild(wrap);
+    } else {
+      fig.appendChild(flatImage(p, fig, box));
+    }
     fig.appendChild(cap);
     box.appendChild(fig);
+  });
+
+  // Everything is in the document now, so the containers have a real size.
+  for (const wrap of pending) {
+    if (typeof wrap.openWhenReady === 'function') wrap.openWhenReady();
   }
+}
+
+/** The pre-zoom proof: a plain picture of the artwork. */
+function flatImage(p, fig, box) {
+  const img = document.createElement('img');
+  img.src = p.review;
+  img.alt = 'Proof ' + p.itemNo;
+  img.loading = 'lazy';
+  // A missing derivative must not leave a broken-image icon on a page whose
+  // whole job is showing artwork.
+  img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
+  return img;
+}
+
+/**
+ * How much of a print pixel you are actually seeing, where 1 means one image
+ * pixel per physical screen pixel -- Photoshop's 100%.
+ *
+ * Derived from measurements rather than from the viewer's own zoom semantics:
+ * the image spans the full viewport width at zoom 1, so its drawn CSS width is
+ * containerWidth x zoom, and a device pixel is 1/devicePixelRatio of a CSS
+ * pixel. On a retina screen the two differ by 2x, which is the whole reason
+ * "100%" has to be computed rather than assumed.
+ */
+function pixelRatio(viewer) {
+  const item = viewer.world.getItemAt(0);
+  if (!item) return 0;
+  const cssWide = viewer.container.clientWidth * viewer.viewport.getZoom(true);
+  return (cssWide * (window.devicePixelRatio || 1)) / item.source.dimensions.x;
+}
+
+/** The zoom that puts one image pixel on one screen pixel. */
+function oneToOneZoom(viewer) {
+  const item = viewer.world.getItemAt(0);
+  const dpr = window.devicePixelRatio || 1;
+  return item.source.dimensions.x / (dpr * viewer.container.clientWidth);
+}
+
+function deepZoom(p, openNow) {
+  const wrap = document.createElement('div');
+
+  const stage = document.createElement('div');
+  stage.className = 'viewer';
+  wrap.appendChild(stage);
+
+  const bar = document.createElement('div');
+  bar.className = 'zoombar';
+  wrap.appendChild(bar);
+  bar.hidden = true;
+
+  let viewer = null;
+
+  function start() {
+    if (viewer) return;
+    stage.innerHTML = '';
+    const host = document.createElement('div');
+    host.className = 'osd';
+    stage.appendChild(host);
+
+    viewer = OpenSeadragon({
+      element: host,
+      tileSources: p.dzi,
+      prefixUrl: '',        // no button sprites: this page draws its own controls
+      showNavigationControl: false,
+      gestureSettingsMouse: { clickToZoom: false, scrollToZoom: true },
+      // Past 1:1 the customer is inspecting real pixels, so show them as they
+      // are. Smoothing here would make a low-resolution upload look better on
+      // screen than it will on vinyl, which is the one lie this page must not
+      // tell.
+      imageSmoothingEnabled: false,
+      // The default cap stops short of 1:1 on a retina screen, which is the
+      // exact zoom this feature exists to reach.
+      maxZoomPixelRatio: 8,
+      visibilityRatio: 1,
+      constrainDuringPan: true,
+    });
+
+    viewer.addHandler('open', () => { bar.hidden = false; readout(); });
+    // `zoom` fires when the spring is aimed at a new value, not when it gets
+    // there, and readout() asks for the CURRENT zoom -- so on its own it always
+    // printed the previous number. Clicking 100% left "13%" on screen while the
+    // picture behind it really was at 1:1, which is the one number on this page
+    // a customer is meant to trust. `animation` tracks the spring and
+    // `animation-finish` lands the final value.
+    viewer.addHandler('zoom', readout);
+    viewer.addHandler('animation', readout);
+    viewer.addHandler('animation-finish', readout);
+    viewer.addHandler('resize', readout);
+    viewer.addHandler('open-failed', () => {
+      // Tiles missing or unreadable: fall back rather than show an empty box.
+      viewer.destroy();
+      viewer = null;
+      bar.hidden = true;
+      stage.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = p.review;
+      img.alt = 'Proof ' + p.itemNo;
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+      stage.appendChild(img);
+    });
+  }
+
+  const pct = document.createElement('span');
+  pct.className = 'pct';
+
+  function readout() {
+    if (!viewer) return;
+    const r = pixelRatio(viewer);
+    if (!r) return;
+    pct.innerHTML = 'Actual print size: <b>' + Math.round(r * 100) + '%</b>';
+  }
+
+  function btn(label, title, onClick, primary) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    if (primary) b.className = 'primary';
+    b.addEventListener('click', onClick);
+    bar.appendChild(b);
+    return b;
+  }
+
+  function zoomBy(factor) {
+    if (!viewer) return;
+    viewer.viewport.zoomBy(factor);
+    viewer.viewport.applyConstraints();
+  }
+
+  btn('\u2212', 'Zoom out', () => zoomBy(0.7));
+  btn('+', 'Zoom in', () => zoomBy(1.4));
+  btn('Fit', 'Fit the whole proof on screen', () => viewer && viewer.viewport.goHome());
+  btn('100%', 'One print pixel per screen pixel, the same as Photoshop at 100%',
+      () => {
+        if (!viewer) return;
+        viewer.viewport.zoomTo(oneToOneZoom(viewer));
+        viewer.viewport.applyConstraints();
+      }, true);
+  bar.appendChild(pct);
+
+  // start() must not run until `wrap` is in the document. OpenSeadragon sizes
+  // its viewport from the container the moment it is constructed, and this
+  // element is still detached here -- deepZoom() returns it and the caller
+  // appends it afterwards. Initialising on a 0x0 container gave a viewer that
+  // loaded the descriptor, knew the image size, reported a zoom percentage, and
+  // drew nothing at all.
+  wrap.openWhenReady = start;
+
+  if (!openNow) {
+    // Several items on one order would mean several tile pyramids loading at
+    // once, which is slow on a phone. Only the first opens by itself.
+    const thumb = document.createElement('img');
+    thumb.src = p.review;
+    thumb.alt = 'Proof ' + p.itemNo;
+    thumb.loading = 'lazy';
+    thumb.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+    stage.appendChild(thumb);
+
+    const opener = document.createElement('button');
+    opener.type = 'button';
+    opener.className = 'opener';
+    opener.innerHTML = '<span>Tap to zoom and check detail</span>';
+    opener.addEventListener('click', start);
+    stage.appendChild(opener);
+  }
+
+  return wrap;
 }
 
 function show(data) {
