@@ -161,6 +161,8 @@ function renderProofs(proofs) {
   if (tipZoom) tipZoom.hidden = !zoomable;
   if (tipFlat) tipFlat.hidden = zoomable;
 
+  const pending = [];
+
   proofs.forEach((p, i) => {
     const fig = document.createElement('div');
     fig.className = 'proof card';
@@ -172,13 +174,20 @@ function renderProofs(proofs) {
     // Deep zoom when the library and the tiles are both there; otherwise the
     // flat review image, which is what this page showed before zoom existed.
     if (window.OpenSeadragon && p.dzi) {
-      fig.appendChild(deepZoom(p, i === 0));
+      const wrap = deepZoom(p, i === 0);
+      if (i === 0) pending.push(wrap);
+      fig.appendChild(wrap);
     } else {
       fig.appendChild(flatImage(p, fig, box));
     }
     fig.appendChild(cap);
     box.appendChild(fig);
   });
+
+  // Everything is in the document now, so the containers have a real size.
+  for (const wrap of pending) {
+    if (typeof wrap.openWhenReady === 'function') wrap.openWhenReady();
+  }
 }
 
 /** The pre-zoom proof: a plain picture of the artwork. */
@@ -311,9 +320,15 @@ function deepZoom(p, openNow) {
       }, true);
   bar.appendChild(pct);
 
-  if (openNow) {
-    start();
-  } else {
+  // start() must not run until `wrap` is in the document. OpenSeadragon sizes
+  // its viewport from the container the moment it is constructed, and this
+  // element is still detached here -- deepZoom() returns it and the caller
+  // appends it afterwards. Initialising on a 0x0 container gave a viewer that
+  // loaded the descriptor, knew the image size, reported a zoom percentage, and
+  // drew nothing at all.
+  wrap.openWhenReady = start;
+
+  if (!openNow) {
     // Several items on one order would mean several tile pyramids loading at
     // once, which is slow on a phone. Only the first opens by itself.
     const thumb = document.createElement('img');
