@@ -16,6 +16,7 @@ import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { writeGateStatus } from '../../shared/write-gates.mjs';
+import { MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
 import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
@@ -35,18 +36,13 @@ const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 // OrderDesk folder id -> dashboard status, for the display-only mirror.
 // From Linh's constants (orderStatusLib / folderLib) and confirmed against live
 // order counts. "Completed" is intentionally excluded (huge history, not useful).
-const MIRROR_FOLDERS = {
-  665685: 'in_queue',
-  651474: 'proofing',
-  661019: 'needs_review', // Missing/Corrupted File — orders that didn't process
-  653109: 'needs_review', // Pending Review
-  31358: 'awaiting_admin',
-  31301: 'pickup_ga',
-  52437: 'pickup_nj',
-  52438: 'pickup_tx',
-  674908: 'pickup_nv',    // "NV Awaiting Pickup" (correct NV folder id from /store)
-  82463: 'pickup_ca',
-};
+// Comes from the folder registry (shared/orderdesk-folders.mjs), which is also
+// where the intake gate's write targets and the customer-facing cutoff live.
+// It now covers the production and Awaiting Shipment folders as well, so the
+// board shows those stages — at the cost of twice as many OrderDesk reads per
+// mirror run (20 folders, not 10). The 429 handling in orderdesk-fetch absorbs
+// that; if it ever does not, this is the line to trim.
+const MIRROR_FOLDERS = MIRROR_STATUS_BY_ID;
 const MAX_PER_FOLDER = 400; // safety cap per folder per sync
 
 // Some real orders (non-banner products) have no WIDTH/HEIGHT -> NaN fields,

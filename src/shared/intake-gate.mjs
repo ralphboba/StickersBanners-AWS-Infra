@@ -19,19 +19,17 @@
 // This module only decides. Acting on the decision (the OrderDesk folder move)
 // lives in orderdesk-write.mjs and is disabled by default — see that file.
 
-/** Legacy folderLib (src/utils/helpers/updateOrder.mjs). */
-export const ORDERDESK_FOLDERS = {
-  processing: '650227',
-  proofing: '651474',
-  manual: '652268',
-  review: '653109',
-  sales: '657836',
-  GA: '73068',
-  NJ: '73069',
-  TX: '73070',
-  NV: '674352',
-  CA: '42928',
-};
+/**
+ * Legacy folderLib (src/utils/helpers/updateOrder.mjs), now derived from the
+ * folder registry so the ids exist in exactly one place. Same keys, same values
+ * as the hand-written map it replaces — re-exported here because this is where
+ * the gate's callers have always imported it from.
+ */
+// Imported as well as re-exported: `export ... from` alone would not bind the
+// name inside this module, and intakeGate() reads the map itself.
+import { ORDERDESK_FOLDERS } from './orderdesk-folders.mjs';
+
+export { ORDERDESK_FOLDERS };
 
 /** Legacy tagLib (same file): colour name -> OrderDesk tag value. */
 export const ORDERDESK_TAGS = {
