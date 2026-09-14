@@ -15,13 +15,12 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
+import { writeGateStatus } from '../../shared/write-gates.mjs';
 import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
 } from '../../shared/job-rows.mjs';
-import {
-  updateOrderDeskDetails, applyExpressUpgrade, orderDeskWritesEnabled,
-} from '../../shared/orderdesk-write.mjs';
+import { updateOrderDeskDetails, applyExpressUpgrade } from '../../shared/orderdesk-write.mjs';
 
 const sqs = new SQSClient({});
 // Real orders can carry undefined fields (missing totals/uploads); drop them.
@@ -371,7 +370,8 @@ export async function handler(event = {}) {
 
   const summary = {
     polled: orders.length, enqueued, skipped, held, holdReasons,
-    orderDeskWrites: orderDeskWritesEnabled() ? 'ENABLED' : 'disabled',
+    // All three switches, so a log line says exactly what was armed at the time.
+    ...writeGateStatus(),
   };
   console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
   return summary;

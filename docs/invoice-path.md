@@ -104,10 +104,47 @@ Kai가 정한 컷오프가 여기서 값을 한다.
 
 3번이 필수다. 결제와 창고의 폴더 이동이 경합할 수 있다.
 
-## 열린 결정
+## ★ 확정 — A(Draft Order), 그리고 결제가 먼저다 (Kai, 2026-09-14)
+
+> "결제후 업데이트가 되는 식으로 바껴야지"
+
+B(Order Edit)는 **편집 → 인보이스 → 결제** 순서를 강제한다. 없는 라인을 청구할 수 없기
+때문이다. 그래서 고객이 결제를 안 하면 원 주문이 `$312.07 / partially_paid / 1-Day`인 채로
+남는다. 버려지는 건수가 결제되는 건수보다 많을 테니 이게 상시 발생한다.
+
+**A는 결제 전까지 원 주문을 건드리지 않는다.** 초안이 버려지면 그만이다.
+
+### 그래서 순서가 이렇게 된다
+
+```
+1. 고객이 업그레이드 선택
+2. draftOrderCreate — "Shipping Upgrade: 2-Day → 1-Day FedEx" $33.96
+3. draftOrderInvoiceSend  →  D### 인보이스 메일         [SHOPIFY_WRITES]
+   ── 여기까지 원 주문 S59131은 무손상 ──
+4. 고객 결제
+5. orders/paid 웹훅
+6. 오더데스크 폴더 재확인 — 이미 Awaiting Shipment면 중단·환불
+7. 오더데스크 재조회 → shipping_method 병합 → PUT      [ORDERDESK_UPGRADE_WRITES]
+8. 노트: "Shipping upgraded 2-Day → 1-Day by customer (D###)"
+```
+
+**모든 상태 변경이 4번 뒤에 있다.** 3번까지는 언제 중단돼도 흔적이 인보이스 하나뿐이다.
+
+## 스위치 세 개 (구현 완료)
+
+`src/shared/write-gates.mjs`. 셋 다 기본 OFF, `"enabled"` 정확히 일치해야 무장,
+`DEMO-*`/`ZZ-*`는 무조건 차단. 서로 완전히 독립이라 업그레이드만 켜도 인테이크는 안 깨어난다.
+
+| 스위치 | 무장하는 것 | 위 순서의 |
+| --- | --- | --- |
+| `ORDERDESK_WRITES` | 인테이크 게이트 폴더·태그 이동 (기존) | — (계속 OFF) |
+| `ORDERDESK_UPGRADE_WRITES` | 업그레이드 `shipping_method` PUT | 7번 |
+| `SHOPIFY_WRITES` | 인보이스 발행 / 주문 편집 — **실제 돈** | 3번 |
+
+## 남은 확인
 
 | # | 내용 | 필요한 것 |
 | --- | --- | --- |
-| 1 | A(Draft Order) vs **B(Order Edit)** | 오더데스크가 초안 유래 주문을 내려받는지 확인 |
-| 2 | `orderEditCommit`이 보내는 메일 | 테스트 주문 1건 |
-| 3 | **`ORDERDESK_WRITES` 무장** | 이 기능은 쓰기가 필수다. Kai의 명시적 go-live 승인 필요 |
+| 1 | 오더데스크가 D### 초안 유래 주문을 내려받나 | 테스트 초안 1건 결제. 내려받으면 전용 폴더로 즉시 이동시킨다 |
+| 2 | `applyExpressUpgrade`의 lost update | PUT 직전 재조회·병합으로 고친다 |
+| 3 | 스위치 무장 | Kai의 명시적 go-live 승인 |

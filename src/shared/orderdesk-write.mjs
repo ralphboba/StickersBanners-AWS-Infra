@@ -16,24 +16,18 @@
 // Turning it on is a go-live action and needs Kai's explicit approval (see
 // CLAUDE.md "Safety"). Everything else in the pipeline works the same either
 // way, so the flow is fully observable with writes off.
+//
+// Both writes here are the LEGACY intake behaviour, so both stay on the
+// ORDERDESK_WRITES switch. The customer-driven shipping upgrade is a different
+// feature on its own switch (ORDERDESK_UPGRADE_WRITES) — see write-gates.mjs.
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
 import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
+import { isSyntheticOrder, orderDeskWritesEnabled } from './write-gates.mjs';
 
-/** Synthetic orders never touch OrderDesk, whatever the flag says. */
-function isSyntheticOrder(name) {
-  return /^(DEMO-|ZZ-)/i.test(String(name ?? ''));
-}
-
-/**
- * Is the real OrderDesk write switched on? Defaults to OFF.
- * Deliberately an exact match on "enabled" so a stray truthy value (e.g. "0",
- * "false", "no") cannot arm it by accident.
- */
-export function orderDeskWritesEnabled() {
-  return String(process.env.ORDERDESK_WRITES ?? '').trim().toLowerCase() === 'enabled';
-}
+// Re-exported so existing importers (poller, tests) keep their import path.
+export { orderDeskWritesEnabled };
 
 /**
  * Legacy updateOrderdeskDetails: set the order's tag and folder, leaving every
