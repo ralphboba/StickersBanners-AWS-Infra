@@ -9,28 +9,34 @@ import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
   test('3-Day buys 2-Day, 2-Day buys 1-Day, 1-Day buys nothing', () => {
-    assert.deepEqual(nextService('3-Day Shipping'), { from: '3-day Shipping', to: '2-day Shipping', top: false });
-    assert.deepEqual(nextService('2-Day Shipping'), { from: '2-day Shipping', to: '1-day Shipping', top: false });
-    assert.deepEqual(nextService('1-Day Shipping'), { from: '1-day Shipping', to: null, top: true });
+    assert.deepEqual(nextService('3-Day Shipping'), { from: 'FedEx 3-Day', to: 'FedEx 2-Day', top: false });
+    assert.deepEqual(nextService('2-Day Shipping'), { from: 'FedEx 2-Day', to: 'FedEx 1-Day', top: false });
+    assert.deepEqual(nextService('1-Day Shipping'), { from: 'FedEx 1-Day', to: null, top: true });
   });
 
   test('the spellings that actually appear on orders all match', () => {
     for (const m of ['2-day', '2 Day', '2DAY', '2-Day Shipping', 'FedEx 2-day']) {
-      assert.equal(nextService(m)?.to, '1-day Shipping', `"${m}" should be a 2-day order`);
+      assert.equal(nextService(m)?.to, 'FedEx 1-Day', `"${m}" should be a 2-day order`);
     }
     for (const m of ['1-day', 'Overnight', 'FedEx Overnight', '1 Day']) {
       assert.equal(nextService(m)?.top, true, `"${m}" should already be fastest`);
     }
   });
 
+  test('Ground is the bottom rung, not off the ladder', () => {
+    assert.deepEqual(nextService('FedEx Ground'), { from: 'FedEx Ground', to: 'FedEx 3-Day', top: false });
+    assert.equal(nextService('Ground')?.to, 'FedEx 3-Day');
+  });
+
   test('anything off the ladder gets no offer at all', () => {
-    for (const m of ['Ground', 'FedEx Ground', 'Local Pickup', 'Saturday Overnight', '', null, undefined]) {
+    for (const m of ['Local Pickup', 'Saturday Overnight', 'Sat Overnight', '', null, undefined]) {
       assert.equal(nextService(m), null, `"${String(m)}" must not be upgradable`);
     }
   });
 
-  test('two notches are never offered — 3-Day cannot reach 1-Day', () => {
-    assert.equal(nextService('3-day').to, '2-day Shipping');
+  test('two notches are never offered', () => {
+    assert.equal(nextService('3-day').to, 'FedEx 2-Day');
+    assert.equal(nextService('ground').to, 'FedEx 3-Day', 'Ground must not jump to 2-Day');
   });
 });
 
@@ -64,7 +70,7 @@ describe('canUpgrade', () => {
   test('in production on 2-Day: yes, and the offer is 1-Day', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: '2-Day Shipping' });
     assert.equal(s.canUpgrade, true);
-    assert.equal(s.upgradeTo, '1-day Shipping');
+    assert.equal(s.upgradeTo, 'FedEx 1-Day');
     assert.equal(s.blockedBy, null);
   });
 
@@ -81,8 +87,14 @@ describe('canUpgrade', () => {
     assert.equal(s.blockedBy, 'already_fastest');
   });
 
-  test('Ground in production: no, because Ground is off the ladder', () => {
-    const s = orderStage({ folderId: '73068', shippingMethod: 'Ground' });
+  test('Ground in production: yes, one rung to 3-Day', () => {
+    const s = orderStage({ folderId: '73068', shippingMethod: 'FedEx Ground' });
+    assert.equal(s.canUpgrade, true);
+    assert.equal(s.upgradeTo, 'FedEx 3-Day');
+  });
+
+  test('Saturday Overnight in production: no, it is off the ladder', () => {
+    const s = orderStage({ folderId: '73068', shippingMethod: 'Saturday Overnight' });
     assert.equal(s.canUpgrade, false);
     assert.equal(s.blockedBy, 'service_not_upgradable');
   });
@@ -100,7 +112,7 @@ describe('canUpgrade', () => {
 
   test('a locked folder never offers an upgrade, on any service', () => {
     for (const f of FOLDERS.filter((x) => !x.modifiable)) {
-      for (const m of ['3-day', '2-day', '1-day', 'Ground']) {
+      for (const m of ['3-day', '2-day', '1-day', 'FedEx Ground']) {
         assert.equal(orderStage({ folderId: f.id, shippingMethod: m }).canUpgrade, false,
           `${f.name} + ${m} must be refused`);
       }
@@ -112,7 +124,7 @@ describe('the facility never changes on an upgrade', () => {
   test('an order upgraded in GA is still reported as GA', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: '2-Day Shipping' });
     assert.equal(s.facility, 'GA', 'upgrading must not re-route to NV');
-    assert.equal(s.upgradeTo, '1-day Shipping');
+    assert.equal(s.upgradeTo, 'FedEx 1-Day');
   });
 
   test('each facility keeps its own orders through the ladder', () => {
@@ -126,13 +138,14 @@ describe('the facility never changes on an upgrade', () => {
 describe('never collide with the legacy bot', () => {
   test('the strings written back match what routing.mjs writes', () => {
     // Same service, same spelling, whichever program set it.
-    assert.equal(nextService('3-day').to, '2-day Shipping',
-      "must match routing.mjs's expressUpgrade target exactly");
+    // The observed spelling on a real order (S60338) is 'FedEx 1-Day', so the
+    // ladder follows that shape rather than routing.mjs's '2-day Shipping'.
+    assert.equal(nextService('1-day').from, 'FedEx 1-Day');
   });
 
   test('an unrouted 3-day order is NOT sold an upgrade the legacy bot may give free', () => {
     for (const id of ['665685', '653109', '661019', '73066', '73067', '31358']) {
-      const s = orderStage({ folderId: id, shippingMethod: '3-day Shipping' });
+      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Day' });
       assert.equal(s.canUpgrade, false, `folder ${id} must not sell a 3-day upgrade`);
       assert.equal(s.blockedBy, 'awaiting_routing');
     }
@@ -140,9 +153,9 @@ describe('never collide with the legacy bot', () => {
 
   test('once routed, a 3-day order is ours to sell — the bot already decided', () => {
     for (const id of ['73068', '73069', '73070', '674352', '42928']) {
-      const s = orderStage({ folderId: id, shippingMethod: '3-day Shipping' });
+      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Day' });
       assert.equal(s.canUpgrade, true, `folder ${id} should sell the upgrade`);
-      assert.equal(s.upgradeTo, '2-day Shipping');
+      assert.equal(s.upgradeTo, 'FedEx 2-Day');
     }
   });
 

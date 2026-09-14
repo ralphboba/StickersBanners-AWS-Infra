@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Your order — StickersBanners</title>
+<style>
+  :root {
+    --paper:#fff; --paper-2:#f7f7f7; --line:#e5e5e5;
+    --ink:#333; --ink-2:#666; --ink-3:#999;
+    --accent:#146B4F;        /* shop.email_accent_color */
+    --money:#1F6B3E; --warn-bg:#FDF6E9; --warn-line:#E0C08A; --warn-ink:#7A4E10;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper-2); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.5; }
+  .wrap { max-width:520px; margin:0 auto; padding:0 16px 64px; }
+  header { padding:22px 0 16px; }
+  .brand { font-weight:800; letter-spacing:-.02em; font-size:17px; }
+  .brand span { color:var(--accent); }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:20px 18px; margin-top:14px; }
+  .eyebrow { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); }
+  h1 { font-size:26px; margin:2px 0 0; letter-spacing:-.02em; }
+
+  /* tracker */
+  ol.steps { display:flex; list-style:none; margin:20px 0 4px; padding:0; }
+  ol.steps li { flex:1; text-align:center; position:relative; font-size:11px; color:var(--ink-3); line-height:1.25; }
+  ol.steps li::before { content:""; display:block; width:11px; height:11px; border-radius:50%; background:var(--line); margin:0 auto 8px; position:relative; z-index:1; }
+  ol.steps li::after { content:""; position:absolute; top:5px; left:50%; width:100%; height:1px; background:var(--line); }
+  ol.steps li:last-child::after { display:none; }
+  ol.steps li.done::before, ol.steps li.done::after { background:var(--money); }
+  ol.steps li.now::before { background:var(--ink); box-shadow:0 0 0 4px rgba(51,51,51,.15); }
+  ol.steps li.now { color:var(--ink); font-weight:600; }
+
+  .rowline { display:flex; justify-content:space-between; gap:12px; padding:6px 0; }
+  .rowline .k { color:var(--ink-2); font-size:14px; }
+  .rowline .v { font-weight:600; font-size:14px; }
+
+  fieldset { border:0; margin:0; padding:0; }
+  legend { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); padding:0; margin-bottom:10px; }
+  .opt { display:flex; align-items:flex-start; gap:11px; border:1px solid var(--line); border-radius:8px; padding:13px; margin-bottom:9px; cursor:pointer; }
+  .opt:has(input:checked) { border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); }
+  .opt input { margin:3px 0 0; accent-color:var(--accent); flex:none; }
+  .opt .b { flex:1; min-width:0; }
+  .opt .nm { font-weight:600; font-size:15px; display:block; }
+  .opt .sub { font-size:13px; color:var(--ink-3); display:block; }
+  .opt .pr { font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .opt:focus-within { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .total { display:flex; justify-content:space-between; align-items:baseline; border-top:2px solid var(--ink); margin-top:18px; padding-top:14px; }
+  .total .v { font-size:22px; font-weight:700; color:var(--money); font-variant-numeric:tabular-nums; }
+  button.cta { display:block; width:100%; background:var(--accent); color:#fff; border:0; border-radius:8px; padding:15px; font:inherit; font-weight:600; font-size:16px; cursor:pointer; margin-top:12px; }
+  button.cta[disabled] { opacity:.4; cursor:not-allowed; }
+  .fine { font-size:12.5px; color:var(--ink-3); margin:12px 0 0; }
+
+  .notice { border:1px solid var(--warn-line); background:var(--warn-bg); border-radius:8px; padding:14px; }
+  .notice b { display:block; color:var(--warn-ink); margin-bottom:4px; }
+  .notice p { margin:0; font-size:14px; color:var(--warn-ink); }
+  .ghost { display:block; text-align:center; border:1px solid var(--line); border-radius:8px; padding:13px; text-decoration:none; color:var(--ink-2); font-weight:600; font-size:14px; margin-top:14px; }
+  .muted { color:var(--ink-3); font-size:14px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header><div class="brand">Stickers<span>Banners</span></div></header>
+
+  <div id="loading" class="card"><p class="muted" style="margin:0">Loading your order…</p></div>
+
+  <div id="failed" class="card" hidden>
+    <b>We couldn’t open this order</b>
+    <p class="muted">The link may have expired or been copied incompletely.
+      Please use the button in your order confirmation email, or
+      <a href="mailto:sales@stickersbanners.com">contact us</a>.</p>
+  </div>
+
+  <main id="view" hidden>
+    <div class="card">
+      <div class="eyebrow">Order</div>
+      <h1 id="orderName"></h1>
+      <ol class="steps" id="steps"></ol>
+    </div>
+
+    <div class="card">
+      <div class="rowline">
+        <span class="k">Current shipping</span>
+        <span class="v" id="current"></span>
+      </div>
+
+      <div id="locked" hidden style="margin-top:14px">
+        <div class="notice">
+          <b id="lockedTitle">This order can no longer be changed</b>
+          <p id="lockedWhy"></p>
+        </div>
+        <a class="ghost" href="mailto:sales@stickersbanners.com">Contact us about this order</a>
+      </div>
+
+      <form id="upgrade" hidden style="margin-top:18px">
+        <fieldset>
+          <legend>Faster shipping</legend>
+          <label class="opt">
+            <input type="radio" name="svc" value="0" checked>
+            <span class="b">
+              <span class="nm" id="keepName"></span>
+              <span class="sub">Keep what you have — already paid</span>
+            </span>
+            <span class="pr">—</span>
+          </label>
+          <label class="opt">
+            <input type="radio" name="svc" id="pickUpgrade">
+            <span class="b">
+              <span class="nm" id="upName"></span>
+              <span class="sub" id="upSub"></span>
+            </span>
+            <span class="pr" id="upPrice"></span>
+          </label>
+        </fieldset>
+
+        <div class="total">
+          <span>Amount to pay</span>
+          <span class="v" id="total">$0.00</span>
+        </div>
+        <button class="cta" id="send" type="submit" disabled>Select an upgrade above</button>
+        <p class="fine">Nothing changes until you pay the invoice. If you close this page, your order
+          ships on its current service.</p>
+      </form>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var money = function (n) { return '$' + Number(n).toFixed(2); };
+
+  // Everything rendered here comes from the API as text. Assigning through
+  // textContent (never innerHTML) means an order name or service string cannot
+  // become markup, whatever it contains.
+  var set = function (id, text) { $(id).textContent = text; };
+
+  var params = new URLSearchParams(location.search);
+  var o = params.get('o');
+  var s = params.get('s');
+
+  function fail() { $('loading').hidden = true; $('failed').hidden = false; }
+
+  if (!o || !s) { fail(); return; }
+
+  fetch('/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s), {
+    headers: { accept: 'application/json' },
+  })
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then(render)
+    .catch(fail);
+
+  function render(data) {
+    set('orderName', data.orderName || '');
+
+    var steps = $('steps');
+    (data.stage.steps || []).forEach(function (label, i) {
+      var li = document.createElement('li');
+      li.textContent = label;
+      if (i < data.stage.step) li.className = 'done';
+      else if (i === data.stage.step) li.className = 'now';
+      steps.appendChild(li);
+    });
+
+    var sh = data.shipping || {};
+    set('current', sh.current || '—');
+
+    if (sh.canUpgrade && sh.upgrade) {
+      set('keepName', sh.current);
+      set('upName', sh.upgrade.to);
+      set('upSub', 'Arrives sooner');
+      set('upPrice', '+' + money(sh.upgrade.amount));
+      $('pickUpgrade').value = String(sh.upgrade.amount);
+      $('upgrade').hidden = false;
+
+      var radios = document.querySelectorAll('input[name="svc"]');
+      var update = function () {
+        var picked = document.querySelector('input[name="svc"]:checked');
+        var v = picked ? parseFloat(picked.value) : 0;
+        set('total', money(v));
+        $('send').disabled = !(v > 0);
+        set('send', v > 0 ? 'Send me the invoice — ' + money(v) : 'Select an upgrade above');
+      };
+      Array.prototype.forEach.call(radios, function (el) { el.addEventListener('change', update); });
+      update();
+
+      $('upgrade').addEventListener('submit', function (e) {
+        e.preventDefault();
+        // Requesting the invoice is a write and is not built yet — the switches
+        // that would arm it are off. Deliberately inert rather than pretending.
+        $('send').disabled = true;
+        set('send', 'Not available yet');
+      });
+    } else {
+      set('lockedWhy', sh.reason || '');
+      $('locked').hidden = false;
+    }
+
+    $('loading').hidden = true;
+    $('view').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>

@@ -178,7 +178,7 @@ export async function handler(event = {}) {
     // 1. current real orders across folders -> desired status. Orders the system
     //    can't fully handle are pulled aside into "needs_review": an unknown SKU
     //    (product not set up) or an intake order we can't route to a facility.
-    const current = new Map(); // orderName -> { job, status }
+    const current = new Map(); // orderName -> { job, status, folderId }
     for (const [fid, folderStatus] of Object.entries(MIRROR_FOLDERS)) {
       const page = await fetchFolder(storeId, apiKey, fid, MAX_PER_FOLDER);
       for (const order of page) {
@@ -204,7 +204,7 @@ export async function handler(event = {}) {
         // GA/NJ/TX routing rules are incomplete, so every intake order is
         // unrouted; flagging all of them would make the folder meaningless.)
         const status = (job.hasUnknownSku || gate) ? 'needs_review' : folderStatus;
-        current.set(job.orderName, { job, status });
+        current.set(job.orderName, { job, status, folderId: fid });
       }
     }
 
@@ -226,14 +226,17 @@ export async function handler(event = {}) {
 
     // 3. write only new/changed rows
     let wrote = 0;
-    for (const [name, { job, status }] of current) {
+    for (const [name, { job, status, folderId }] of current) {
       if (existing.get(name) === status) continue; // unchanged -> skip (no write)
       await ddb.send(new PutCommand({
         TableName: JOBS_TABLE,
         Item: {
           PK: `ORDER#${name}`, SK: 'META',
           GSI1PK: `STATUS#${status}`, GSI1SK: job.createdAt,
-          status, mirror: true, ...job,
+          // folderId, not just the folder name: the customer page decides what
+          // it may offer from the folder id (order-stage.mjs), and names are
+          // edited in OrderDesk far more often than ids are.
+          status, mirror: true, folderId: String(folderId), ...job,
         },
         // Only create/refresh a mirror row; never touch a processed order.
         ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',

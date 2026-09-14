@@ -45,20 +45,38 @@ export const STEPS = ['Order received', 'Proof approved', 'In production', 'Read
 // Checked BEFORE the ladder. "Saturday Overnight" contains "overnight" and
 // would otherwise be read as a 1-Day order — wrong service, wrong price, and
 // the page would tell the customer they are already on 1-Day when they are not.
-const OFF_LADDER = ['saturday', 'sat overnight', 'ground', 'pickup', 'pick-up', 'pick up'];
+const OFF_LADDER = ['saturday', 'sat overnight', 'pickup', 'pick-up', 'pick up'];
 
-// `to` is written verbatim into OrderDesk's shipping_method, so it must be the
-// string the legacy bot writes, not a prettier one. routing.mjs (ported from
-// Linh's changeExpress) writes '2-day Shipping' — lower-case d. Deviating would
-// give the same service two spellings in one store, and any OrderDesk rule or
-// ShipStation mapping that matches on the exact text would miss one of them.
+// ── the exact strings OrderDesk holds ──────────────────────────────────────
+// `to` is written verbatim into shipping_method, so it has to be the text the
+// store actually uses. Anything else gives one service two spellings, and an
+// OrderDesk rule or ShipStation mapping that matches on the text misses one.
 //
-// ⚠️ '1-day Shipping' is inferred from that pattern, not observed. Confirm the
-// exact text on a real 1-day order before arming ORDERDESK_UPGRADE_WRITES.
+//   'FedEx 1-Day'  OBSERVED on order S60338 (2026-09-14, NV) — trusted
+//   the rest      INFERRED from that pattern — confirm against a real order
+//                 of each kind before arming ORDERDESK_UPGRADE_WRITES
+//
+// ⚠️ routing.mjs's express upgrade writes '2-day Shipping' instead, which does
+// not match the observed shape. One of the two is wrong in the live store; see
+// docs/legacy-collision-audit.md C5.
+const SERVICE = {
+  ground: 'FedEx Ground',
+  d3: 'FedEx 3-Day',
+  d2: 'FedEx 2-Day',
+  d1: 'FedEx 1-Day',      // observed
+};
+
+// One rung at a time. Ground is the bottom of the ladder, not off it: it is
+// what most orders ship on, so it is where most upgrades start (Kai).
+//
+// Ground and 3-Day are NOT the same service. At a $150 subtotal the card
+// prices Ground at $15.70 and 3-Day at $86.73 — treating them as one tier
+// would misquote by $71.
 const LADDER = [
-  { match: ['3-day', '3 day', 'three day'], from: '3-day Shipping', to: '2-day Shipping' },
-  { match: ['2-day', '2 day', '2day', 'two day'], from: '2-day Shipping', to: '1-day Shipping' },
-  { match: ['1-day', '1 day', 'overnight', 'one day'], from: '1-day Shipping', to: null },
+  { match: ['ground'], from: SERVICE.ground, to: SERVICE.d3 },
+  { match: ['3-day', '3 day', 'three day'], from: SERVICE.d3, to: SERVICE.d2 },
+  { match: ['2-day', '2 day', '2day', 'two day'], from: SERVICE.d2, to: SERVICE.d1 },
+  { match: ['1-day', '1 day', 'overnight', 'one day'], from: SERVICE.d1, to: null },
 ];
 
 /**
@@ -108,7 +126,7 @@ export function orderStage({ folderId, shippingMethod } = {}) {
   // genuinely ours to sell. Time is not consulted — the rule holds whenever the
   // page is opened.
   const routed = Boolean(folder?.facility);
-  const legacyMayUpgradeFree = ladder?.from === '3-day Shipping' && !routed;
+  const legacyMayUpgradeFree = ladder?.from === SERVICE.d3 && !routed;
 
   // The reasons to refuse, in the order they are checked.
   let blockedBy = null;
