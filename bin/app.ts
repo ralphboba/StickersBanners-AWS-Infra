@@ -5,6 +5,7 @@ import { getConfig } from '../lib/config/environments';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
+import { ArtworkCdnStack } from '../lib/stacks/artwork-cdn-stack';
 import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
 import { DatabaseStack } from '../lib/stacks/database-stack';
@@ -56,6 +57,17 @@ const billingStack = new BillingStack(app, 'sb-billing', {
     'timothy@stickersbanners.com',
   monthlyLimitUsd: Number(app.node.tryGetContext('monthlyLimitUsd') ?? 5),
   description: 'StickersBanners AWS cost guardrail (account-level)',
+});
+
+// Account-level CDN for the customer artwork bucket. That bucket is NOT ours:
+// it was created by hand in eu-north-1 in Nov 2025 and is read by the legacy
+// system as well as this one, so this stack only puts CloudFront in front of it
+// and never owns, moves or locks it. See the stack doc for the measurements.
+const artworkCdnStack = new ArtworkCdnStack(app, 'sb-artwork-cdn', {
+  env,
+  bucketName: 'sticker-banner-large-file-uploads',
+  bucketRegion: 'eu-north-1',
+  description: 'StickersBanners customer artwork CDN (account-level)',
 });
 
 const networkStack = new NetworkStack(app, `${config.prefix}-network`, {
