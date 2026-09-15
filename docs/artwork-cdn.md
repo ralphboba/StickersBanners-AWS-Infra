@@ -107,6 +107,14 @@ npx cdk deploy sb-artwork-cdn --context env=dev
 ./scripts/artwork-cdn-grant.sh --apply    # additive OAC read grant
 ```
 
+Deployed 2026-09-15. Distribution `E2BZS17TMV8JA9`, domain
+**`dyahvbryasdy.cloudfront.net`**, origin
+`sticker-banner-large-file-uploads.s3.eu-north-1.amazonaws.com`, status
+Deployed. The grant was applied; the bucket policy now carries both
+`AllowPublicReadUploads` (untouched) and `AllowArtworkCloudFrontRead` (scoped by
+`AWS:SourceArn` to this one distribution). A direct S3 range request still
+returns 206, so no existing link changed behaviour.
+
 The origin is the **regional** domain `...s3.eu-north-1.amazonaws.com`. The bare
 `s3.amazonaws.com` form resolves through us-east-1 and redirects, and CloudFront
 does not follow origin redirects.
@@ -150,10 +158,11 @@ S3 but is blocked from CloudFront, and the numbers that matter are from Linh's
 network, not from inside AWS. The test is his:
 
 ```bash
-time curl -o /dev/null "https://sticker-banner-large-file-uploads.s3.eu-north-1.amazonaws.com/<key>"
-time curl -o /dev/null "https://<distribution>.cloudfront.net/<key>"
+./scripts/artwork-speed-test.sh
 ```
 
-Same object, same machine, back to back. If the second is not dramatically
+Same object, same machine, back to back — S3 direct, CloudFront cold, then
+CloudFront warm. It reads 32 MiB and discards it, so a 593 MB file does not have
+to come down in full. If the second is not dramatically
 faster, the diagnosis above is wrong and the next suspect is his local network
 rather than the path to Stockholm.
