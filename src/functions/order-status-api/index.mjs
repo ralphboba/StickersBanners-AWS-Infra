@@ -80,15 +80,28 @@ export async function handler(event = {}) {
   const currentMethod = row.shipping?.method ?? null;
   const stage = orderStage({ folderId: row.folderId, shippingMethod: currentMethod });
 
-  // A quote only when the stage allows one AND the rate card can price it.
+  // ── the quote ─────────────────────────────────────────────────────────
+  // The rate card gives the shipping difference. It does NOT give the tax:
+  // whether shipping is taxable, and at what rate, depends on the destination,
+  // and a figure we invented here would differ from the money Shopify actually
+  // takes. The customer must be shown the number they will be billed, so the
+  // tax comes from Shopify (draftOrderCalculate, which prices a draft order
+  // without creating one) and `total` is only final once it has answered.
+  //
+  // Until that call is wired, `final` is false and the page will not offer a
+  // price. Showing "+$33.96" and billing $36.68 is the phone call this feature
+  // exists to prevent.
   let upgrade = null;
   if (stage.canUpgrade) {
-    const subtotal = row.totals?.subtotal;
-    const quote = quoteUpgrade(subtotal, stage.currentService, stage.upgradeTo);
+    const quote = quoteUpgrade(row.totals?.subtotal, stage.currentService, stage.upgradeTo);
     if (quote) {
+      const tax = null;   // ← Shopify draftOrderCalculate
       upgrade = {
         to: quote.to,
-        amount: quote.amount,
+        shipping: quote.amount,
+        tax,
+        total: tax === null ? null : Math.round((quote.amount + tax) * 100) / 100,
+        final: tax !== null,
         currentPrice: quote.fromPrice,
         newPrice: quote.toPrice,
       };

@@ -22,14 +22,14 @@ function fakeOrderDesk(order, { getStatus = 200, putStatus = 200 } = {}) {
 }
 
 const ORDER = {
-  id: '555', shipping_method: '2-day Shipping',
-  order_total: '278.11', shipping_total: '128.11',
+  id: '555', shipping_method: 'FedEx 2-Days',
+  order_total: '278.11', shipping_total: '128.11', tax_total: '0.00',
   order_notes: [{ username: 'staff', content: 'printed' }],
   customer: { name: 'keep me' },
 };
 
 const ARGS = {
-  orderDeskId: '555', orderName: 'S59131', toMethod: '1-day Shipping',
+  orderDeskId: '555', orderName: 'S59131', toMethod: 'FedEx 1-Day',
   amount: 33.96, invoiceRef: 'D169', storeId: 's', apiKey: 'k',
 };
 
@@ -132,7 +132,7 @@ describe('what it writes', () => {
 
     assert.equal(r.applied, true);
     const body = od.put().body;
-    assert.equal(body.shipping_method, '1-day Shipping');
+    assert.equal(body.shipping_method, 'FedEx 1-Day');
     assert.equal(body.order_total, '312.07');     // 278.11 + 33.96
     assert.equal(body.shipping_total, '162.07');  // 128.11 + 33.96
   });
@@ -160,7 +160,7 @@ describe('what it writes', () => {
     const notes = od.put().body.order_notes;
     assert.equal(notes.length, 2, 'the existing note must survive');
     assert.equal(notes[0].content, 'printed');
-    assert.match(notes[1].content, /2-day Shipping -> 1-day Shipping/);
+    assert.match(notes[1].content, /FedEx 2-Days -> FedEx 1-Day/);
     assert.match(notes[1].content, /\$33\.96/);
     assert.match(notes[1].content, /D169/);
   });
@@ -185,5 +185,65 @@ describe('the lost-update window', () => {
     assert.equal(od.put().body.customer.name, 'corrected by staff',
       "the staff edit must survive — this is the bug in the legacy full-object PUT");
     assert.equal(od.put().body.folder_id, '73069');
+  });
+});
+
+describe('tax goes to the tax field, not the shipping field', () => {
+  test('each of the three numbers lands where it belongs', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    const r = await applyShippingUpgrade({ ...ARGS, tax: 2.72, fetchImpl: od.fetchImpl });
+
+    const b = od.put().body;
+    assert.equal(b.shipping_total, '162.07', 'shipping gets the shipping charge only');
+    assert.equal(b.tax_total, '2.72', 'tax gets the tax only');
+    assert.equal(b.order_total, '314.79', 'the grand total gets both: 278.11 + 33.96 + 2.72');
+    assert.equal(r.paid, '36.68');
+  });
+
+  test('the totals still add up after the write', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    await applyShippingUpgrade({ ...ARGS, tax: 2.72, fetchImpl: od.fetchImpl });
+    const b = od.put().body;
+    const products = Number(ORDER.order_total) - Number(ORDER.shipping_total) - Number(ORDER.tax_total);
+    const sum = products + Number(b.shipping_total) + Number(b.tax_total);
+    assert.equal(Math.round(sum * 100) / 100, Number(b.order_total));
+  });
+
+  test('no tax means no tax field is touched', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    await applyShippingUpgrade({ ...ARGS, tax: 0, fetchImpl: od.fetchImpl });
+    assert.equal(od.put().body.tax_total, '0.00', 'unchanged');
+    assert.equal(od.put().body.order_total, '312.07');
+  });
+
+  test('a store without tax_total does not gain the field', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const { tax_total, ...noTax } = ORDER;
+    const od = fakeOrderDesk(noTax);
+    await applyShippingUpgrade({ ...ARGS, tax: 2.72, fetchImpl: od.fetchImpl });
+    assert.equal('tax_total' in od.put().body, false);
+    // the money still has to be accounted for in the grand total
+    assert.equal(od.put().body.order_total, '314.79');
+  });
+
+  test('negative tax is refused', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    const r = await applyShippingUpgrade({ ...ARGS, tax: -1, fetchImpl: od.fetchImpl });
+    assert.equal(r.applied, false);
+    assert.equal(od.calls.length, 0);
+  });
+
+  test('the note says what the customer actually paid', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    await applyShippingUpgrade({ ...ARGS, tax: 2.72, fetchImpl: od.fetchImpl });
+    const note = od.put().body.order_notes.at(-1).content;
+    assert.match(note, /\$33\.96/);
+    assert.match(note, /\$2\.72 tax/);
+    assert.match(note, /= \$36\.68/);
   });
 });

@@ -123,8 +123,9 @@
           <span class="v" id="total">$0.00</span>
         </div>
         <button class="cta" id="send" type="submit" disabled>Select an upgrade above</button>
-        <p class="fine">Nothing changes until you pay the invoice. If you close this page, your order
-          ships on its current service.</p>
+        <p class="fine">The amount shown is the total you'll be charged, tax included.
+          Nothing changes until you pay the invoice — if you close this page, your order ships
+          on its current service.</p>
       </form>
     </div>
   </main>
@@ -171,15 +172,32 @@
     set('current', sh.current || '—');
 
     if (sh.canUpgrade && sh.upgrade) {
+      var up = sh.upgrade;
       set('keepName', sh.current);
-      set('upName', sh.upgrade.to);
-      set('upSub', 'Arrives sooner');
-      set('upPrice', '+' + money(sh.upgrade.amount));
-      $('pickUpgrade').value = String(sh.upgrade.amount);
+      set('upName', up.to);
+
+      // Only ever show a figure the customer will actually be billed. `total`
+      // includes the tax Shopify charges on the upgrade; until Shopify has
+      // priced it, no amount is shown and the button stays shut.
+      if (up.final) {
+        set('upSub', 'Arrives sooner — includes tax');
+        set('upPrice', '+' + money(up.total));
+        $('pickUpgrade').value = String(up.total);
+      } else {
+        set('upSub', 'Arrives sooner');
+        set('upPrice', '—');
+        $('pickUpgrade').disabled = true;
+      }
       $('upgrade').hidden = false;
 
       var radios = document.querySelectorAll('input[name="svc"]');
       var update = function () {
+        if (!up.final) {
+          set('total', '—');
+          $('send').disabled = true;
+          set('send', 'Pricing unavailable right now');
+          return;
+        }
         var picked = document.querySelector('input[name="svc"]:checked');
         var v = picked ? parseFloat(picked.value) : 0;
         set('total', money(v));

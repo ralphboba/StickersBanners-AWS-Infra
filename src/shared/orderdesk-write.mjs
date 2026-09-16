@@ -185,9 +185,10 @@ export function upgradeAlreadyApplied(order, invoiceRef) {
  *     Legacy PUTs a record it read earlier, which silently reverts anything the
  *     office changed in between (docs/shopify-intake-lambda.md, H2). This runs
  *     while staff are working the same order, so the window is real.
- *  2. Moves the money. shipping_total and order_total both shift by the
- *     difference; leaving order_total alone would make OrderDesk disagree with
- *     what the customer actually paid.
+ *  2. Moves the money, all three parts of it. The shipping charge, the tax
+ *     charged on it, and the grand total go to different fields, and putting
+ *     the whole amount in one of them would leave OrderDesk internally
+ *     inconsistent — the totals would not add up.
  *  3. Refuses a repeat. See upgradeAlreadyApplied.
  *
  * It does NOT move the order between folders. The upgrade keeps the order with
@@ -197,18 +198,31 @@ export function upgradeAlreadyApplied(order, invoiceRef) {
  * @param {object}   p
  * @param {string}   p.orderDeskId    OrderDesk order id (we always know it)
  * @param {string}   p.orderName      for the synthetic-order guard and logs
- * @param {string}   p.toMethod       e.g. "1-day Shipping" — legacy's spelling
- * @param {number}   p.amount         the difference paid, in dollars
+ * @param {string}   p.toMethod       e.g. "FedEx 1-Day" — exactly as the store spells it
+ * @param {number}   p.amount         the shipping difference, BEFORE tax
+ * @param {number}   [p.tax]          tax Shopify charged on that difference (0 if none)
  * @param {string}   p.invoiceRef     e.g. "D169" — the idempotency key
  * @param {string}   p.storeId
  * @param {string}   p.apiKey
  * @param {typeof fetch} [p.fetchImpl]
  */
 export async function applyShippingUpgrade({
-  orderDeskId, orderName, toMethod, amount, invoiceRef, storeId, apiKey, fetchImpl,
+  orderDeskId, orderName, toMethod, amount, tax = 0, invoiceRef, storeId, apiKey, fetchImpl,
 }) {
+  // Three numbers, and they must be kept apart. `amount` is the shipping
+  // charge; `tax` is what Shopify charged on it; their sum is what left the
+  // customer's card. They land in three different OrderDesk fields.
+  //
+  // We never compute the tax ourselves — rates vary by destination and by what
+  // is being taxed, and a number we invented would disagree with the money that
+  // actually moved. It comes from Shopify and is passed straight through.
   const deltaCents = cents(amount);
-  const intent = { orderDeskId, toMethod, amount: dollars(deltaCents), invoiceRef };
+  const taxCents = cents(tax);
+  const paidCents = deltaCents + taxCents;
+  const intent = {
+    orderDeskId, toMethod, invoiceRef,
+    amount: dollars(deltaCents), tax: dollars(taxCents), paid: dollars(paidCents),
+  };
   const opts = fetchImpl ? { fetchImpl } : {};
 
   const blocked = blockedReason(orderName, orderDeskUpgradeWritesEnabled);
@@ -221,6 +235,7 @@ export async function applyShippingUpgrade({
 
   if (!orderDeskId || !toMethod) return { applied: false, error: 'missing order id or target' };
   if (deltaCents <= 0) return { applied: false, error: 'upgrade amount must be positive' };
+  if (taxCents < 0) return { applied: false, error: 'tax cannot be negative' };
 
   // 1. Re-read. This copy, not one fetched minutes ago, is what we merge onto.
   const url = `${ORDERDESK_API}/orders/${orderDeskId}`;
@@ -249,20 +264,29 @@ export async function applyShippingUpgrade({
   const updated = {
     ...fresh,
     shipping_method: toMethod,
-    order_total: dollars(cents(fresh.order_total) + deltaCents),
+    // The grand total moves by everything the customer paid, tax included.
+    order_total: dollars(cents(fresh.order_total) + paidCents),
     order_notes: [
       ...(fresh.order_notes ?? []),
       {
         username: 'SBBot',
         date_added: stamp,
-        content: `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} (${invoiceRef})`,
+        content: taxCents > 0
+          ? `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} `
+            + `+ $${dollars(taxCents)} tax = $${dollars(paidCents)} (${invoiceRef})`
+          : `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} (${invoiceRef})`,
       },
     ],
   };
-  // shipping_total is only touched when the record actually carries it, so a
-  // store that does not use the field does not gain a spurious one.
+  // shipping_total and tax_total are only touched when the record actually
+  // carries them, so a store that does not use a field does not gain one.
+  // Note each takes its OWN number, not the total: shipping gets the shipping
+  // charge, tax gets the tax.
   if (fresh.shipping_total !== undefined && fresh.shipping_total !== null) {
     updated.shipping_total = dollars(cents(fresh.shipping_total) + deltaCents);
+  }
+  if (taxCents > 0 && fresh.tax_total !== undefined && fresh.tax_total !== null) {
+    updated.tax_total = dollars(cents(fresh.tax_total) + taxCents);
   }
 
   const putRes = await orderDeskFetch(url, {
@@ -282,5 +306,7 @@ export async function applyShippingUpgrade({
     to: toMethod,
     orderTotal: updated.order_total,
     shippingTotal: updated.shipping_total,
+    taxTotal: updated.tax_total,
+    paid: dollars(paidCents),
   };
 }
