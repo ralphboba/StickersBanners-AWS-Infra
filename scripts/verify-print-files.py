@@ -19,13 +19,21 @@ Usage:
   node -e ... > /tmp/verify-orders.json   # {order: [{itemNo,width,height,unit,finishingObj}]}
   python3 scripts/verify-print-files.py
 
-Sizing rules, from src/services/finish/pole_pockets.py:
+Sizing rules, from src/services/finish/pole_pockets.py. Every line below was
+checked against Linh's own sample output on 2026-09-18 and matched to the pixel:
     base            round(inches * 72) per side
     PPTO / PPBO     height + 324   (4.5in pocket)
     PPTB            height + 648
     PPL / PPR       width  + 324
     PPS             width  + 648
+    RET             height fixed at 80in*72 + 3in*72 = 5976
     CO / HO / none  unchanged -- they are labels, not geometry
+
+CO in particular: Linh confirmed CO and HO produce identical output, and his two
+sample files are byte-for-byte the same. There are no cut marks in the print
+file at all -- the cutter is driven separately -- so the long-standing worry
+that our CO output might put them in the wrong place was unfounded. There was
+nothing to get wrong.
 """
 
 import json
@@ -102,8 +110,13 @@ def main():
             problems = []
             if (got_w, got_h) != (w_exp, h_exp):
                 problems.append(f"size {got_w}x{got_h}, expected {w_exp}x{h_exp}")
-            if mode != "RGB":
-                problems.append(f"mode {mode}, expected RGB")
+            # RGB for almost everything, but CMYK is legitimate and must pass:
+            # Linh's reference RET file is CMYK, and the pipeline now preserves
+            # the artwork's colour space instead of flattening it to RGB. An
+            # earlier version of this check called that a defect, which would
+            # have had somebody "fixing" correct output.
+            if mode not in ("RGB", "CMYK"):
+                problems.append(f"mode {mode}, expected RGB or CMYK")
             if dpi and (round(dpi[0]), round(dpi[1])) != (72, 72):
                 problems.append(f"dpi {dpi}, expected 72x72")
             if comp != "tiff_lzw":

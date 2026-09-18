@@ -256,3 +256,22 @@ test('unknown keys and non-numeric ids are dropped, not trusted', () => {
 test('a numeric id given as a number still works', () => {
   assert.equal(folderIds({ ORDERDESK_FOLDER_IDS: '{"manual":222}' }).manual, '222');
 });
+
+// --- Linh's 50ft ceiling, 2026-09-18 ---------------------------------------
+// "There's technically no maximum print size, but the biggest we delegated for
+// the bot to proof is 50ft. The bigger ones are handled via email manually."
+
+test('50ft is the bot ceiling and passes; past it goes to a person', () => {
+  assert.equal(MAX_SIDE_INCHES, 600, '50 ft = 600 in');
+  assert.equal(intakeGate({ flags: {}, items: [{ width: 50, height: 4, unit: 'ft' }] }), null);
+  assert.equal(intakeGate({ flags: {}, items: [{ width: 600, height: 48, unit: 'in' }] }), null);
+  assert.equal(
+    intakeGate({ flags: {}, items: [{ width: 51, height: 4, unit: 'ft' }] }).reason,
+    'oversize');
+});
+
+test('a 40ft banner passes, which the old 300in threshold would have held', () => {
+  // The threshold used to be 300 in, picked from our own data rather than from
+  // Linh. Anything between 25 and 50 feet was being held for no reason.
+  assert.equal(intakeGate({ flags: {}, items: [{ width: 40, height: 8, unit: 'ft' }] }), null);
+});

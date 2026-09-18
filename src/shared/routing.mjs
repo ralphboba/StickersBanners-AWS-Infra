@@ -1,28 +1,35 @@
 // Facility routing.
 //
 // Decides which production facility an order goes to, and how its finished
-// files are transported there. The legacy system stored zip dictionaries in
-// Redis (dict:nvZipCodes, dict:caZipCodes); those are now bundled from
-// zipRouting.mjs (extracted from the legacy zip.xlsx). Editing zips = edit that
-// file + redeploy. Facilities: GA, NJ, TX, NV, CA. CA ships via Google Drive;
-// the rest via FTP.
-
-import { NV_ZIPS, CA_ZIPS } from './zipRouting.mjs';
+// files are transported there. Facilities: GA, NJ, TX, NV, CA. CA ships via
+// Google Drive; the rest via FTP.
+//
+// Routing is by shipping state, plus pickup method and the express cutoff.
+// It used to also consult zip dictionaries (legacy dict:nvZipCodes /
+// dict:caZipCodes, bundled here as zipRouting.mjs) to split California between
+// the NV and CA facilities. Linh retired that split on 2026-09-18: CA takes
+// pickup orders only, so a CA shipping address now prints in NV like any other
+// NV-list state. zipRouting.mjs is left in the tree as the record of what those
+// dictionaries held, but nothing reads it.
 
 /** @typedef {'GA'|'NJ'|'TX'|'NV'|'CA'} Facility */
 
 const GDRIVE_FACILITIES = new Set(['CA']);
 
 // Built once per Lambda cold start.
-const DEFAULT_NV = new Set(NV_ZIPS);
-const DEFAULT_CA = new Set(CA_ZIPS);
 
-// State -> facility (Linh's rule). NV/CA are decided by ZIP first (NV ships some
-// CA-destination zips); every other state ships from the facility listed here.
+// State -> facility, as Linh confirmed on 2026-09-18 ("that shipping state is
+// correct"). Every state ships from the facility listed here; AK and HI are on
+// no list and stay unrouted.
 const GA_STATES = new Set(['AL', 'FL', 'GA', 'IN', 'KY', 'MI', 'MS', 'NC', 'SC', 'TN', 'WI', 'OH', 'WV', 'VA']);
 const NJ_STATES = new Set(['CT', 'DC', 'DE', 'MA', 'ME', 'NH', 'NJ', 'NY', 'RI', 'VT', 'MD', 'PA']);
 const TX_STATES = new Set(['AR', 'CO', 'IL', 'IA', 'KS', 'LA', 'MO', 'ND', 'NE', 'NM', 'OK', 'SD', 'TX', 'WY', 'MN']);
-const NV_STATES = new Set(['WA', 'OR', 'NV', 'AZ', 'UT', 'ID', 'MT']);
+const NV_STATES = new Set(['WA', 'OR', 'NV', 'AZ', 'UT', 'ID', 'MT',
+  // Linh, 2026-09-18: "CA only does CA pick up orders now, so orders
+  // ship to CA address will be printed in NV." A CA *pickup* still goes
+  // to CA -- that is decided in step 1, before any state list is read.
+  'CA',
+]);
 
 /**
  * Resolve the transport for a facility.
@@ -72,17 +79,6 @@ export function easternHour(now = new Date()) {
 
 const withinCutoff = (hour) => hour >= CUTOFF_START_HOUR && hour <= CUTOFF_END_HOUR;
 
-/**
- * Legacy checkNVCA: NV zip -> NV, else CA zip -> CA, else nothing.
- * Returning null (rather than defaulting to CA) is deliberate — legacy returns
- * false, which leaves the order unrouted for manual assignment.
- */
-function checkNvCa(postalCode, dicts = {}) {
-  const zip = normalizeZip(postalCode);
-  if ((dicts.nvZips ?? DEFAULT_NV).has(zip)) return 'NV';
-  if ((dicts.caZips ?? DEFAULT_CA).has(zip)) return 'CA';
-  return null;
-}
 
 /**
  * Decide the facility for an order, following legacy getState +
@@ -92,24 +88,22 @@ function checkNvCa(postalCode, dicts = {}) {
  *      (a see-thru order may not be picked up from CA)
  *   2. between 3pm and 6pm ET: 1-day/2-day go to NV; 3-day is upgraded to
  *      2-day (returned as `expressUpgrade` for the caller to write back)
- *   3. GA/NJ/TX/NV state lists — Linh's lists as sent to Kai
- *   4. anything left (CA, and any state on no list) falls to the ZIP
- *      dictionaries; see-thru skips that and goes to NV
+ *   3. GA/NJ/TX/NV state lists — Linh's lists, with CA on the NV list since
+ *      2026-09-18
+ *   4. anything left (AK, HI) is UNROUTED unless it is see-thru, which goes
+ *      to NV
  *
- * Unmatched is UNROUTED, held for manual assignment. Legacy's checkNVCA also
- * returns "nothing" when a zip is in neither dictionary, so a CA address with
- * an unknown zip is unrouted rather than assumed to be CA.
+ * Unmatched is UNROUTED, held for manual assignment rather than guessed at.
  *
  * Pure: the express upgrade is reported, never performed.
  *
  * @param {{ state?: string, postalCode?: string, method?: string }} shipping
- * @param {{ seeThru?: boolean, now?: Date, dicts?: { nvZips?: Set<string>, caZips?: Set<string> } }} [opts]
+ * @param {{ seeThru?: boolean, now?: Date }} [opts]
  * @returns {{ facility: Facility|'UNROUTED', transport: 'FTP'|'GDRIVE'|null,
  *             pickupStatus: string|null, reason?: string,
  *             expressUpgrade?: { to: string, note: string } }}
  */
 export function routeOrder(shipping, opts = {}) {
-  const dicts = opts.dicts ?? opts; // tolerate the old routeOrder(shipping, dicts) shape
   const state = String(shipping?.state ?? '').trim().toUpperCase();
   const method = String(shipping?.method ?? '').toLowerCase();
   const seeThru = Boolean(opts.seeThru);
@@ -145,14 +139,18 @@ export function routeOrder(shipping, opts = {}) {
   if (TX_STATES.has(state)) return withUpgrade(decided('TX'));
   if (NV_STATES.has(state)) return withUpgrade(decided('NV'));
 
-  // 4. Everything else (CA, and any state on no list) falls to the ZIP
-  //    dictionaries, exactly as legacy determineProduction does. A see-thru
-  //    order skips the lookup and goes to NV.
+  // 4. Nothing is decided by ZIP any more. The NV/CA zip dictionaries existed
+  //    only to split California between the two facilities, and Linh retired
+  //    that split on 2026-09-18 -- CA now takes pickups only, so every CA
+  //    address prints in NV and CA is simply on the NV state list above.
+  //
+  //    What still reaches here is AK and HI, the only states on no list.
+  //    They stay UNROUTED, held for a person, exactly as before: Linh said
+  //    where CA orders go, not where those go, and guessing a facility for
+  //    them would put real print files on a truck to the wrong coast.
   if (seeThru) return withUpgrade(decided('NV', 'see-thru decal'));
-  const byZip = checkNvCa(shipping?.postalCode, dicts);
-  if (byZip) return withUpgrade(decided(byZip, `zip ${normalizeZip(shipping?.postalCode)}`));
 
-  return withUpgrade(unrouted('no state or zip match'));
+  return withUpgrade(unrouted('no state match'));
 }
 
 function unrouted(reason) {
