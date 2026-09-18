@@ -150,3 +150,81 @@ write switch off (`docs/go-live.md` stage 1).
 3. Hardware SKU list (legacy filtered hardware-only line items via a Redis dict;
    Linh: "hardware sku just comes from the excel sheet for hardware").
 4. "Grommet with Bravo Tab (TOP only)" — grommets on all 4 sides or top only?
+
+---
+
+## 2026-09-18 — Linh's answers, and what changed
+
+Five questions went to Linh with his own sample print files. His replies, and
+what each one did to the code.
+
+### Multiple finishing options — no code change
+
+> "When they have multiple finishing option, cx have to requested it in the
+> special instructions and then the sales rep just update it on the portal."
+
+So an order never arrives carrying two finishing options. The customer types the
+second one into special instructions, which trips `hasInstructions` and sends
+the order to **Manual Preprocess** for a rep to set on the portal. Handling one
+option at a time is correct, and this is part of why special-instructions is the
+largest hold category — 8 of 13 holds during the 2026-09-13 window.
+
+### Inch-quoted SKUs — already had all eight
+
+> "Here are all the sku that is treated as in[ch] product: SKUPB, SKUXB,
+> SKU-543, SKU-545, SKU-DXB-B, SKU-DXB, SKUDXBB, SKUDXBBB"
+
+All eight were already in `INCH_SKUS`. His list is the legacy INTSKU constant, so
+it is a subset of ours, not a replacement: `INCH_SKUS_EXTRA` and the `SKUFPUD`
+prefix carry the ones found since from real orders. **`SKU-603` and
+`SKU08X08FPUD` are still not accounted for by either list** and remain held by
+the size gate.
+
+### Maximum print size — 300 in was our number, 600 is his
+
+> "There's technically no maximum print size but the bigger we delegated for the
+> bot to proof is 50ft I believe. The bigger ones are handled via email
+> manually."
+
+`MAX_SIDE_INCHES` 300 → **600**. The old value was inferred from our own data
+(largest legitimate side seen: 228 in) and would have held every real order
+between 25 and 50 feet. The populations are still far apart — the bad values are
+1380 in — so the gate keeps catching the parse bugs it was built for.
+
+### California — the NV/CA zip split is retired
+
+> "That shipping state is correct. Except check NVCA is no longer needed since CA
+> only does CA pick up orders now so orders ship to CA address will be printed
+> in NV."
+
+The state lists are confirmed. The zip dictionaries are not needed any more:
+they existed only to split California between two facilities.
+
+- `CA` joins `NV_STATES`. Every CA shipping address prints in NV.
+- A **CA pickup** still goes to CA — pickup is decided before any state list.
+- `checkNvCa` and the `NV_ZIPS` / `CA_ZIPS` lookups are gone from `routeOrder`.
+  `zipRouting.mjs` stays in the tree as the record of what they held; nothing
+  reads it.
+- **AK and HI** are the only states on no list and stay UNROUTED, held for a
+  person. Linh said where CA orders go, not where those go.
+
+Worth noting for the 2026-09-13 window: S59977 went to the real CA Google Drive
+by mistake. Under this rule it would have routed to NV and never touched Drive.
+
+### Legacy site orders — approach confirmed, mapping still unknown
+
+> "Orders from the old site have different JSON format so you might have to mess
+> around with it. I had to write a super class and then assign the attributes
+> accordingly. The functions are pretty much the same."
+
+Normalise the old shape into the same job object and reuse everything
+downstream. No field mapping was given, so it has to come from real examples —
+`203492170` from the window is one (no S-number, no postal code, artwork behind
+a `file_redirect.aspx` URL).
+
+### Still open
+
+- **PPBO** — no reference sample. It shares the height branch with PPTO, which
+  now matches Linh's file to the pixel, so the risk is low.
+- **The fold stroke** — his PPTO/PPTB samples carry no black line at the pocket
+  boundary, while this code and the legacy repo both draw one. Asked, unanswered.

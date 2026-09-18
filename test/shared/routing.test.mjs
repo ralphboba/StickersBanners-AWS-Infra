@@ -26,17 +26,28 @@ test('CA ships via Drive, everything else via FTP', () => {
   for (const f of ['GA', 'NJ', 'TX', 'NV']) assert.equal(transportFor(f), 'FTP');
 });
 
-// --- ZIP fallback (legacy checkNVCA) ---------------------------------------
+// --- California, after the zip split was retired ---------------------------
+// Linh, 2026-09-18: "check NVCA is no longer needed since CA only does CA pick
+// up orders now, so orders ship to CA address will be printed in NV."
 
-test('a CA address falls to the zip dictionaries', () => {
-  assert.equal(route({ state: 'CA', postalCode: '90001', method: 'Ground' }).facility, 'NV');
-  assert.equal(route({ state: 'CA', postalCode: '90085', method: 'Ground' }).facility, 'CA');
+test('every CA shipping address prints in NV, whatever the zip', () => {
+  // 90001 used to be an NV zip and 90085 a CA zip. The dictionaries are gone;
+  // both are simply NV now, and so is a zip that was in neither.
+  for (const postalCode of ['90001', '90085', '99999', undefined]) {
+    assert.equal(route({ state: 'CA', postalCode, method: 'Ground' }).facility, 'NV');
+  }
 });
 
-test('a zip in neither dictionary is UNROUTED, not assumed CA', () => {
-  // Legacy checkNVCA returns false here; the order is held for manual assignment.
-  assert.equal(route({ state: 'CA', postalCode: '99999', method: 'Ground' }).facility, 'UNROUTED');
+test('a CA pickup still goes to CA', () => {
+  // Pickup is decided before any state list, so CA keeps the one job it has.
+  assert.equal(route({ state: 'CA', method: 'In Store Pickup (from California)' }).facility, 'CA');
+});
+
+test('AK and HI are on no list and stay UNROUTED', () => {
+  // Linh said where CA orders go, not where these go. Guessing a facility for
+  // them would put print files on a truck to the wrong coast, so they are held.
   assert.equal(route({ state: 'AK', postalCode: '99501', method: 'Ground' }).facility, 'UNROUTED');
+  assert.equal(route({ state: 'HI', postalCode: '96801', method: 'Ground' }).facility, 'UNROUTED');
 });
 
 // --- pickup keywords -------------------------------------------------------

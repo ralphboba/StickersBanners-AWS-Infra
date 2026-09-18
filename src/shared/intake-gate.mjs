@@ -157,10 +157,24 @@ export const GATES = [
  * INCHES. The two populations are six times apart, so one threshold separates
  * them with room to spare: p90 of real items is 96 in, p99 is 216 in.
  *
- * 300 in also catches the two parse cases that are still unresolved: SKUAB
- * arriving as '48 in' (read as 48 ft = 576 in) and SKUVB 144x18 (144 ft).
+ * 600 in is Linh's number, given on 2026-09-18: "there's technically no maximum
+ * print size, but the biggest we delegated for the bot to proof is 50ft. The
+ * bigger ones are handled via email manually." 50 ft is 600 in, and this gate
+ * does exactly what he describes -- it hands the order to a person rather than
+ * rejecting it.
+ *
+ * It was 300 before, chosen from the data alone, which would have held real
+ * orders between 25 and 50 feet. The measured populations are still far apart
+ * either way: the largest legitimate side seen was 228 in and the bad values
+ * were 1380 in.
+ *
+ * It still catches the two parse cases that are unresolved: SKUAB arriving as
+ * '48 in' x '80 in' (read as feet: 576 x 960) and SKUVB 144x18 (1728 x 216).
+ * Note SKUAB is now caught by its HEIGHT alone -- 576 in sits under the line,
+ * so a squarer order of the same shape would slip through. That one depends on
+ * the SKU table being right, not on this gate.
  */
-export const MAX_SIDE_INCHES = 300;
+export const MAX_SIDE_INCHES = 600;
 
 /** The first item whose finished size is implausible, or null. */
 export function oversizedItem(job) {
