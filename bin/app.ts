@@ -6,6 +6,7 @@ import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
 import { ArtworkCdnStack } from '../lib/stacks/artwork-cdn-stack';
+import { trialConfig, describeTrial } from '../lib/config/trial';
 import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
 import { DatabaseStack } from '../lib/stacks/database-stack';
@@ -69,6 +70,16 @@ const artworkCdnStack = new ArtworkCdnStack(app, 'sb-artwork-cdn', {
   bucketRegion: 'eu-north-1',
   description: 'StickersBanners customer artwork CDN (account-level)',
 });
+
+// Say out loud, before anything is built, which live switches this deploy will
+// arm. describeTrial existed since the trial work and had never been called --
+// so the five hours on 2026-09-13 armed three switches that reach real
+// customers and real facilities, and printed nothing at all. The whole point of
+// the function is that the last thing on screen before you approve is the list
+// of things about to touch the outside world.
+for (const line of describeTrial(trialConfig(app))) {
+  console.warn(`  !! ${line}`);
+}
 
 const networkStack = new NetworkStack(app, `${config.prefix}-network`, {
   env,
