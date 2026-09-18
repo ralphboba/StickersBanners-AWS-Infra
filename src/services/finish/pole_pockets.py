@@ -18,6 +18,28 @@ Image.MAX_IMAGE_PIXELS = None
 
 MODES = ["PPTB", "PPTO", "PPL", "PPR", "PPS", "PPBO", "RET"]
 
+# The canvas has to be built in the SOURCE image's mode, and the fill named per
+# mode, because PIL's colour names lie about CMYK: ImageColor.getcolor("white",
+# "CMYK") returns (255, 255, 255, 255), which is full ink on every plate --
+# solid black. Building an RGB canvas instead (what this did, and what legacy
+# does) is quieter but still wrong: Image.paste converts the artwork to the
+# canvas mode, so a CMYK print file came out RGB and the press gets a colour
+# conversion nobody asked for. Linh's RET reference file is CMYK; ours was not.
+#
+# Only the two modes that actually reach here are mapped. Anything else keeps
+# the old RGB behaviour rather than guessing at an ink value -- a wrong fill is
+# a solid band across the pole pocket, which is worse than a colour shift.
+_CANVAS_COLOURS = {
+    "CMYK": {"white": (0, 0, 0, 0), "black": (0, 0, 0, 255)},
+    "RGB": {"white": (255, 255, 255), "black": (0, 0, 0)},
+    "L": {"white": 255, "black": 0},
+}
+
+
+def canvas_colour(mode, name):
+    """The value for `name` in `mode`, or None when we have no mapping for it."""
+    return _CANVAS_COLOURS.get(mode, {}).get(name)
+
 
 class PolePocketsAdder:
     def __init__(self, polePocketSize=4.5, fillColor="white", mode=None):
@@ -84,33 +106,44 @@ class PolePocketsAdder:
 
         oriImage = Image.open(sourceFileDir)
         newWidth, newHeight = self.getBackgroundDimensions(self.mode, oriImage.width, oriImage.height)
-        background = Image.new("RGB", (newWidth, newHeight), self.fillColor)
+
+        # Match the artwork's colour space so the paste below does not convert
+        # it. Falls back to RGB when the fill cannot be named safely in the
+        # source mode -- see _CANVAS_COLOURS.
+        fill = canvas_colour(oriImage.mode, self.fillColor)
+        stroke = canvas_colour(oriImage.mode, strokeColor)
+        if fill is None or stroke is None:
+            canvasMode, fill, stroke = "RGB", self.fillColor, strokeColor
+        else:
+            canvasMode = oriImage.mode
+
+        background = Image.new(canvasMode, (newWidth, newHeight), fill)
         draw = ImageDraw.Draw(background)
         offset = self.getOffset(self.mode)
 
         match self.mode:
             case "PPTB":
                 y_top = offset[1] - strokeWidth // 2
-                draw.line([(0, y_top), (newWidth, y_top)], fill=strokeColor, width=strokeWidth)
+                draw.line([(0, y_top), (newWidth, y_top)], fill=stroke, width=strokeWidth)
                 y_bottom = offset[1] + oriImage.height + strokeWidth // 2
-                draw.line([(0, y_bottom), (newWidth, y_bottom)], fill=strokeColor, width=strokeWidth)
+                draw.line([(0, y_bottom), (newWidth, y_bottom)], fill=stroke, width=strokeWidth)
             case "PPTO":
                 y_top = offset[1] - strokeWidth // 2
-                draw.line([(0, y_top), (newWidth, y_top)], fill=strokeColor, width=strokeWidth)
+                draw.line([(0, y_top), (newWidth, y_top)], fill=stroke, width=strokeWidth)
             case "PPBO" | "RET":
                 y_bottom = offset[1] + oriImage.height + strokeWidth // 2
-                draw.line([(0, y_bottom), (newWidth, y_bottom)], fill=strokeColor, width=strokeWidth)
+                draw.line([(0, y_bottom), (newWidth, y_bottom)], fill=stroke, width=strokeWidth)
             case "PPL":
                 x_left = offset[0] - strokeWidth // 2
-                draw.line([(x_left, 0), (x_left, newHeight)], fill=strokeColor, width=strokeWidth)
+                draw.line([(x_left, 0), (x_left, newHeight)], fill=stroke, width=strokeWidth)
             case "PPR":
                 x_right = offset[0] + oriImage.width + strokeWidth // 2
-                draw.line([(x_right, 0), (x_right, newHeight)], fill=strokeColor, width=strokeWidth)
+                draw.line([(x_right, 0), (x_right, newHeight)], fill=stroke, width=strokeWidth)
             case "PPS":
                 x_left = offset[0] - strokeWidth // 2
                 x_right = offset[0] + oriImage.width + strokeWidth // 2
-                draw.line([(x_left, 0), (x_left, newHeight)], fill=strokeColor, width=strokeWidth)
-                draw.line([(x_right, 0), (x_right, newHeight)], fill=strokeColor, width=strokeWidth)
+                draw.line([(x_left, 0), (x_left, newHeight)], fill=stroke, width=strokeWidth)
+                draw.line([(x_right, 0), (x_right, newHeight)], fill=stroke, width=strokeWidth)
 
         background.paste(oriImage, offset)
         background.save(convertedFileDir, dpi=(72, 72), compression="tiff_lzw")
