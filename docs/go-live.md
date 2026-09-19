@@ -350,3 +350,71 @@ so leaving it up costs nothing.
 - `SKU-603` and `SKU08X08FPUD` are still resolved as feet. The oversize gate
   (MAX_SIDE_INCHES) now catches SKU-603 at 1380 in and holds it for a person, so
   it cannot reach print — but the underlying SKU entry is still missing.
+
+---
+
+## Trial day: sending proof emails without contacting customers
+
+Linh's condition for letting this system run a full day on live orders
+(2026-09-18):
+
+> "Sure, but can you change the email so it's only sending to you or someone
+> else, like not to customer? Just hard code the recipient's email so cx doesn't
+> get 2 proof emails by monday."
+
+He moves the orders back to QTS afterwards and his own program reprocesses
+them, which sends its own proof email. Any customer we mail during a trial is a
+customer who gets two.
+
+`proofEmailRedirect` is that switch. It is **not** an arming flag — it only ever
+narrows who is contacted, and it does nothing at all unless `ZENDESK_SENDS` is
+also armed.
+
+```bash
+npx cdk deploy sb-dev-compute --context env=dev \
+  -c armZendeskSends=true \
+  -c proofEmailRedirect=someone@stickersbanners.com
+```
+
+Every proof email then goes to that one address: the real ticket, through the
+real Zendesk API, carrying the real signed approval link, with `[TEST]` on the
+subject and the requester name. The customer's address appears **nowhere** in
+the outgoing ticket — `test/shared/zendesk.test.mjs` searches the whole
+serialized payload for it, not just the fields we remembered to check. It is
+kept in the log line as `intendedFor` so the run stays auditable.
+
+This is a stronger test than `ZENDESK_SENDS=disabled`, not a weaker one.
+Disabled composes the ticket and contacts nobody, which proves nothing about
+Zendesk. Redirected exercises the whole path and lands it in one inbox.
+
+**The approval link in those emails is live.** Clicking it approves the real
+order and resumes the workflow, exactly as a customer's click would. That is
+useful for testing the path end to end — but it moves the order on, so click
+deliberately.
+
+### The deploy now says what it is arming
+
+`describeTrial` existed since the trial work and had never been called. The five
+hours on 2026-09-13 armed three switches that reach real customers and real
+facilities and printed nothing at all. It is wired into `bin/app.ts` now, so a
+deploy prints before it builds:
+
+```
+  !! ZENDESK_SENDS=enabled — REAL CUSTOMERS WILL BE EMAILED (no proofEmailRedirect set)
+```
+
+or, with the redirect set:
+
+```
+  !! ZENDESK_SENDS=enabled — proof email redirected to someone@…, no customer is contacted
+```
+
+Note which way round that is. During a trial the **default** is the dangerous
+setting, so the line appears either way rather than only when something unusual
+is configured.
+
+### Ending the trial
+
+Redeploy without the flags. `proofEmailRedirect` left set at go-live would mean
+no customer ever receives a proof email, and nothing would look broken — so it
+is listed here rather than only in a commit message.

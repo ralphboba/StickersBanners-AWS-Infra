@@ -27,6 +27,16 @@ export interface TrialConfig {
   readonly orderDeskFolderIds: string;
   /** Prefix for every remote FTP path, or '' for the real facility layout. */
   readonly ftpBasePath: string;
+  /**
+   * One address that every proof email goes to instead of the customer, or ''
+   * to mail the customer (which is what go-live means).
+   *
+   * Linh's condition for a full trial day, 2026-09-18: he moves the orders back
+   * to QTS afterwards and his own program reprocesses them, sending its own
+   * proof email. Any customer we mail during the trial is a customer who gets
+   * two. This is not an arming flag — it only ever narrows who is contacted.
+   */
+  readonly proofEmailRedirect: string;
 }
 
 /** Only the exact string "true" arms a switch — never "1", "yes" or "TRUE". */
@@ -46,6 +56,7 @@ export function trialConfig(scope: Construct): TrialConfig {
     productionTransfer: armed(scope, 'armProductionTransfer') ? 'enabled' : 'disabled',
     orderDeskFolderIds: text(scope, 'orderDeskFolderIds'),
     ftpBasePath: text(scope, 'ftpBasePath'),
+    proofEmailRedirect: text(scope, 'proofEmailRedirect'),
   };
 }
 
@@ -59,9 +70,18 @@ export function trialConfig(scope: Construct): TrialConfig {
 export function describeTrial(trial: TrialConfig): string[] {
   const lines: string[] = [];
   if (trial.orderDeskWrites === 'enabled') lines.push('ORDERDESK_WRITES=enabled — real orders will be moved and re-tagged');
-  if (trial.zendeskSends === 'enabled') lines.push('ZENDESK_SENDS=enabled — real customers will be emailed');
+  if (trial.zendeskSends === 'enabled') {
+    // During a trial the dangerous state is the DEFAULT one, so say which it
+    // is either way rather than only flagging the unusual setting.
+    lines.push(trial.proofEmailRedirect
+      ? `ZENDESK_SENDS=enabled — proof email redirected to ${trial.proofEmailRedirect}, no customer is contacted`
+      : 'ZENDESK_SENDS=enabled — REAL CUSTOMERS WILL BE EMAILED (no proofEmailRedirect set)');
+  }
   if (trial.productionTransfer === 'enabled') lines.push('PRODUCTION_TRANSFER=enabled — print files will be transferred');
   if (trial.orderDeskFolderIds) lines.push(`OrderDesk folders redirected: ${trial.orderDeskFolderIds}`);
   if (trial.ftpBasePath) lines.push(`FTP paths prefixed with: ${trial.ftpBasePath}`);
+  if (trial.proofEmailRedirect && trial.zendeskSends !== 'enabled') {
+    lines.push(`proofEmailRedirect set to ${trial.proofEmailRedirect}, but ZENDESK_SENDS is held — nothing will be sent at all`);
+  }
   return lines;
 }

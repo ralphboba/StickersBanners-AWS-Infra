@@ -118,6 +118,7 @@ export class ComputeStack extends cdk.Stack {
         // nobody's inbox touched. Flipping this to "enabled" is a go-live action
         // and needs explicit approval — see CLAUDE.md "Safety".
         ZENDESK_SENDS: trial.zendeskSends,
+        PROOF_EMAIL_REDIRECT: trial.proofEmailRedirect,
       },
     });
     // SqsEventSource also grants Receive/Delete on the queue.

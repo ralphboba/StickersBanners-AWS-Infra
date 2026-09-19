@@ -6,6 +6,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { getConfig } from '../lib/config/environments';
+import { describeTrial, TrialConfig } from '../lib/config/trial';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 import { EcsStack } from '../lib/stacks/ecs-stack';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
@@ -80,6 +81,11 @@ function schedulerTemplate() {
   });
   return Template.fromStack(stack);
 }
+
+const HELD: TrialConfig = {
+  orderDeskWrites: 'disabled', zendeskSends: 'disabled', productionTransfer: 'disabled',
+  orderDeskFolderIds: '', ftpBasePath: '', proofEmailRedirect: '',
+};
 
 describe('go-live switches are all off', () => {
   test('ORDERDESK_WRITES is disabled — no real order is moved or re-tagged', () => {
@@ -188,6 +194,50 @@ describe('the trial flags', () => {
       { Properties: { FunctionName: `${config.prefix}-notify-consumer` } }))[0] as any;
     expect(pollerEnv({ armOrderDeskWrites: 'true' }).ORDERDESK_WRITES).toBe('enabled');
     expect(envOf(notify.Properties).ZENDESK_SENDS).toBe('disabled');
+  });
+
+  /** The notify-consumer's environment — the only Lambda that emails anyone. */
+  function notifyEnv(context?: Record<string, unknown>) {
+    const t = computeTemplate(context);
+    const fn = Object.values(t.findResources('AWS::Lambda::Function',
+      { Properties: { FunctionName: `${config.prefix}-notify-consumer` } }))[0] as any;
+    return envOf(fn.Properties);
+  }
+
+  // Linh's condition for a full trial day, 2026-09-18: he moves the orders back
+  // to QTS afterwards and his program reprocesses them, sending its own proof
+  // email, so any customer we mail during a trial is a customer who gets two.
+
+  test('a plain deploy has no redirect — the customer is the recipient', () => {
+    expect(notifyEnv().PROOF_EMAIL_REDIRECT).toBe('');
+  });
+
+  test('the redirect reaches the notify-consumer verbatim', () => {
+    expect(notifyEnv({ proofEmailRedirect: 'tester@stickersbanners.com' })
+      .PROOF_EMAIL_REDIRECT).toBe('tester@stickersbanners.com');
+  });
+
+  test('the redirect arms nothing on its own', () => {
+    // It narrows who is contacted; it can never start contacting anyone.
+    const vars = notifyEnv({ proofEmailRedirect: 'tester@stickersbanners.com' });
+    expect(vars.ZENDESK_SENDS).toBe('disabled');
+  });
+
+  test('describeTrial names the dangerous case, not just the unusual one', () => {
+    // During a trial, "no redirect" is the DEFAULT and the risky setting, so
+    // silence there would be exactly the wrong way round.
+    const armed = describeTrial(
+      { ...HELD, zendeskSends: 'enabled' });
+    expect(armed.join('\n')).toContain('REAL CUSTOMERS WILL BE EMAILED');
+
+    const redirected = describeTrial(
+      { ...HELD, zendeskSends: 'enabled', proofEmailRedirect: 'tester@x.com' });
+    expect(redirected.join('\n')).toContain('redirected to tester@x.com');
+    expect(redirected.join('\n')).not.toContain('REAL CUSTOMERS');
+  });
+
+  test('a held deploy says nothing', () => {
+    expect(describeTrial(HELD)).toEqual([]);
   });
 
   test('the folder redirection reaches the poller verbatim', () => {
