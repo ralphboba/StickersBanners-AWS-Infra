@@ -24,7 +24,7 @@ import boto3
 from jobload import load_job
 import ftputil
 
-from guards import is_demo_order, transfer_destination, transfers_enabled
+from guards import is_demo_order, remote_path, transfer_destination, transfers_enabled
 from drive_helper import upload_print_folder
 
 
