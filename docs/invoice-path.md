@@ -314,3 +314,41 @@ Shipping upgraded FedEx 2-Days -> FedEx 1-Day by customer,
 
 `orders/paid` 웹훅이 **실제로 청구된 금액**을 준다. 견적과 1센트라도 다르면 실제 금액이
 이긴다. 오더데스크에 들어가는 숫자는 항상 **돈이 실제로 움직인 금액**이어야 한다.
+
+---
+
+## 배포 (CDK)
+
+| 리소스 | |
+| --- | --- |
+| Lambda `<prefix>-order-status-api` | `functions/order-status-api/index.handler`, src 루트 번들 |
+| 라우트 `GET /my-order` | **인증 없음** — 고객은 계정이 없다 |
+| 페이지 `web/my-order.html` | 기존 `BucketDeployment`가 `web/` 폴더를 통째로 올리므로 자동 |
+
+### 이 Lambda만 DynamoDB **읽기 전용**이다
+
+`grantReadData`. 다른 함수들은 `grantReadWriteData`를 받는다.
+
+이 함수는 **인증 없이 도달 가능한 유일한 고객용 엔드포인트**다. 토큰 검사에 버그가 생겨도
+역할 자체가 주문을 못 바꾸게 해둔다. 테스트가 역할 정책에 `dynamodb:PutItem` /
+`UpdateItem` / `DeleteItem`이 **없는지** 검사한다.
+
+### 공개 라우트가 늘어나지 않는지도 검사한다
+
+```
+unauthenticated === ['GET /my-order', 'POST /webhook/orderdesk']
+```
+
+스태프 라우트가 실수로 authorizer를 잃으면 이 단언이 깨진다. 라우트를 세는 게 아니라
+**인증 없는 것의 목록**을 고정했다.
+
+### 배포 순서
+
+`ci.yml`은 **배포하지 않는다** — build/test/synth 후 PR에 `cdk diff`만 붙인다. 배포는 수동:
+
+```
+cdk deploy sb-dev-compute sb-dev-api
+```
+
+⚠️ **SSM에 Shopify 자격증명이 들어가기 전에는 모든 주문이 404다.** 토큰 검증에 쓰는
+`orderStatusUrl`을 미러가 못 채우기 때문이다. 순서는 **자격증명 → 배포 → 미러 1회전 → 확인**.

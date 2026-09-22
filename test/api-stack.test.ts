@@ -25,6 +25,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     env: { account: '123456789012', region: config.region },
     webhookFn: fn('Webhook'),
     orderApiFn: fn('OrderApi'),
+    orderStatusApiFn: fn('OrderStatusApi'),
     approvalFn: fn('Approval'),
     userPool,
     userPoolClient,
@@ -42,6 +43,7 @@ describe('ApiStack', () => {
       .map((r) => r.Properties.RouteKey)
       .sort();
     expect(keys).toEqual([
+      'GET /my-order',
       'GET /orders',
       'GET /orders/{name}',
       'POST /orders/{name}/approve',
@@ -58,6 +60,20 @@ describe('ApiStack', () => {
       Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
     );
     expect(byKey['GET /orders'].AuthorizationType).toBe('JWT');
+  });
+
+  test('the customer route is public, and it is the ONLY public GET', () => {
+    // Customers have no account; the token in their emailed link is the check,
+    // and it happens inside the Lambda. Every other route stays behind Cognito,
+    // so this assertion is what would catch a staff route losing its authorizer.
+    const template = synth();
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
+      .map((r) => r.Properties);
+    const unauthenticated = routes
+      .filter((r) => r.AuthorizationType !== 'JWT')
+      .map((r) => r.RouteKey)
+      .sort();
+    expect(unauthenticated).toEqual(['GET /my-order', 'POST /webhook/orderdesk']);
   });
 
   test('CORS is enabled for the dashboard', () => {
@@ -96,8 +112,9 @@ describe('ApiStack', () => {
 
   test('routes integrate with a Lambda', () => {
     const template = synth();
-    // webhook + order-api + one shared approval integration (approve & reject)
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 3);
+    // webhook + order-api + order-status-api + one shared approval
+    // integration (approve & reject)
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

@@ -41,6 +41,7 @@ describe('ComputeStack', () => {
       'sb-dev-demo-feeder',
       'sb-dev-notify-consumer',
       'sb-dev-order-api',
+      'sb-dev-order-status-api',
       'sb-dev-poller',
       'sb-dev-webhook',
     ]);
@@ -81,5 +82,42 @@ describe('ComputeStack', () => {
         ]),
       }),
     });
+  });
+
+  test('the public order-status function can read the table but not write it', () => {
+    // It is reachable without authentication. Even past a bug in the token
+    // check, the role itself must not allow a change to any order.
+    const template = synth();
+    const fns = template.findResources('AWS::Lambda::Function');
+    const logicalId = Object.keys(fns).find(
+      (k) => fns[k].Properties.Handler === 'functions/order-status-api/index.handler',
+    );
+    expect(logicalId).toBeDefined();
+
+    const roleRef = fns[logicalId!].Properties.Role['Fn::GetAtt'][0];
+    const policies = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((p: any) => JSON.stringify(p.Properties.Roles).includes(roleRef));
+    const actions = policies.flatMap((p: any) =>
+      p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
+        (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
+
+    expect(actions).toEqual(expect.arrayContaining(['dynamodb:GetItem']));
+    for (const forbidden of ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']) {
+      expect(actions).not.toContain(forbidden);
+    }
+  });
+
+  test('it can read this environment\'s secrets, for the Shopify quote', () => {
+    const template = synth();
+    const fns = template.findResources('AWS::Lambda::Function');
+    const logicalId = Object.keys(fns).find(
+      (k) => fns[k].Properties.Handler === 'functions/order-status-api/index.handler',
+    );
+    const roleRef = fns[logicalId!].Properties.Role['Fn::GetAtt'][0];
+    const actions = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((p: any) => JSON.stringify(p.Properties.Roles).includes(roleRef))
+      .flatMap((p: any) => p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
+        (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
+    expect(actions).toEqual(expect.arrayContaining(['ssm:GetParameter']));
   });
 });

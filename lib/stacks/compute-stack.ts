@@ -46,6 +46,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly poller: lambda.Function;
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
+  public readonly orderStatusApi: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
   public readonly demoFeeder: lambda.Function;
@@ -123,6 +124,31 @@ export class ComputeStack extends cdk.Stack {
     // Read for lookups; write is used ONLY by the demo-only /move route, which is
     // hard-guarded in the handler to DEMO-*/ZZ-* orders.
     jobsTable.grantReadWriteData(this.orderApi);
+
+    // --- order-status-api: the customer's view of their own order ---
+    // Public (no Cognito): the customer is not logged in, and the link in their
+    // confirmation email is what authorises them. Bundles src root for
+    // shared/order-stage, order-token, fedex-rates and shopify-orders.
+    this.orderStatusApi = new lambda.Function(this, 'OrderStatusApi', {
+      ...base,
+      functionName: `${config.prefix}-order-status-api`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-status-api/index.handler',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+      },
+      description: 'Customer order status + shipping upgrade quote (read-only)',
+    });
+    // READ ONLY, deliberately. This function is reachable without authentication,
+    // so it is the one that must not be able to change anything even if a bug or
+    // a crafted request got past the token check.
+    jobsTable.grantReadData(this.orderStatusApi);
+    // Shopify credentials, for the tax-inclusive quote. The token is a
+    // dedicated read-only custom app's — never OrderDesk's integration token,
+    // whose rate-limit bucket the legacy program depends on
+    // (docs/legacy-collision-audit.md C4b).
+    this.grantSecretsRead(this.orderStatusApi, config);
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.

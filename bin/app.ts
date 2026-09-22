@@ -152,6 +152,7 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   config,
   webhookFn: computeStack.webhook,
   orderApiFn: computeStack.orderApi,
+  orderStatusApiFn: computeStack.orderStatusApi,
   approvalFn: computeStack.approval,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,

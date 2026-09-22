@@ -15,6 +15,12 @@ export interface ApiStackProps extends cdk.StackProps {
   readonly orderApiFn: lambda.IFunction;
   /** Proof approve/reject — resumes the paused pipeline (Cognito JWT). */
   readonly approvalFn: lambda.IFunction;
+  /**
+   * Customer order status + upgrade quote. PUBLIC by design — the customer has
+   * no account, and the signed link in their confirmation email is the
+   * authorisation. Read-only, and the Lambda's own role cannot write.
+   */
+  readonly orderStatusApiFn?: lambda.IFunction;
   readonly userPool: cognito.IUserPool;
   readonly userPoolClient: cognito.IUserPoolClient;
 }
@@ -51,6 +57,17 @@ export class ApiStack extends cdk.Stack {
         maxAge: cdk.Duration.hours(1),
       },
     });
+
+    // Public customer route — no Cognito. The order-status token in the query
+    // string is the access check, done inside the Lambda, and it returns the
+    // same 404 for a bad token as for an order that does not exist.
+    if (props.orderStatusApiFn) {
+      this.httpApi.addRoutes({
+        path: '/my-order',
+        methods: [apigw.HttpMethod.GET],
+        integration: new HttpLambdaIntegration('OrderStatusIntegration', props.orderStatusApiFn),
+      });
+    }
 
     // Public webhook route — auth handled inside the Lambda (shared secret).
     this.httpApi.addRoutes({
