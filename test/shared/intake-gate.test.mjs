@@ -2,8 +2,9 @@
 //
 // Pins the five checks legacy runs before an order may be auto-processed
 // (SBBotExpress queueHelpers.getBatchJobData), their precedence, and the
-// OrderDesk folder/tag each one maps to — plus the sixth, ours, which holds an
-// implausibly large item and must never displace one of Linh's reasons.
+// OrderDesk folder/tag each one maps to — plus ours, which hold an implausibly
+// large item and an order with nothing to print, and must never displace one of
+// Linh's reasons.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -107,8 +108,9 @@ test('gate order and folder/tag tables match legacy', () => {
   assert.deepEqual(GATES.slice(0, 5).map((g) => g.reason), [
     'special-product', 'multiple-files', 'special-instructions', 'dc-order', 'missing-file',
   ]);
-  assert.deepEqual(GATES.slice(5).map((g) => g.reason), ['oversize'],
-    'ours go after his, and there is still only one of them');
+  assert.deepEqual(GATES.slice(5).map((g) => g.reason),
+    ['oversize', 'nothing-to-print'],
+    'ours go after his, in the order they were added');
   assert.equal(ORDERDESK_FOLDERS.sales, '657836');
   assert.equal(ORDERDESK_FOLDERS.manual, '652268');
   assert.equal(ORDERDESK_FOLDERS.review, '653109');
@@ -193,7 +195,10 @@ test('an unparsable size is not treated as oversize', () => {
   // is about magnitude only, and must not quietly become a validity check.
   assert.equal(intakeGate({ flags: {}, items: [{ width: null, height: 'x', unit: 'ft' }] }), null);
   assert.equal(intakeGate({ flags: {}, items: [{}] }), null);
-  assert.equal(intakeGate({ flags: {} }), null);
+  // An order with no items at all is held now, but by nothing-to-print — the
+  // magnitude check still must not be the one that fires.
+  assert.equal(intakeGate({ flags: {} }).reason, 'nothing-to-print');
+  assert.equal(oversizedItem({ flags: {} }), null);
 });
 
 test('oversizedItem reports which item and its inches', () => {
@@ -274,4 +279,58 @@ test('a 40ft banner passes, which the old 300in threshold would have held', () =
   // The threshold used to be 300 in, picked from our own data rather than from
   // Linh. Anything between 25 and 50 feet was being held for no reason.
   assert.equal(intakeGate({ flags: {}, items: [{ width: 40, height: 8, unit: 'ft' }] }), null);
+});
+
+// --- nothing to print (ours, not legacy's) ---------------------------------
+//
+// S61855 on 2026-09-19: an 8'x8' telescopic stand and no banner. Every flag
+// false, so it cleared the gate, produced no files in resize or finish, and
+// died in the transfer step on "No finished files found" after four attempts.
+
+/** An order whose only line is hardware, so cleanOrder leaves items empty. */
+function hardwareOnlyJob() {
+  return cleanOrder({
+    source_id: 'S61855',
+    id: '4978542564',
+    order_metadata: { 'First Rep': 'Shopify' },
+    shipping: { state: 'GA', postal_code: '30078' },
+    order_items: [{
+      code: 'SKUBS08X08',
+      name: "8'x8' Telescopic Adjustable Stand",
+      quantity: 1,
+      id: 'LI1',
+      variation_list: {},
+      metadata: {},
+    }],
+  });
+}
+
+test('an order with no printable item is held, not processed', () => {
+  const j = hardwareOnlyJob();
+  assert.equal(j.items.length, 0, 'the hardware line is dropped, as in legacy');
+  assert.ok(j.hardwareItems?.length, 'and kept aside so the record is complete');
+
+  const g = intakeGate(j);
+  assert.ok(g, 'S61855 must not clear the gate');
+  assert.equal(g.reason, 'nothing-to-print');
+  assert.equal(g.folder, 'manual');
+  assert.equal(g.tag, 'Red');
+  assert.equal(g.folderId, ORDERDESK_FOLDERS.manual);
+});
+
+test('a missing items array is held rather than crashing the gate', () => {
+  assert.equal(intakeGate({ flags: {} }).reason, 'nothing-to-print');
+  assert.equal(intakeGate({ flags: {}, items: [] }).reason, 'nothing-to-print');
+});
+
+test('one printable item is enough to clear the nothing-to-print check', () => {
+  assert.equal(intakeGate(job()), null);
+});
+
+test("nothing-to-print never displaces one of Linh's reasons", () => {
+  // An order with no printable items AND special instructions must still report
+  // the instructions, because that is where legacy would have filed it.
+  const j = hardwareOnlyJob();
+  j.flags.hasInstructions = true;
+  assert.equal(intakeGate(j).reason, 'special-instructions');
 });

@@ -6,10 +6,11 @@
 // out of the automatic flow: the bot re-tags it and moves it to a staff folder
 // in OrderDesk, then skips it. Only orders that clear all five are processed.
 //
-// A sixth check is ours, added when the production transfer was about to be
-// armed for real: an item whose size is implausibly large (MAX_SIDE_INCHES).
-// It runs LAST so it can never change which of Linh's reasons an order reports,
-// and like his it only diverts the order to a person.
+// Two more checks are ours, both added when the production transfer was about
+// to be armed for real: an item whose size is implausibly large
+// (MAX_SIDE_INCHES), and an order with no printable item at all. They run AFTER
+// Linh's five so they can never change which of his reasons an order reports,
+// and like his they only divert the order to a person.
 //
 // The legacy order is significant and preserved here — an order that trips more
 // than one check is reported under the first one legacy would have hit:
@@ -92,8 +93,10 @@ export const ORDERDESK_TAGS = {
 };
 
 /**
- * The five checks, in legacy order. `flag` is the key on job.flags computed by
- * cleanOrder; `reason` is ours, for the dashboard and the logs.
+ * The checks, in legacy order: Linh's five first, then ours. `flag` is the key
+ * on job.flags computed by cleanOrder; `test` is a predicate for the checks
+ * that read the job rather than a precomputed flag; `reason` is ours, for the
+ * dashboard and the logs.
  */
 export const GATES = [
   {
@@ -142,6 +145,27 @@ export const GATES = [
     tag: 'Red',
     folder: 'manual',
     explain: 'An item is implausibly large — almost always inches read as feet',
+  },
+  // Also ours, and also last: an order can clear every check above and still
+  // have nothing to print. Legacy drops hardware line items before the workers
+  // ever see them (checkHardwareSku -> null, QTSOrderDetails.mjs:23) and so do
+  // we, so an order for a stand and nothing else arrives here with items: [].
+  //
+  // Nothing downstream copes with that. Resize produces [], finish produces [],
+  // and the transfer step dies on "No finished files found" after four
+  // attempts — that is S61855 on 2026-09-19, an 8'x8' telescopic stand with no
+  // banner. Legacy has the identical blind spot; the only difference is that
+  // its empty job ends quietly instead of failing loudly.
+  //
+  // Somebody has to ship the hardware either way, so the order belongs in front
+  // of that person rather than in the failure pile. Measured at 1 order in 559
+  // (0.18%), so this cannot become noise staff learn to ignore.
+  {
+    test: (job) => (job?.items ?? []).length === 0,
+    reason: 'nothing-to-print',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'No printable item — hardware-only order, nothing for the workers to make',
   },
 ];
 
