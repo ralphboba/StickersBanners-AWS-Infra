@@ -22,6 +22,8 @@ import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 import { orderStage, STEPS } from '../../shared/order-stage.mjs';
 import { authorisesOrder } from '../../shared/order-token.mjs';
 import { quoteUpgrade } from '../../shared/fedex-rates.mjs';
+import { quoteUpgradeWithTax } from '../../shared/shopify-orders.mjs';
+import { getSecret } from '../../shared/secrets.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
@@ -48,6 +50,30 @@ const BLOCKED_COPY = {
   awaiting_routing: 'We’re still scheduling this order. Check back shortly.',
   unknown_folder: 'This order cannot be changed online right now.',
 };
+
+/**
+ * Ask Shopify what it would actually charge. Returns null on any problem, and
+ * the caller then offers no price at all — a page that shows nothing is a
+ * nuisance; a page that shows a number we cannot bill is a refund.
+ */
+async function priceWithTax(row, quote) {
+  try {
+    const [shop, token] = await Promise.all([
+      getSecret('shopify', 'shop-domain'),
+      getSecret('shopify', 'admin-token'),
+    ]);
+    return await quoteUpgradeWithTax({
+      shop,
+      token,
+      title: `Shipping Upgrade: ${quote.from} → ${quote.to}`,
+      amount: quote.amount,
+      shippingAddress: row.shipping?.address ?? undefined,
+    });
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'upgrade quote unavailable', err: String(err) }));
+    return null;
+  }
+}
 
 export async function handler(event = {}) {
   const q = event?.queryStringParameters ?? {};
@@ -95,13 +121,15 @@ export async function handler(event = {}) {
   if (stage.canUpgrade) {
     const quote = quoteUpgrade(row.totals?.subtotal, stage.currentService, stage.upgradeTo);
     if (quote) {
-      const tax = null;   // ← Shopify draftOrderCalculate
+      const priced = await priceWithTax(row, quote);
       upgrade = {
         to: quote.to,
         shipping: quote.amount,
-        tax,
-        total: tax === null ? null : Math.round((quote.amount + tax) * 100) / 100,
-        final: tax !== null,
+        tax: priced?.tax ?? null,
+        total: priced?.total ?? null,
+        // Only a figure Shopify stands behind is final. Everything downstream
+        // — the page, the button — keys off this, never off `shipping`.
+        final: Boolean(priced),
         currentPrice: quote.fromPrice,
         newPrice: quote.toPrice,
       };

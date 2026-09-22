@@ -16,6 +16,7 @@ import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { writeGateStatus } from '../../shared/write-gates.mjs';
+import { fetchOrderByName } from '../../shared/shopify-orders.mjs';
 import { MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
 import {
   isClaimed, isConditionFailure,
@@ -44,6 +45,9 @@ const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 // that; if it ever does not, this is the line to trim.
 const MIRROR_FOLDERS = MIRROR_STATUS_BY_ID;
 const MAX_PER_FOLDER = 400; // safety cap per folder per sync
+// Shopify order-status lookups per mirror run. One per order for its lifetime,
+// so this is only a backlog limit; the rest are picked up on later runs.
+const MAX_SHOPIFY_LOOKUPS = Number(process.env.MAX_SHOPIFY_LOOKUPS ?? 25);
 
 // Some real orders (non-banner products) have no WIDTH/HEIGHT -> NaN fields,
 // which DynamoDB rejects. Drop NaN (and undefined) deeply for display-only rows.
@@ -175,6 +179,18 @@ export async function handler(event = {}) {
   // Cost-efficient: reads current state and only WRITES orders that are new or
   // whose folder/status changed; deletes those that left.
   if (event?.mirror === true) {
+    // Optional: the mirror works without Shopify, just without the link that
+    // lets a customer open their own order.
+    let shopify = null;
+    try {
+      shopify = {
+        shop: await getSecret('shopify', 'shop-domain'),
+        token: await getSecret('shopify', 'admin-token'),
+      };
+    } catch {
+      console.warn(JSON.stringify({ msg: 'Shopify credentials absent; skipping order-status links' }));
+    }
+
     // 1. current real orders across folders -> desired status. Orders the system
     //    can't fully handle are pulled aside into "needs_review": an unknown SKU
     //    (product not set up) or an intake order we can't route to a facility.
@@ -209,25 +225,51 @@ export async function handler(event = {}) {
     }
 
     // 2. what we already have mirrored
-    const existing = new Map(); // orderName -> status
+    const existing = new Map(); // orderName -> { status, orderStatusUrl }
     let ESK;
     do {
       const scan = await ddb.send(new ScanCommand({
         TableName: JOBS_TABLE,
         FilterExpression: 'SK = :meta AND mirror = :t',
         ExpressionAttributeValues: { ':meta': 'META', ':t': true },
-        ProjectionExpression: 'orderName, #s',
+        ProjectionExpression: 'orderName, #s, orderStatusUrl',
         ExpressionAttributeNames: { '#s': 'status' },
         ExclusiveStartKey: ESK,
       }));
-      for (const it of scan.Items ?? []) existing.set(it.orderName, it.status);
+      for (const it of scan.Items ?? []) {
+        existing.set(it.orderName, { status: it.status, orderStatusUrl: it.orderStatusUrl });
+      }
       ESK = scan.LastEvaluatedKey;
     } while (ESK);
 
     // 3. write only new/changed rows
+    //
+    // The customer page's whole access check is Shopify's order-status URL, and
+    // only Shopify has it. It is fetched ONCE per order, the first time the
+    // mirror sees one without it — not every run, and never on request from the
+    // page, which is unauthenticated and could otherwise be used to make us
+    // hammer the store. MAX_SHOPIFY_LOOKUPS caps a backlog so a first run
+    // against a full board cannot turn into a burst against a Shopify bucket
+    // the OrderDesk integration — and therefore the legacy bot — depends on.
     let wrote = 0;
+    let shopifyLookups = 0;
     for (const [name, { job, status, folderId }] of current) {
-      if (existing.get(name) === status) continue; // unchanged -> skip (no write)
+      const known = existing.get(name);
+      const needsLink = !known?.orderStatusUrl;
+      if (known?.status === status && !needsLink) continue; // unchanged -> no write
+
+      let orderStatusUrl = known?.orderStatusUrl;
+      if (needsLink && shopifyLookups < MAX_SHOPIFY_LOOKUPS && shopify) {
+        shopifyLookups += 1;
+        try {
+          const found = await fetchOrderByName({ ...shopify, orderName: name });
+          orderStatusUrl = found?.statusPageUrl ?? undefined;
+        } catch (err) {
+          // Never let a Shopify problem stop the board from updating.
+          console.warn(JSON.stringify({ msg: 'Shopify lookup failed', name, err: String(err) }));
+        }
+      }
+
       await ddb.send(new PutCommand({
         TableName: JOBS_TABLE,
         Item: {
@@ -236,7 +278,9 @@ export async function handler(event = {}) {
           // folderId, not just the folder name: the customer page decides what
           // it may offer from the folder id (order-stage.mjs), and names are
           // edited in OrderDesk far more often than ids are.
-          status, mirror: true, folderId: String(folderId), ...job,
+          status, mirror: true, folderId: String(folderId),
+          ...(orderStatusUrl ? { orderStatusUrl } : {}),
+          ...job,
         },
         // Only create/refresh a mirror row; never touch a processed order.
         ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
