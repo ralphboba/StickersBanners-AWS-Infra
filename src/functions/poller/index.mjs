@@ -295,15 +295,34 @@ export async function handler(event = {}) {
   const { since, until } = event ?? {};
   const paginate = event?.all === true;
 
+  /** The next calendar day, YYYY-MM-DD. OrderDesk's end date is exclusive. */
+  const dayAfter = (ymd) => {
+    const d = new Date(`${ymd}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return ymd; // not a date we understand: send as-is
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+
   const pageUrl = (offset) => {
     const q = new URLSearchParams();
     if (folderId) q.set('folder_id', String(folderId));
     q.set('limit', String(limit));
     if (offset) q.set('offset', String(offset));
     if (since || until) {
-      q.set('date_type', 'date_added');
+      // Two things about OrderDesk's date filter, both found the hard way
+      // (2026-09-23) because each fails by returning ZERO rather than an error:
+      //
+      //   1. `date_type=date_added` makes the filter match nothing at all.
+      //      Omitting it, or sending any other value, filters on the added date
+      //      as intended -- 2026-09-22 returns 399 orders with date_type left
+      //      off and 0 with it set. So it is not sent.
+      //   2. `search_end_date` is EXCLUSIVE. start=end=2026-09-22 returns 0;
+      //      start=2026-09-22 end=2026-09-23 returns that day's 399.
+      //
+      // `until` is inclusive from the caller's side -- a daily audit asks for
+      // one date and means that whole day -- so the extra day is added here.
       if (since) q.set('search_start_date', since);
-      if (until) q.set('search_end_date', until);
+      if (until) q.set('search_end_date', dayAfter(until));
     }
     return `${ORDERDESK_API}/orders?${q}`;
   };
