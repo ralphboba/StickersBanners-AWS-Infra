@@ -342,6 +342,12 @@ so leaving it up costs nothing.
 
 ### What is still unverified going in
 
+- **Settled 2026-09-22**: the byte-identical comparison stage 2 asks for has now
+  been run — three orders match Linh's output exactly, including a Pole Pocket
+  Top Only and an invoice proof jpg. See **`docs/awstest-audit.md`**. Two things
+  that audit did NOT settle: no PDF-sourced order could be compared, and TX/NJ/NV
+  no longer keep per-order folders, so a comparison there has to be made within
+  a day or two of the transfer or the reference is gone.
 - Finishing families other than Hem & Grommets and Pole Pocket Top Only: PPTB,
   PPBO, RET, GO, CO, HO have no side-by-side against Linh's output.
 - Whether his program re-sends a proof email for an order it reprocesses. It
