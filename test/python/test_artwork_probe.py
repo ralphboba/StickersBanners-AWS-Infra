@@ -124,3 +124,37 @@ class NothingEscapes(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipIf(DEPS, f'resize deps unavailable: {DEPS}')
+class TheProbeIsNotStricterThanThePipeline(unittest.TestCase):
+    """A probe with its own limits reports failures that would not happen.
+
+    Found live: PROBE_MAX_BYTES defaulted to 256 MiB while resize's own cap is
+    1 GiB, so the census called a real order unusable on 2026-09-22 when the
+    pipeline would have fetched the file without complaint.
+    """
+
+    def test_no_cap_is_imposed_unless_asked_for(self):
+        self.assertIsNone(artwork_probe._optional_int('PROBE_MAX_BYTES_UNSET_XYZ'))
+
+    def test_an_explicit_cap_is_still_honoured(self):
+        os.environ['PROBE_MAX_BYTES_TEST'] = '1234'
+        try:
+            self.assertEqual(artwork_probe._optional_int('PROBE_MAX_BYTES_TEST'), 1234)
+        finally:
+            del os.environ['PROBE_MAX_BYTES_TEST']
+
+    def test_rubbish_is_treated_as_unset_rather_than_as_zero(self):
+        for bad in ('', '   ', 'lots', '0', '-5'):
+            os.environ['PROBE_MAX_BYTES_TEST'] = bad
+            try:
+                self.assertIsNone(artwork_probe._optional_int('PROBE_MAX_BYTES_TEST'),
+                                  f'{bad!r} must not become a cap')
+            finally:
+                del os.environ['PROBE_MAX_BYTES_TEST']
+
+    def test_the_pipeline_cap_is_the_one_that_applies(self):
+        from fetch import DEFAULT_MAX_BYTES
+        self.assertEqual(DEFAULT_MAX_BYTES, 1024 * 1024 * 1024,
+                         'if resize changes its cap, this test is the reminder')

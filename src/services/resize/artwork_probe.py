@@ -20,7 +20,7 @@ Run contract (env):
 
   PROBE_INPUT_BUCKET / PROBE_INPUT_KEY    JSON list of items to check
   PROBE_OUTPUT_BUCKET / PROBE_OUTPUT_KEY  where the report goes
-  PROBE_MAX_BYTES    per-file cap, default 268435456 (256 MiB)
+  PROBE_MAX_BYTES    per-file cap; UNSET means whatever resize itself uses
   PROBE_MAX_FILES    stop after this many, default 500
 
 Each input item: {orderName, itemNo, sku, name, url, width, height, unit}
@@ -43,7 +43,6 @@ from fetch import download
 
 Image.MAX_IMAGE_PIXELS = None  # same as converter: banners exceed PIL's guard
 
-DEFAULT_MAX_BYTES = 256 * 1024 * 1024
 DEFAULT_MAX_FILES = 500
 
 s3 = boto3.client("s3")
@@ -55,6 +54,18 @@ def _env_int(name, default):
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _optional_int(name):
+    """None when unset — the caller then imposes nothing of its own."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 def probe_pdf(path, width_px, height_px):
@@ -122,9 +133,15 @@ def probe_item(item, scratch, max_bytes):
     local = os.path.join(scratch, f"probe.{ext}")
     started = time.time()
     # fetch.download takes its bounds from the environment, not arguments, so
-    # the probe's cap is handed over the same way -- and through the same code
-    # path resize uses, timeouts and retries included.
-    env = {**os.environ, "ARTWORK_MAX_BYTES": str(max_bytes)}
+    # a cap is handed over the same way -- and through the same code path resize
+    # uses, timeouts and retries included.
+    #
+    # By default nothing is imposed. A probe stricter than the pipeline reports
+    # failures the pipeline would not have had: at 256 MiB it called a 300 MB
+    # file unusable when resize, whose own cap is 1 GiB, downloads it without
+    # complaint. The whole value of this tool is that its answer is the
+    # pipeline's answer, so the limits have to be the pipeline's limits too.
+    env = os.environ if max_bytes is None else {**os.environ, "ARTWORK_MAX_BYTES": str(max_bytes)}
     try:
         size = download(url, local, env=env)
     except Exception as err:
@@ -160,7 +177,7 @@ def main():
     items = json.loads(s3.get_object(
         Bucket=os.environ["PROBE_INPUT_BUCKET"],
         Key=os.environ["PROBE_INPUT_KEY"])["Body"].read())
-    max_bytes = _env_int("PROBE_MAX_BYTES", DEFAULT_MAX_BYTES)
+    max_bytes = _optional_int("PROBE_MAX_BYTES")
     max_files = _env_int("PROBE_MAX_FILES", DEFAULT_MAX_FILES)
 
     results = []

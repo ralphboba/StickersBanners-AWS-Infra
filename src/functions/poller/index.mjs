@@ -384,6 +384,15 @@ export async function handler(event = {}) {
           rawHeight: it.rawHeight,
           finishingRaw: it.finishingRaw,
           finishingObj: it.finishingObj,
+          // The customer's file. Reported because the census cannot check the
+          // artwork without it, and the two failures on 2026-09-19 that the
+          // order record could not have predicted were both IN the file
+          // (artwork_probe.py). Only the first url and the resolved extension:
+          // an order with more than one file is held by the gate before it can
+          // ever reach the probe, and 399 orders of full url lists is payload
+          // for nobody.
+          artworkUrl: it.artworkUrl,
+          artworkExt: it.artworkExt,
         })),
       };
     });
