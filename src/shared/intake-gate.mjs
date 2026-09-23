@@ -6,11 +6,12 @@
 // out of the automatic flow: the bot re-tags it and moves it to a staff folder
 // in OrderDesk, then skips it. Only orders that clear all five are processed.
 //
-// Two more checks are ours, both added when the production transfer was about
+// Three more checks are ours, all added when the production transfer was about
 // to be armed for real: an item whose size is implausibly large
-// (MAX_SIDE_INCHES), and an order with no printable item at all. They run AFTER
-// Linh's five so they can never change which of his reasons an order reports,
-// and like his they only divert the order to a person.
+// (MAX_SIDE_INCHES), an order with no printable item at all, and an item whose
+// size is missing entirely. They run AFTER Linh's five so they can never change
+// which of his reasons an order reports, and like his they only divert the
+// order to a person.
 //
 // The legacy order is significant and preserved here — an order that trips more
 // than one check is reported under the first one legacy would have hit:
@@ -167,7 +168,32 @@ export const GATES = [
     folder: 'manual',
     explain: 'No printable item — hardware-only order, nothing for the workers to make',
   },
+  // Also ours. An item with no usable size is the same failure as no item at
+  // all, one step later: resize calls float() on it and dies, four times.
+  //
+  // Most of these are a key we did not read, and readDimensions now covers the
+  // four shapes the store actually uses. What is left is products that record
+  // no size ANYWHERE — yard signs, feather flags — because the size lives in
+  // the SKU and we have no table for it. Three of them cleared every other
+  // check on 2026-09-22 and would have gone to print with width: undefined.
+  //
+  // Holding them is the honest answer until Linh says where those sizes come
+  // from. Guessing a size for a print is worse than asking.
+  {
+    test: (job) => (job?.items ?? []).some((item) => !isUsableSize(item)),
+    reason: 'no-size',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'An item has no usable width/height — the size is not in the order',
+  },
 ];
+
+/** A printable item can only be made if both sides are a positive number. */
+function isUsableSize(item) {
+  const width = Number(item?.width);
+  const height = Number(item?.height);
+  return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+}
 
 /**
  * Largest side, in inches, an item may have before a human has to look at it.

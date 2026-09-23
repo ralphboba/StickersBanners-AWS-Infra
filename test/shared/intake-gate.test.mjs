@@ -109,7 +109,7 @@ test('gate order and folder/tag tables match legacy', () => {
     'special-product', 'multiple-files', 'special-instructions', 'dc-order', 'missing-file',
   ]);
   assert.deepEqual(GATES.slice(5).map((g) => g.reason),
-    ['oversize', 'nothing-to-print'],
+    ['oversize', 'nothing-to-print', 'no-size'],
     'ours go after his, in the order they were added');
   assert.equal(ORDERDESK_FOLDERS.sales, '657836');
   assert.equal(ORDERDESK_FOLDERS.manual, '652268');
@@ -191,12 +191,15 @@ test('one oversized item holds the whole order', () => {
 });
 
 test('an unparsable size is not treated as oversize', () => {
-  // NaN must fall through to the workers exactly as it does today; this check
-  // is about magnitude only, and must not quietly become a validity check.
-  assert.equal(intakeGate({ flags: {}, items: [{ width: null, height: 'x', unit: 'ft' }] }), null);
-  assert.equal(intakeGate({ flags: {}, items: [{}] }), null);
-  // An order with no items at all is held now, but by nothing-to-print — the
-  // magnitude check still must not be the one that fires.
+  // This check is about MAGNITUDE only and must never quietly become a validity
+  // check — NaN is not a large number. An unparsable size is held now, but by
+  // no-size; what is pinned here is which reason fires, and that oversizedItem
+  // itself still reports nothing.
+  for (const items of [[{ width: null, height: 'x', unit: 'ft' }], [{}]]) {
+    assert.equal(intakeGate({ flags: {}, items }).reason, 'no-size');
+    assert.equal(oversizedItem({ items }), null);
+  }
+  // No items at all is a different finding again.
   assert.equal(intakeGate({ flags: {} }).reason, 'nothing-to-print');
   assert.equal(oversizedItem({ flags: {} }), null);
 });
@@ -333,4 +336,58 @@ test("nothing-to-print never displaces one of Linh's reasons", () => {
   const j = hardwareOnlyJob();
   j.flags.hasInstructions = true;
   assert.equal(intakeGate(j).reason, 'special-instructions');
+});
+
+// --- no usable size (ours, not legacy's) -----------------------------------
+//
+// From the 2026-09-22 census: three yard-sign / feather-flag items cleared
+// every other check with width: undefined, because those products record no
+// size anywhere in the order. resize would have called float(None) on them.
+
+test('an item with no size is held', () => {
+  const g = intakeGate({ flags: {}, items: [{ sku: 'YSHDS', width: undefined, height: undefined }] });
+  assert.equal(g.reason, 'no-size');
+  assert.equal(g.folder, 'manual');
+  assert.equal(g.tag, 'Red');
+});
+
+test('every unusable size shape is caught, not just undefined', () => {
+  for (const bad of [
+    { width: undefined, height: 3 },
+    { width: 5, height: undefined },
+    { width: NaN, height: 3 },
+    { width: 0, height: 3 },
+    { width: -2, height: 3 },
+    { width: 5, height: 0 },
+    { width: null, height: null },
+    { width: 'x', height: 'y' },
+  ]) {
+    assert.equal(intakeGate({ flags: {}, items: [bad] })?.reason, 'no-size',
+      `${JSON.stringify(bad)} must not reach the workers`);
+  }
+});
+
+test('one bad item holds the whole order', () => {
+  const g = intakeGate({ flags: {}, items: [{ width: 4, height: 6 }, { width: undefined, height: 3 }] });
+  assert.equal(g.reason, 'no-size');
+});
+
+test('ordinary sizes are untouched', () => {
+  assert.equal(intakeGate({ flags: {}, items: [{ width: 4, height: 6 }] }), null);
+  assert.equal(intakeGate({ flags: {}, items: [{ width: 0.5, height: 0.25 }] }), null,
+    'a small but real size is a size');
+  assert.equal(intakeGate({ flags: {}, items: [{ width: '5', height: '3' }] }), null,
+    'numeric strings are what the parser actually produces');
+});
+
+test("no-size never displaces one of Linh's reasons", () => {
+  const j = { flags: { hasInstructions: true }, items: [{ width: undefined, height: undefined }] };
+  assert.equal(intakeGate(j).reason, 'special-instructions');
+});
+
+test('oversize is reported before no-size when both could apply', () => {
+  // Ours are ordered too: an implausibly large item is a more specific finding
+  // than a missing one, and only one reason can be reported.
+  const j = { flags: {}, items: [{ width: 115, height: 91, unit: 'ft' }, { width: undefined, height: 1 }] };
+  assert.equal(intakeGate(j).reason, 'oversize');
 });

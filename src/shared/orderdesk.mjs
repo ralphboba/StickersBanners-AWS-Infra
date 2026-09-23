@@ -79,15 +79,106 @@ const GROMMETS_FINISHES_SHOPIFY = new Set([
 const fourSides = () => ({ grommets: { sides: ['top', 'left', 'right', 'bottom'] } });
 
 /**
+ * The size of a line item, as the store actually recorded it.
+ *
+ * Legacy reads WIDTH/HEIGHT and nothing else, which was right for the products
+ * that existed when it was written. The store has since added product types
+ * that put the size somewhere else entirely, and a key we do not read is not an
+ * error — it is a line item with `width: undefined` that sails through the
+ * intake gate and dies in resize on `float(None)`. Found by auditing a single
+ * day (2026-09-22): 11 line items across 9 orders, 4 of which would have
+ * reached print.
+ *
+ * The four shapes, all seen in live orders that day:
+ *
+ *   WIDTH / HEIGHT                "4" / "6"                    legacy, unit inferred
+ *   Width (Feet) / Height (Feet)  "5" / "3"                    unit stated
+ *   Width (Inches) / Height …     "4" / "4"                    unit stated
+ *   Size (WxH) Inches             `145" x 91" (10' x 8' Feet)` unit stated
+ *   Diameter (Inches)             `4" Round`                   unit stated, one number
+ *
+ * Where the key names the unit, that unit is RETURNED AS A HINT and beats the
+ * SKU-table guess downstream, because a stated unit is data and the table is
+ * inference. Where it does not — the legacy pair — nothing is hinted and the
+ * existing rules run exactly as before, so no order that parses today changes.
+ *
+ * @returns {{ rawWidth: *, rawHeight: *, unitHint?: 'in'|'ft' }}
+ */
+export function readDimensions(variationList, { shopify = true } = {}) {
+  const vl = variationList ?? {};
+
+  // Legacy first, so its behaviour is never displaced by a newer key.
+  const legacyWidth = shopify ? (vl.WIDTH ?? vl.Width) : vl.WIDTH;
+  const legacyHeight = shopify ? (vl.HEIGHT ?? vl.Height) : vl.HEIGHT;
+  if (legacyWidth !== undefined || legacyHeight !== undefined) {
+    return { rawWidth: legacyWidth, rawHeight: legacyHeight };
+  }
+
+  // The store is inconsistent about case and spacing ("UPLOADED FILE" next to
+  // "Uploaded File" in the same day's orders), so match on a normalised key.
+  const byKey = new Map();
+  for (const [key, value] of Object.entries(vl)) {
+    byKey.set(String(key).toLowerCase().replace(/\s+/g, ' ').trim(), value);
+  }
+
+  /** Leading number of a value like `145" x 91" (10' x 8' Feet)` or `4" Round`. */
+  const firstNumbers = (value, count) => {
+    // Anything in parentheses is a restatement in the OTHER unit — the whole
+    // point of these keys is that the unit is in the key name, so a value that
+    // also says `(10' x 8' Feet)` must not contribute its numbers.
+    const head = String(value ?? '').split('(')[0];
+    const found = head.match(/-?\d+(?:\.\d+)?/g) ?? [];
+    return found.slice(0, count).map(Number);
+  };
+
+  for (const [suffix, unit] of [['feet', 'ft'], ['ft', 'ft'], ['inches', 'in'], ['in', 'in']]) {
+    const width = byKey.get(`width (${suffix})`);
+    const height = byKey.get(`height (${suffix})`);
+    if (width !== undefined || height !== undefined) {
+      return { rawWidth: width, rawHeight: height, unitHint: unit };
+    }
+
+    // One field holding both, e.g. `Size (WxH) Inches`.
+    const combined = byKey.get(`size (wxh) ${suffix}`);
+    if (combined !== undefined) {
+      const [w, h] = firstNumbers(combined, 2);
+      if (Number.isFinite(w) && Number.isFinite(h)) {
+        return { rawWidth: w, rawHeight: h, unitHint: unit };
+      }
+    }
+
+    // Round products state a diameter. The print is still a square of that
+    // side, so both dimensions take it rather than inventing a shape concept.
+    const diameter = byKey.get(`diameter (${suffix})`);
+    if (diameter !== undefined) {
+      const [d] = firstNumbers(diameter, 1);
+      if (Number.isFinite(d)) return { rawWidth: d, rawHeight: d, unitHint: unit };
+    }
+  }
+
+  return { rawWidth: undefined, rawHeight: undefined };
+}
+
+/**
  * Legacy getUnit: pick the unit and remap certain nominal sizes to inches.
  * Mutates nothing — returns the effective { width, height, unit }.
  */
-export function resolveDimensions(sku, productName, rawWidth, rawHeight, variant = SHOPIFY) {
+export function resolveDimensions(sku, productName, rawWidth, rawHeight, variant = SHOPIFY,
+                                  unitHint = undefined) {
   // Fixed-size products (e.g. tents) print at a set size regardless of the
   // order's WIDTH/HEIGHT. Return those dimensions verbatim (bleed = print size).
   // Not a legacy rule — these products postdate the legacy program.
   const fixed = fixedDimensions(sku);
   if (fixed) return { ...fixed };
+
+  // The variation key named the unit (readDimensions). Then every rule below is
+  // the wrong tool: isInchSku is a guess at the unit, and the 8x8 / 4x4 remaps
+  // exist to catch a nominal size quoted in feet that is really inches. Applied
+  // to a value the store already labelled `Width (Inches)`, they would turn a
+  // genuine 8x8 inch sticker into 92x92. Stated data wins.
+  if (unitHint) {
+    return { width: parseFloat(rawWidth), height: parseFloat(rawHeight), unit: unitHint };
+  }
 
   let width = parseFloat(rawWidth);
   let height = parseFloat(rawHeight);
@@ -365,9 +456,9 @@ export function cleanOrder(order) {
     const itemNo = index + 1;
 
     // ShopifyDetails accepts the store's alternate field spellings; QTS reads
-    // only the upper-case forms.
-    const rawWidth = shopify ? (vl.WIDTH ?? vl.Width) : vl.WIDTH;
-    const rawHeight = shopify ? (vl.HEIGHT ?? vl.Height) : vl.HEIGHT;
+    // only the upper-case forms. readDimensions also covers the newer product
+    // types that record the size under a key naming its own unit.
+    const { rawWidth, rawHeight, unitHint } = readDimensions(vl, { shopify });
     const finish = shopify
       ? (vl['FINISHING OPTIONS'] ?? vl['Finishing Options'] ?? vl['Finishing options'] ?? 'not available')
       : vl['FINISHING OPTIONS'];
@@ -377,7 +468,7 @@ export function cleanOrder(order) {
 
     // Resolve dimensions/unit (with legacy remap) BEFORE finishing, so grommet
     // counts use the effective size — exactly as the legacy order path did.
-    const { width, height, unit } = resolveDimensions(sku, it.name, rawWidth, rawHeight, variant);
+    const { width, height, unit } = resolveDimensions(sku, it.name, rawWidth, rawHeight, variant, unitHint);
 
     const art = collectArtwork(vl, it.metadata, variant);
 
