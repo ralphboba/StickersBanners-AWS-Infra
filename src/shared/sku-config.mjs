@@ -83,23 +83,20 @@ export const FIXED_DIMENSIONS = {
   SKU10ET: { width: 119, height: 84.28, unit: 'in' },
   // 10ft Tent Full Walls — safe zone 111x76 in; bleed (print) 115x80 in.
   SKU10TFW: { width: 115, height: 80, unit: 'in' },
-  // Yard Signs. The Shopify product (handle `yard-sign`, checked 2026-09-24)
-  // states `24" x 18" 4mm corrugated plastic Sign` and offers NO size option at
-  // all -- its four variants differ only by H-stake and single/double sided.
-  // That is why the order carries no width or height: there is nothing to pick.
-  // Six of these a day were being held by the no-size gate.
+  // Yard signs are NOT here on purpose, and this is the note that stops them
+  // being added again. They are 24x18 in -- the Shopify product says so and has
+  // no size option, which is why the order carries no dimensions -- so a fixed
+  // size entry looks obviously right and was briefly added on 2026-09-24.
   //
-  //   YSHSS  Sign + H-Stake / Single Sided
-  //   YSHDS  Sign + H-Stake / Double Sided
-  //   YSSOSS Sign Only      / Single Sided
-  //   YSSODS Sign Only      / Double Sided
+  // It was wrong. Kai: yard signs, flag banners, event tents and canvas wraps
+  // are orders we take and hand to B2SIGN; we do not print them. Giving them a
+  // size makes them clear the intake gate and flow into resize, finish and a
+  // transfer to one of our own facilities -- print files for a job somebody
+  // else is producing. Held is the correct outcome for these, not printed.
   //
-  // Trim is 24x18; no bleed figure is published for this product, so trim is
-  // what goes here. If production wants bleed, this is the one line to change.
-  YSHSS: { width: 24, height: 18, unit: 'in' },
-  YSHDS: { width: 24, height: 18, unit: 'in' },
-  YSSOSS: { width: 24, height: 18, unit: 'in' },
-  YSSODS: { width: 24, height: 18, unit: 'in' },
+  // (The tents in this table are a related question: real orders carry `ET10`,
+  //  not SKU10ET/SKU10TFW, so those two entries match nothing live and ET10
+  //  falls to the missing-file gate. Left alone pending Kai's decision.)
 };
 
 export function fixedDimensions(sku) {
