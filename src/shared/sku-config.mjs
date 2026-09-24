@@ -83,6 +83,23 @@ export const FIXED_DIMENSIONS = {
   SKU10ET: { width: 119, height: 84.28, unit: 'in' },
   // 10ft Tent Full Walls — safe zone 111x76 in; bleed (print) 115x80 in.
   SKU10TFW: { width: 115, height: 80, unit: 'in' },
+  // Yard Signs. The Shopify product (handle `yard-sign`, checked 2026-09-24)
+  // states `24" x 18" 4mm corrugated plastic Sign` and offers NO size option at
+  // all -- its four variants differ only by H-stake and single/double sided.
+  // That is why the order carries no width or height: there is nothing to pick.
+  // Six of these a day were being held by the no-size gate.
+  //
+  //   YSHSS  Sign + H-Stake / Single Sided
+  //   YSHDS  Sign + H-Stake / Double Sided
+  //   YSSOSS Sign Only      / Single Sided
+  //   YSSODS Sign Only      / Double Sided
+  //
+  // Trim is 24x18; no bleed figure is published for this product, so trim is
+  // what goes here. If production wants bleed, this is the one line to change.
+  YSHSS: { width: 24, height: 18, unit: 'in' },
+  YSHDS: { width: 24, height: 18, unit: 'in' },
+  YSSOSS: { width: 24, height: 18, unit: 'in' },
+  YSSODS: { width: 24, height: 18, unit: 'in' },
 };
 
 export function fixedDimensions(sku) {
@@ -102,8 +119,12 @@ export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU1
 //
 // Derived from the store's SKU catalogue (SB_SKU.xlsx), which Kai confirmed is
 // current. Every entry is a product whose name makes it unambiguous — "Adjustable
-// Banner Stand", "Red Carpet", "Telescopic Pole Replacement". NOT yet confirmed
-// against Linh's `dict:hardwareSku` itself; he hasn't sent it.
+// Banner Stand", "Red Carpet", "Telescopic Pole Replacement".
+//
+// This IS the authority, not a stand-in for one: Linh on `dict:hardwareSku` --
+// "hardware sku just comes from the excel sheet for hardware" -- and that sheet
+// is the one this list came from. An earlier note here called it unconfirmed and
+// was wrong.
 //
 // Deliberately excluded because the catalogue name is ambiguous: SKUHS
 // ("H-Stake") and ANTIF ("Antimicrobial Copper Film"). Leaving them out is the

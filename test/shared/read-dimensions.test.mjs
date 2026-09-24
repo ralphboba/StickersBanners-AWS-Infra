@@ -201,3 +201,49 @@ test('4978992940 comes out as 8 feet, not 96', () => {
   // 96 in = 8 ft, comfortably inside the 600 in gate; as feet it was 1152.
   assert.ok(item.width <= 600 && item.height <= 600, 'must no longer read as oversize');
 });
+
+// --- yard signs are a fixed size ------------------------------------------
+//
+// The Shopify product (handle `yard-sign`, checked 2026-09-24) says
+// `24" x 18" 4mm corrugated plastic Sign` and has no size option at all — its
+// four variants differ only by H-stake and single/double sided. So the order
+// carries no dimensions because there is nothing for the customer to choose.
+// Six a day were being held by the no-size gate.
+
+test('every yard sign variant prints at 24x18 inches', () => {
+  for (const sku of ['YSHSS', 'YSHDS', 'YSSOSS', 'YSSODS']) {
+    const d = resolveDimensions(sku, 'Yard Sign', undefined, undefined);
+    assert.deepEqual(d, { width: 24, height: 18, unit: 'in' }, sku);
+  }
+});
+
+test('a yard sign order now clears the gate it was held by', async () => {
+  const { intakeGate } = await import('../../src/shared/intake-gate.mjs');
+  const job = cleanOrder({
+    source_id: 'S62553-1',
+    id: '902',
+    order_metadata: { 'First Rep': 'Shopify' },
+    shipping: { state: 'TX', postal_code: '75001' },
+    order_items: [{
+      code: 'YSHDS', name: 'Yard Sign', quantity: 1, id: 'LI1',
+      variation_list: {
+        'Uploaded File': 'https://cdn.shop/files/CE2023.pdf',
+        Type: 'Sign + H-Stake',
+        Graphic: 'Double Sided',
+      },
+      metadata: {},
+    }],
+  });
+  assert.equal(job.items[0].width, 24);
+  assert.equal(job.items[0].height, 18);
+  assert.equal(job.items[0].unit, 'in');
+  assert.equal(intakeGate(job), null, 'no longer held for a missing size');
+});
+
+test('a fixed size ignores whatever the order happens to carry', () => {
+  // The customer cannot set one, but if a stray value ever appears it must not
+  // override the product's actual physical size.
+  assert.deepEqual(
+    resolveDimensions('YSHSS', 'Yard Sign', '99', '99'),
+    { width: 24, height: 18, unit: 'in' });
+});
