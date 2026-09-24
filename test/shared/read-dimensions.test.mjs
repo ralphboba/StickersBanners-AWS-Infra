@@ -15,7 +15,10 @@ import { readDimensions, resolveDimensions, cleanOrder } from '../../src/shared/
 
 test('WIDTH/HEIGHT still wins, and hints nothing', () => {
   const d = readDimensions({ WIDTH: '4', HEIGHT: '6' });
-  assert.deepEqual(d, { rawWidth: '4', rawHeight: '6' });
+  assert.equal(d.rawWidth, '4');
+  assert.equal(d.rawHeight, '6');
+  // An absent hint and an explicitly-undefined one mean the same thing to
+  // resolveDimensions: infer the unit from the SKU, as legacy always has.
   assert.equal(d.unitHint, undefined, 'the legacy path must keep inferring the unit');
 });
 
@@ -119,4 +122,82 @@ test('cleanOrder resolves a Width (Feet) item instead of leaving it undefined', 
   assert.equal(item.height, 3);
   assert.equal(item.unit, 'ft');
   assert.ok(Number.isFinite(item.width), 'a printable item must have a usable size');
+});
+
+// --- a unit typed into the value ------------------------------------------
+//
+// Live on 2026-09-23: order 4978992940, an "8'x8' Step & Repeat Banner Only",
+// arrived as `Width (Feet): "96 in"`. The key and the value disagree and the
+// value is right — 96 inches IS 8 feet. Read as feet it is 1152 inches, and
+// the order was held as implausibly large.
+//
+// This is the same shape as the SKUAB case that has been open in
+// docs/linh-requirements.md: `'48 in' x '80 in'` parsed as 48 feet.
+
+import { unitInValue } from '../../src/shared/orderdesk.mjs';
+
+test('a unit written into the value is recognised', () => {
+  for (const [value, expected] of [
+    ['96 in', 'in'], ['48 in', 'in'], ['80 inch', 'in'], ['12 inches', 'in'],
+    ['6 ft', 'ft'], ['3 feet', 'ft'], ['1 foot', 'ft'],
+    ['24"', 'in'], ["3'", 'ft'], ['24 "', 'in'],
+  ]) {
+    assert.equal(unitInValue(value), expected, `${value} -> ${expected}`);
+  }
+});
+
+test('a plain number states no unit', () => {
+  for (const value of ['5', '5.5', ' 12 ', '', null, undefined, 'Double Sided', 'Sign + H-Stake']) {
+    assert.equal(unitInValue(value), undefined, `${JSON.stringify(value)} must not claim a unit`);
+  }
+});
+
+test('the value beats the key when they disagree', () => {
+  assert.deepEqual(
+    readDimensions({ 'Width (Feet)': '96 in', 'Height (Feet)': '96 in' }),
+    { rawWidth: '96 in', rawHeight: '96 in', unitHint: 'in' });
+});
+
+test('the key still decides when the value says nothing', () => {
+  assert.equal(readDimensions({ 'Width (Feet)': '5', 'Height (Feet)': '3' }).unitHint, 'ft');
+  assert.equal(readDimensions({ 'Width (Inches)': '4', 'Height (Inches)': '4' }).unitHint, 'in');
+});
+
+test('the legacy pair honours a unit typed into it — the SKUAB case', () => {
+  // This is the one that printed at 12x the intended size.
+  assert.deepEqual(
+    readDimensions({ WIDTH: '48 in', HEIGHT: '80 in' }),
+    { rawWidth: '48 in', rawHeight: '80 in', unitHint: 'in' });
+});
+
+test('a plain legacy pair is completely unchanged', () => {
+  // The guarantee that matters: orders that parse correctly today must not move.
+  const d = readDimensions({ WIDTH: '4', HEIGHT: '6' });
+  assert.equal(d.rawWidth, '4');
+  assert.equal(d.unitHint, undefined, 'no unit stated means the SKU table still decides');
+});
+
+test('4978992940 comes out as 8 feet, not 96', () => {
+  const job = cleanOrder({
+    source_id: '4978992940',
+    id: '901',
+    order_metadata: { 'First Rep': 'Shopify' },
+    shipping: { state: 'GA', postal_code: '30001' },
+    order_items: [{
+      code: 'SKUSR08X08', name: "8'x8' Step & Repeat Banner Only", quantity: 1, id: 'LI1',
+      variation_list: {
+        'Finishing options': 'Pole Pockets (Top and Bottom)',
+        'Uploaded File': 'https://cdn.shop/files/step.png',
+        'Width (Feet)': '96 in',
+        'Height (Feet)': '96 in',
+      },
+      metadata: {},
+    }],
+  });
+  const item = job.items[0];
+  assert.equal(item.unit, 'in');
+  assert.equal(item.width, 96);
+  assert.equal(item.height, 96);
+  // 96 in = 8 ft, comfortably inside the 600 in gate; as feet it was 1152.
+  assert.ok(item.width <= 600 && item.height <= 600, 'must no longer read as oversize');
 });

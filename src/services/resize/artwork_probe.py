@@ -160,8 +160,21 @@ def probe_item(item, scratch, max_bytes):
     try:
         if ext in ("pdf", "eps"):
             result = probe_pdf(local, width_px, height_px)
-        elif ext in ("ai", "psd"):
-            result = {"verdict": "skipped", "reason": f"{ext} not probed"}
+        elif ext == "ai":
+            # Legacy sniffs the header rather than trusting the extension, and
+            # so does converter: a %PDF-flavoured .ai goes down the PDF path and
+            # can carry exactly the oversized page that killed S61866. Skipping
+            # every .ai left the vector format most likely to hide one of those
+            # unchecked -- 4 of them on 2026-09-23 alone.
+            with open(local, "rb") as fh:
+                header = fh.read(4)
+            if header == b"%PDF":
+                result = probe_pdf(local, width_px, height_px)
+            else:
+                result = {"verdict": "skipped",
+                          "reason": "postscript-ai (ghostscript path, not probed)"}
+        elif ext == "psd":
+            result = {"verdict": "skipped", "reason": "psd not probed"}
         else:
             result = probe_raster(local)
     except Exception as err:

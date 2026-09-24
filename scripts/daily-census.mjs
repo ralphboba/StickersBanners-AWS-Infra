@@ -179,7 +179,24 @@ function main() {
     }
   }
 
-  const report = { day, polled, gates, leaks, artwork: null };
+  // Which orders, not just how many. Linh's five are ordinary business routing
+  // -- a staff folder is where those belong and always did -- so they stay a
+  // count. Ours mean "this system cannot make this order", and the whole point
+  // of the census is to put those order numbers in front of a person.
+  const OURS = new Set(['no-size', 'nothing-to-print', 'oversize']);
+  const held = inspected
+    .filter((o) => o.gate && OURS.has(o.gate.reason))
+    .map((o) => ({
+      order: o.orderName,
+      reason: o.gate.reason,
+      facility: o.routing?.facility ?? null,
+      items: (o.items ?? []).filter((i) => !i.hardware).map((i) => ({
+        itemNo: i.itemNo, sku: i.sku, name: i.name,
+        width: i.width, height: i.height, unit: i.unit,
+      })),
+    }));
+
+  const report = { day, polled, gates, held, leaks, artwork: null };
   if (withArtwork) {
     const queue = artworkQueue(inspected);
     report.artwork = queue.length ? probeArtwork(day, queue, maxFiles) : { checked: 0, counts: {}, results: [] };

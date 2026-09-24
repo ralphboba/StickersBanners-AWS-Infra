@@ -158,3 +158,34 @@ class TheProbeIsNotStricterThanThePipeline(unittest.TestCase):
         from fetch import DEFAULT_MAX_BYTES
         self.assertEqual(DEFAULT_MAX_BYTES, 1024 * 1024 * 1024,
                          'if resize changes its cap, this test is the reminder')
+
+
+@unittest.skipIf(DEPS, f'resize deps unavailable: {DEPS}')
+class AiFilesAreSniffedNotSkipped(unittest.TestCase):
+    """An .ai file is usually a PDF wearing a different extension.
+
+    converter._convert_ai reads the header rather than trusting the name, so a
+    probe that skips every .ai leaves the vector format most likely to hide an
+    oversized page unchecked — four of them on 2026-09-23 alone.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def test_a_pdf_flavoured_ai_is_probed_as_a_pdf(self):
+        path = os.path.join(self.dir, 'art.ai')
+        make_pdf(path, pages=1, width_in=120, height_in=96)
+        with open(path, 'rb') as fh:
+            self.assertEqual(fh.read(4), b'%PDF', 'fixture must be PDF-flavoured')
+        out = artwork_probe.probe_pdf(path, 5184, 4320)
+        self.assertEqual(out['reason'], 'oversized-pdf-page',
+                         'the same page must be caught whatever the extension says')
+
+    def test_a_postscript_ai_is_reported_as_skipped_not_as_ok(self):
+        # Ghostscript renders these; the probe does not run it. Saying "skipped"
+        # keeps it visible as a gap instead of counting toward a clean day.
+        path = os.path.join(self.dir, 'ps.ai')
+        with open(path, 'wb') as fh:
+            fh.write(b'%!PS-Adobe-3.0\n')
+        with open(path, 'rb') as fh:
+            self.assertNotEqual(fh.read(4), b'%PDF')

@@ -79,6 +79,23 @@ const GROMMETS_FINISHES_SHOPIFY = new Set([
 const fourSides = () => ({ grommets: { sides: ['top', 'left', 'right', 'bottom'] } });
 
 /**
+ * The unit written inside a value, or undefined.
+ *
+ * `48 in`, `6 ft`, `24"`, `3'` — the store lets people type the unit into the
+ * box, and legacy's parseFloat throws it away, which is how `SKUAB` came in as
+ * `'48 in' x '80 in'` and was printed as 48 FEET. A unit somebody typed is the
+ * most direct statement of intent available, so it outranks both the key name
+ * and the SKU table.
+ */
+export function unitInValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  if (/(?:^|[\d\s])(?:in|inch|inches)\b/i.test(text) || /\d\s*["\u201D]/.test(text)) return 'in';
+  if (/(?:^|[\d\s])(?:ft|foot|feet)\b/i.test(text) || /\d\s*['\u2019]/.test(text)) return 'ft';
+  return undefined;
+}
+
+/**
  * The size of a line item, as the store actually recorded it.
  *
  * Legacy reads WIDTH/HEIGHT and nothing else, which was right for the products
@@ -111,7 +128,11 @@ export function readDimensions(variationList, { shopify = true } = {}) {
   const legacyWidth = shopify ? (vl.WIDTH ?? vl.Width) : vl.WIDTH;
   const legacyHeight = shopify ? (vl.HEIGHT ?? vl.Height) : vl.HEIGHT;
   if (legacyWidth !== undefined || legacyHeight !== undefined) {
-    return { rawWidth: legacyWidth, rawHeight: legacyHeight };
+    return {
+      rawWidth: legacyWidth,
+      rawHeight: legacyHeight,
+      unitHint: unitInValue(legacyWidth) ?? unitInValue(legacyHeight),
+    };
   }
 
   // The store is inconsistent about case and spacing ("UPLOADED FILE" next to
@@ -135,7 +156,14 @@ export function readDimensions(variationList, { shopify = true } = {}) {
     const width = byKey.get(`width (${suffix})`);
     const height = byKey.get(`height (${suffix})`);
     if (width !== undefined || height !== undefined) {
-      return { rawWidth: width, rawHeight: height, unitHint: unit };
+      // The key and the value can disagree, and when they do the value is the
+      // one telling the truth. Live on 2026-09-23: an 8'x8' step & repeat
+      // banner arrived as `Width (Feet): "96 in"`. 96 feet is 1152 inches and
+      // the order was held as implausibly large; 96 INCHES is exactly 8 feet,
+      // which is what the product is called. Whoever built the form reused a
+      // "(Feet)" field and typed the real unit into the box.
+      const stated = unitInValue(width) ?? unitInValue(height);
+      return { rawWidth: width, rawHeight: height, unitHint: stated ?? unit };
     }
 
     // One field holding both, e.g. `Size (WxH) Inches`.
