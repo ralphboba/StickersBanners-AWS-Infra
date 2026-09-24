@@ -6,12 +6,11 @@
 // out of the automatic flow: the bot re-tags it and moves it to a staff folder
 // in OrderDesk, then skips it. Only orders that clear all five are processed.
 //
-// Three more checks are ours, all added when the production transfer was about
-// to be armed for real: an item whose size is implausibly large
-// (MAX_SIDE_INCHES), an order with no printable item at all, and an item whose
-// size is missing entirely. They run AFTER Linh's five so they can never change
-// which of his reasons an order reports, and like his they only divert the
-// order to a person.
+// Four more checks are ours: a product B2Sign makes rather than us, an item
+// whose size is implausibly large (MAX_SIDE_INCHES), an order with no printable
+// item at all, and an item whose size is missing entirely. They run AFTER
+// Linh's five so they can never change which of his reasons an order reports,
+// and like his they only divert the order to a person.
 //
 // The legacy order is significant and preserved here — an order that trips more
 // than one check is reported under the first one legacy would have hit:
@@ -25,6 +24,8 @@
 //
 // This module only decides. Acting on the decision (the OrderDesk folder move)
 // lives in orderdesk-write.mjs and is disabled by default — see that file.
+
+import { isB2SignItem } from './sku-config.mjs';
 
 /** Legacy folderLib (src/utils/helpers/updateOrder.mjs). */
 export const ORDERDESK_FOLDERS = {
@@ -140,6 +141,26 @@ export const GATES = [
   // of Linh's five still reports his reason and lands where his bot would send
   // it. This only ever HOLDS an order for a human; it never alters a print.
   // See MAX_SIDE_INCHES below for why the threshold is where it is.
+  // Ours, and FIRST of ours: B2Sign work is not a fault in the order, it is a
+  // different production route. Danny hands these to B2Sign by hand. They were
+  // already being held, but under whichever symptom happened to fire -- no-size
+  // for yard signs, missing-file for tents, special-instructions for a flag --
+  // which made his queue impossible to count and, one catalogue change away,
+  // impossible to trust. Reported before our three fault checks so a yard sign
+  // says "b2sign", not "no-size".
+  //
+  // Still after Linh's five: an order of his that trips one of them keeps his
+  // reason and goes where his bot would send it. So a B2Sign item inside an
+  // order with special instructions reports the instructions -- which is why
+  // the daily census counts B2Sign orders separately from gate reasons, and
+  // does not rely on this gate alone to find them.
+  {
+    test: (job) => (job?.items ?? []).some((item) => isB2SignItem(item?.sku, item?.name)),
+    reason: 'b2sign',
+    tag: 'White',
+    folder: 'manual',
+    explain: 'Made by B2Sign, not by us — hand off manually, never print or transfer',
+  },
   {
     test: (job) => Boolean(oversizedItem(job)),
     reason: 'oversize',

@@ -26,6 +26,7 @@
 //   node scripts/daily-census.mjs 2026-09-22 --max-files 40
 
 import { execFileSync } from 'node:child_process';
+import { isB2SignItem } from '../src/shared/sku-config.mjs';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,6 +75,8 @@ function artworkQueue(inspected) {
     if (order.gate) continue; // already going to a person
     for (const item of order.items ?? []) {
       if (item.hardware) continue;
+      // B2Sign makes these; their file is not ours to render or judge.
+      if (isB2SignItem(item.sku, item.name)) continue;
       queue.push({
         orderName: order.orderName,
         itemNo: item.itemNo,
@@ -196,7 +199,20 @@ function main() {
       })),
     }));
 
-  const report = { day, polled, gates, held, leaks, artwork: null };
+  // Danny's queue, counted independently of which gate fired. A B2Sign order
+  // that ALSO has special instructions reports Linh's reason, correctly -- so
+  // counting `gates.b2sign` alone would quietly undercount the handoff pile.
+  const b2sign = inspected
+    .filter((o) => (o.items ?? []).some((i) => isB2SignItem(i.sku, i.name)))
+    .map((o) => ({
+      order: o.orderName,
+      gate: o.gate?.reason ?? 'WOULD HAVE BEEN PROCESSED',
+      products: [...new Set((o.items ?? [])
+        .filter((i) => isB2SignItem(i.sku, i.name))
+        .map((i) => i.sku || i.name))],
+    }));
+
+  const report = { day, polled, gates, b2sign, held, leaks, artwork: null };
   if (withArtwork) {
     const queue = artworkQueue(inspected);
     report.artwork = queue.length ? probeArtwork(day, queue, maxFiles) : { checked: 0, counts: {}, results: [] };

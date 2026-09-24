@@ -109,8 +109,8 @@ test('gate order and folder/tag tables match legacy', () => {
     'special-product', 'multiple-files', 'special-instructions', 'dc-order', 'missing-file',
   ]);
   assert.deepEqual(GATES.slice(5).map((g) => g.reason),
-    ['oversize', 'nothing-to-print', 'no-size'],
-    'ours go after his, in the order they were added');
+    ['b2sign', 'oversize', 'nothing-to-print', 'no-size'],
+    'ours go after his; b2sign leads them because it is a production route, not a fault');
   assert.equal(ORDERDESK_FOLDERS.sales, '657836');
   assert.equal(ORDERDESK_FOLDERS.manual, '652268');
   assert.equal(ORDERDESK_FOLDERS.review, '653109');
@@ -345,7 +345,9 @@ test("nothing-to-print never displaces one of Linh's reasons", () => {
 // size anywhere in the order. resize would have called float(None) on them.
 
 test('an item with no size is held', () => {
-  const g = intakeGate({ flags: {}, items: [{ sku: 'YSHDS', width: undefined, height: undefined }] });
+  // Deliberately NOT a yard sign: those are B2Sign work and report that
+  // instead, which is a different finding with a different owner.
+  const g = intakeGate({ flags: {}, items: [{ sku: 'SKUVB', name: 'Custom Vinyl Banners', width: undefined, height: undefined }] });
   assert.equal(g.reason, 'no-size');
   assert.equal(g.folder, 'manual');
   assert.equal(g.tag, 'Red');
@@ -390,4 +392,64 @@ test('oversize is reported before no-size when both could apply', () => {
   // than a missing one, and only one reason can be reported.
   const j = { flags: {}, items: [{ width: 115, height: 91, unit: 'ft' }, { width: undefined, height: 1 }] };
   assert.equal(intakeGate(j).reason, 'oversize');
+});
+
+// --- B2Sign products (ours, and first of ours) ------------------------------
+//
+// Kai, 2026-09-24: yard signs, flag banners, event tents and canvas wraps are
+// orders we take and hand to B2Sign. Danny does it by hand. No print file of
+// ours should exist for one, and none should reach a facility.
+
+test('a yard sign reports b2sign, not the symptom it used to report', () => {
+  const g = intakeGate({ flags: {}, items: [{ sku: 'YSHDS', name: 'Yard Sign' }] });
+  assert.equal(g.reason, 'b2sign');
+  assert.equal(g.folder, 'manual');
+});
+
+test('every B2Sign family is caught', () => {
+  for (const item of [
+    { sku: 'YSSOSS', name: 'Yard Sign' },
+    { sku: 'ET10', name: '10ft Event Tent' },
+    { sku: 'TFW15', name: '15ft Tent Full Walls' },
+    { sku: 'ADDON-SAND-4', name: 'Event Tent Options' },
+    { sku: 'T15-FWL-1', name: '15ft Event Tent Options' },
+    { sku: 'YS-HSTAKE', name: 'Yard Sign Options' },
+    { sku: '', name: 'Feather Angled Flag (Large)' },   // flags carry no SKU
+    { sku: null, name: 'Econo Feather Flag' },
+    { sku: '', name: 'Canvas Wrap 16x20' },             // none in the store yet
+  ]) {
+    assert.equal(intakeGate({ flags: {}, items: [item] })?.reason, 'b2sign',
+      `${item.sku ?? '(no sku)'} / ${item.name}`);
+  }
+});
+
+test('our own printed products are NOT diverted to B2Sign', () => {
+  // The expensive mistake would be the other direction: holding the 452
+  // vinyl banners a day. Fabric Step and Repeat is the trap — its material
+  // reads like canvas, and it is one of the highest-volume products we print.
+  for (const item of [
+    { sku: 'SKUVB', name: 'Custom Vinyl Banners', width: 6, height: 5 },
+    { sku: 'SKUFSR08X08', name: 'Fabric Step and Repeat Banner', width: 8, height: 8 },
+    { sku: 'SKUCFSR', name: 'Custom Fabric Step and Repeat Banner', width: 4, height: 4 },
+    { sku: 'SKUMB', name: 'Mesh Banners', width: 5, height: 3 },
+    { sku: 'SKUAB', name: 'Adhesive Banners', width: 4, height: 6 },
+    { sku: 'SKUCSR', name: 'Custom Step and Repeat', width: 8, height: 8 },
+  ]) {
+    assert.equal(intakeGate({ flags: {}, items: [item] }), null,
+      `${item.sku} must still be processed by us`);
+  }
+});
+
+test("b2sign is reported before our own fault checks", () => {
+  // A yard sign has no size; it must say b2sign, which is the actionable fact.
+  const g = intakeGate({ flags: {}, items: [{ sku: 'YSHSS', name: 'Yard Sign' }] });
+  assert.equal(g.reason, 'b2sign');
+  assert.deepEqual(GATES.slice(5).map((x) => x.reason),
+    ['b2sign', 'oversize', 'nothing-to-print', 'no-size']);
+});
+
+test("b2sign still never displaces one of Linh's reasons", () => {
+  const g = intakeGate({ flags: { hasInstructions: true }, items: [{ sku: 'ET10', name: '10ft Event Tent' }] });
+  assert.equal(g.reason, 'special-instructions',
+    'parity with Linh comes first; the census counts B2Sign separately for this reason');
 });

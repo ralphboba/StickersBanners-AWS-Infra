@@ -104,6 +104,76 @@ export function fixedDimensions(sku) {
 }
 
 
+// --- 1c. B2Sign products (we take the order, B2Sign makes it) --------------
+// Kai, 2026-09-24: "우리가 오더를 받고 b2sign으로 넘겨주는 시스템이야... 수동이야.
+// 지금 대니가 다 manual processing 하고있어." Yard signs, flag banners, event
+// tents and canvas wraps are drop-shipped: Danny hands them to B2Sign by hand.
+// No print file of ours should ever be produced for one, and none should ever
+// reach a facility.
+//
+// They were already being held, but by accident and under three different
+// reasons -- no-size for yard signs (no size option exists), missing-file for
+// tents, special-instructions for a flag. That works until it doesn't, and it
+// makes Danny's queue impossible to count. This list makes the reason explicit.
+//
+// Identified from the live Shopify catalogue (2026-09-24). In the store these
+// all carry the `flags` tag and an add-on product whose description reads
+// "Prices are SB retail (B2Sign cost / 0.6)"; our own printed products carry
+// `actual` instead. Tags do not reach OrderDesk, so the order data gives us
+// only the SKU and the product name -- hence both are matched here.
+export const B2SIGN_SKUS = [
+  // Yard signs — 24x18 in, four variants, H-stake and single/double sided.
+  'YSHSS', 'YSHDS', 'YSSOSS', 'YSSODS',
+  // Event tents and their printed walls.
+  'ET10', 'ET15', 'TFW10', 'TFW15', 'THW10', 'THW15',
+  // Legacy spellings kept because FIXED_DIMENSIONS still names them; no live
+  // order has ever carried either (real tent orders arrive as ET10).
+  'SKU10ET', 'SKU10TFW',
+];
+
+// Add-on lines that ride along with the products above (sandbags, carry bags,
+// extra walls, h-stakes). Deliberately specific rather than a bare `ADDON-`:
+// the store may well use that prefix for something we DO print.
+export const B2SIGN_SKU_PREFIXES = [
+  'ADDON-CARRY', 'ADDON-SAND', 'ADDON-FW',  // 10ft Event Tent Options
+  'T15-',                                    // 15ft Event Tent Options
+  'YS-',                                     // Yard Sign Options
+];
+
+// Feather flags have NO SKU AT ALL on any variant, so the product name is the
+// only handle we have on them. Canvas wraps have no product in the catalogue
+// today; the pattern is here so the first one to appear is held rather than
+// printed.
+//
+// Every pattern is anchored to a phrase that cannot collide with a printed
+// product. In particular NOT a bare /canvas/ or /fabric/: "Fabric Step and
+// Repeat Banner" (SKUFSR*, SKUCFSR) is one of our highest-volume printed
+// products and its description mentions canvas-like material.
+export const B2SIGN_NAME_PATTERNS = [
+  /feather\s+\w*\s*flag/i,      // Feather Angled / Convex / Econo Feather Flag
+  /\byard\s+sign\b/i,
+  /\bevent\s+tent\b/i,
+  /\btent\s+(full|half)\s+walls?\b/i,
+  /\bcanvas\s+wrap/i,
+];
+
+/**
+ * Is this line item made by B2Sign rather than by us?
+ *
+ * Matched on SKU first (exact, then prefix), then on the product name, because
+ * feather flags carry no SKU and nothing else identifies them.
+ */
+export function isB2SignItem(sku, productName) {
+  const code = String(sku ?? '').trim().toUpperCase();
+  if (code) {
+    if (B2SIGN_SKUS.includes(code)) return true;
+    if (B2SIGN_SKU_PREFIXES.some((prefix) => code.startsWith(prefix))) return true;
+  }
+  const name = String(productName ?? '');
+  return B2SIGN_NAME_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+
 // --- 2. Products with NO image finishing -----------------------------------
 // These skip grommets / pole pockets entirely (plain copy) — e.g. stickers.
 export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU10ET = 10ft Event Tent, SKU10TFW = 10ft Tent Full Walls

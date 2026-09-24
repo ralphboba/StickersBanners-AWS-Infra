@@ -212,7 +212,7 @@ test('4978992940 comes out as 8 feet, not 96', () => {
 // So the absence of a size is what holds them, and that is the intended
 // behaviour. This test exists so the "obvious fix" cannot be reapplied silently.
 
-test('yard signs have no fixed print size, so they stay held', async () => {
+test('yard signs have no fixed print size, and are held as B2Sign work', async () => {
   const { intakeGate } = await import('../../src/shared/intake-gate.mjs');
   for (const sku of ['YSHSS', 'YSHDS', 'YSSOSS', 'YSSODS']) {
     const d = resolveDimensions(sku, 'Yard Sign', undefined, undefined);
@@ -234,6 +234,6 @@ test('yard signs have no fixed print size, so they stay held', async () => {
       metadata: {},
     }],
   });
-  assert.equal(intakeGate(job)?.reason, 'no-size',
-    'a yard sign must reach a person, not a facility');
+  assert.equal(intakeGate(job)?.reason, 'b2sign',
+    'a yard sign must reach Danny, not a facility');
 });
