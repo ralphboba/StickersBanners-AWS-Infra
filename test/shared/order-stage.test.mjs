@@ -23,9 +23,10 @@ describe('the upgrade ladder', () => {
     }
   });
 
-  test('Ground is the bottom rung, not off the ladder', () => {
-    assert.deepEqual(nextService('FedEx Ground'), { from: 'FedEx Ground', to: 'FedEx 3-Days', top: false });
-    assert.equal(nextService('Ground')?.to, 'FedEx 3-Days');
+  test('Ground is off the ladder — express only (Danny)', () => {
+    assert.equal(nextService('FedEx Ground'), null);
+    assert.equal(nextService('Ground'), null);
+    assert.equal(nextService('FedEx GROUND'), null);
   });
 
   test('anything off the ladder gets no offer at all', () => {
@@ -36,7 +37,6 @@ describe('the upgrade ladder', () => {
 
   test('two notches are never offered', () => {
     assert.equal(nextService('3-day').to, 'FedEx 2-Days');
-    assert.equal(nextService('ground').to, 'FedEx 3-Days', 'Ground must not jump to 2-Day');
   });
 });
 
@@ -87,10 +87,10 @@ describe('canUpgrade', () => {
     assert.equal(s.blockedBy, 'already_fastest');
   });
 
-  test('Ground in production: yes, one rung to 3-Day', () => {
+  test('Ground in production: no — express only', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: 'FedEx Ground' });
-    assert.equal(s.canUpgrade, true);
-    assert.equal(s.upgradeTo, 'FedEx 3-Days');
+    assert.equal(s.canUpgrade, false);
+    assert.equal(s.blockedBy, 'service_not_upgradable');
   });
 
   test('Saturday Overnight in production: no, it is off the ladder', () => {
@@ -137,7 +137,6 @@ describe('the facility never changes on an upgrade', () => {
 
 describe('never collide with the legacy bot', () => {
   test('the exact strings the live store uses, plural and all', () => {
-    assert.equal(nextService('FedEx Ground').to, 'FedEx 3-Days');
     assert.equal(nextService('FedEx 3-Days').to, 'FedEx 2-Days');
     assert.equal(nextService('FedEx 2-Days').to, 'FedEx 1-Day', 'one day is singular');
     assert.equal(nextService('FedEx 1-Day').top, true);

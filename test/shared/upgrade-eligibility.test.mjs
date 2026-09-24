@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   isPoBox, isNoShipDestination, isB2Sign, ineligibleReason, NO_SHIP_REGIONS,
+  B2SIGN_CATALOGUE,
 } from '../../src/shared/upgrade-eligibility.mjs';
 import { orderStage } from '../../src/shared/order-stage.mjs';
 
@@ -72,21 +73,30 @@ describe('PO boxes', () => {
 });
 
 describe('B2SIGN orders', () => {
-  test('supplier products are caught by name', () => {
-    for (const n of ['12oz Canvas Wrap 24x36', 'Yard Sign 18x24', "10ft Tent Canopy",
-                     '15 ft Tent', 'Tent Wall (full)']) {
-      assert.equal(isB2Sign([{ name: n }]), true, n);
+  test('every product in the catalogue is caught — all 21 of them', () => {
+    assert.equal(B2SIGN_CATALOGUE.length, 21);
+    const missed = B2SIGN_CATALOGUE.filter((n) => !isB2Sign([{ name: n }]));
+    assert.deepEqual(missed, [], 'these would be sold an upgrade Danny has to unpick');
+  });
+
+  test('the four families, however the title is written', () => {
+    for (const n of ['Feather Angled Flag (XX-Large)', 'Swooper Flag', 'TEARDROP FLAGS',
+                     '20ft Event Tent', 'Tent Half Wall', '12oz Canvas Wrap 24x36',
+                     'Yard Signs, 18x24']) {
+      assert.equal(isB2Sign([{ name: n }]), true, `${n} should be caught by family`);
     }
   });
 
   test('our own products are not', () => {
-    for (const n of ['Custom Vinyl Banner', 'Oval Stickers', 'Mesh Banner', 'Pop Up Retractable']) {
-      assert.equal(isB2Sign([{ name: n }]), false, n);
+    for (const n of ['Custom Vinyl Banner', 'Oval Stickers', 'Mesh Banner',
+                     'Pop Up Retractable', 'Flagship Poster', 'Tented Card',
+                     'Vinyl Decal', 'Table Cover']) {
+      assert.equal(isB2Sign([{ name: n }]), false, `${n} must stay upgradable`);
     }
   });
 
   test('one supplier item in a mixed order is enough to refuse', () => {
-    assert.equal(isB2Sign([{ name: 'Vinyl Banner' }, { name: 'Yard Sign 18x24' }]), true);
+    assert.equal(isB2Sign([{ name: 'Vinyl Banner' }, { name: 'Yard Sign' }]), true);
   });
 
   test('no items is not a supplier order', () => {
@@ -138,7 +148,7 @@ describe('through orderStage', () => {
 
   test('a B2SIGN order cannot, and is not told it is already fastest', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: 'FedEx 1-Day',
-      shipping: { state: 'GA' }, items: [{ name: 'Yard Sign 18x24' }] });
+      shipping: { state: 'GA' }, items: [{ name: '10ft Event Tent' }] });
     assert.equal(s.canUpgrade, false);
     assert.equal(s.blockedBy, 'supplier_order');
   });

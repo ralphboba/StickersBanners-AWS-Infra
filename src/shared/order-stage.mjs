@@ -46,7 +46,11 @@ export const STEPS = ['Order received', 'Proof approved', 'In production', 'Read
 // Checked BEFORE the ladder. "Saturday Overnight" contains "overnight" and
 // would otherwise be read as a 1-Day order — wrong service, wrong price, and
 // the page would tell the customer they are already on 1-Day when they are not.
-const OFF_LADDER = ['saturday', 'sat overnight', 'pickup', 'pick-up', 'pick up'];
+const OFF_LADDER = [
+  'saturday', 'sat overnight',   // availability depends on the address (Danny)
+  'ground',                      // express only (Danny)
+  'pickup', 'pick-up', 'pick up',
+];
 
 // ── the exact strings OrderDesk holds ──────────────────────────────────────
 // `to` is written verbatim into shipping_method, so it has to be the text the
@@ -63,20 +67,19 @@ const OFF_LADDER = ['saturday', 'sat overnight', 'pickup', 'pick-up', 'pick up']
 // not done damage — but it is wrong and would set an unrecognised service on a
 // real order the day that switch is armed. See docs/legacy-collision-audit.md C5.
 const SERVICE = {
-  ground: 'FedEx Ground',
+  ground: 'FedEx Ground',   // recognised for display; never an upgrade target
   d3: 'FedEx 3-Days',
   d2: 'FedEx 2-Days',
   d1: 'FedEx 1-Day',
 };
 
-// One rung at a time. Ground is the bottom of the ladder, not off it: it is
-// what most orders ship on, so it is where most upgrades start (Kai).
+// One rung at a time, and the ladder starts at 3-Days.
 //
-// Ground and 3-Day are NOT the same service. At a $150 subtotal the card
-// prices Ground at $15.70 and 3-Day at $86.73 — treating them as one tier
-// would misquote by $71.
+// Ground is NOT on it: "If the order is ground shipping, we cannot upgrade. If
+// the order is express, we can upgrade" (Danny, 2026-09-24; Kai confirmed).
+// Ground and express are different operations, not two speeds of one, so a
+// Ground order is refused outright rather than quoted a price we cannot honour.
 const LADDER = [
-  { match: ['ground'], from: SERVICE.ground, to: SERVICE.d3 },
   // Substring matches, so '3-day' also catches 'FedEx 3-Days'. Reading is
   // forgiving; writing uses SERVICE above and is exact.
   { match: ['3-day', '3 day', 'three day'], from: SERVICE.d3, to: SERVICE.d2 },

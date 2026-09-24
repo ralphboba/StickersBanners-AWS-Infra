@@ -49,30 +49,49 @@ export function isNoShipDestination({ state, country } = {}) {
 }
 
 /**
- * B2SIGN orders are fulfilled by a supplier, and changing one means Danny
- * phoning them to ask whether it is still possible. That is not something a
- * customer can do from a web page, so these are left exactly as they are today.
+ * B2SIGN orders are fulfilled by a supplier. Changing one means Danny phoning
+ * them to ask whether it is still possible, which is not something a customer
+ * can do from a web page, so these are left exactly as they are today.
  *
- * Matched on the product, because an order can carry a B2SIGN item without
- * having reached a B2SIGN folder yet.
+ * Four product families, confirmed against the live catalogue (Kai,
+ * 2026-09-24). Matched on the product rather than the folder, because an order
+ * can carry one of these before it has been routed anywhere.
  *
- * ⚠️ The list is from docs/shopify-intake-lambda.md (the external intake
- * Lambda's own routing). Confirm it against the live product list before
- * arming writes — a B2SIGN product missing from here is one a customer could
- * upgrade and Danny then has to unpick by phone.
+ * The `flag` test is the store's own: the external intake Lambda already sends
+ * any item whose name contains "flag" to the Flag Banner folder
+ * (docs/shopify-intake-lambda.md). Using the same word here keeps one rule
+ * rather than two that can drift.
  */
-const B2SIGN_PRODUCTS = [
-  'canvas wrap',
-  'yard sign',
-  '10ft tent', '10 ft tent', "10' tent",
-  '15ft tent', '15 ft tent', "15' tent",
-  'tent wall',
+const B2SIGN_PATTERNS = [
+  /\bflags?\b/,        // Feather Angled / Feather Convex / Teardrop / Rectangle
+  /\btents?\b/,        // 10ft and 15ft Event Tent, and their half and full walls
+  /\byard\s*signs?\b/,
+  /\bcanvas\s*wraps?\b/,
+];
+
+/**
+ * Every B2SIGN product as the catalogue names it today. Not used for matching —
+ * the patterns above do that, so a new size or a renamed variant is still
+ * caught — but kept here as the list the tests check the patterns against. If
+ * a product is added to this family, add it here and the test proves the
+ * patterns already cover it.
+ */
+export const B2SIGN_CATALOGUE = [
+  'Feather Angled Flag (Small)', 'Feather Angled Flag (Medium)',
+  'Feather Angled Flag (Large)', 'Feather Angled Flag (X-Large)',
+  'Feather Convex Flag (Small)', 'Feather Convex Flag (Medium)',
+  'Feather Convex Flag (Large)',
+  'Teardrop Flag (Small)', 'Teardrop Flag (Medium)', 'Teardrop Flag (Large)',
+  'Rectangle Flag (Small)', 'Rectangle Flag (Medium)', 'Rectangle Flag (Large)',
+  '10ft Event Tent', '10ft Tent Half Wall', '10ft Tent Full Walls',
+  '15ft Event Tent', '15ft Tent Half Walls', '15ft Tent Full Walls',
+  'Yard Sign', 'Canvas Wrap',
 ];
 
 export function isB2Sign(items = []) {
   return (items ?? []).some((it) => {
     const name = String(it?.name ?? '').toLowerCase();
-    return B2SIGN_PRODUCTS.some((p) => name.includes(p));
+    return B2SIGN_PATTERNS.some((re) => re.test(name));
   });
 }
 

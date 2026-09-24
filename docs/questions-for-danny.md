@@ -10,22 +10,12 @@
 | 제품 | **B2SIGN은 지금 방식 유지.** 업그레이드하려면 Danny가 B2SIGN에 전화해야 함 | 품목명으로 차단 ✅ |
 | 픽업 주문 | **배송으로 전환 가능해야 함** | ⬜ 새 범위 — 아래 참조 |
 | 버튼 라벨 | **`Manage my order`** | 확정 ✅ |
-| 주문 상태 | **Ground는 업그레이드 불가. Express만 가능** | ⚠️ **Kai 지시와 충돌 — 아래** |
+| 주문 상태 | **Ground는 업그레이드 불가. Express만 가능** | 사다리에서 제거 ✅ |
 
-## ⚠️ 충돌 — Ground
+## Ground — 해소됨
 
-| | |
-| --- | --- |
-| **Kai** (9/14) | "ground에서 업그레이드를 하는거지" → Ground가 사다리 맨 아래 칸 |
-| **Danny** (9/24) | "If the order is ground shipping, we cannot upgrade" |
-
-**코드는 Kai의 지시대로 둔 상태다** (`Ground → 3-Days` 유지). Kai가 정할 일이라
-말없이 바꾸지 않는다.
-
-바꾸는 건 `order-stage.mjs`의 `LADDER` 첫 줄 하나를 지우는 일이고, 테스트가 따라온다.
-
-> **Danny에게 되물을 것:** *왜* Ground는 안 되나? 취급이 달라서인지, 차액이 너무 커서인지,
-> 아니면 Ground 주문이 다르게 생산되어서인지. 이유를 알면 화면 문구도 정확해진다.
+9/14에 Kai가 "ground에서 업그레이드를 하는거지"라고 해서 사다리 맨 아래 칸으로 넣었는데,
+Danny 확인 후 **Kai가 Danny 쪽으로 확정했다.** Ground는 사다리에서 빠졌다.
 
 ## ⬜ 새 범위 — 픽업 → 배송 전환
 
@@ -53,15 +43,33 @@ Danny가 "가능해야 한다"고 했다. 이건 **속도 업그레이드와 다
 
 | 거부 | 근거 |
 | --- | --- |
-| `supplier_order` | 품목명이 B2SIGN 제품 (canvas wrap, yard sign, 10/15ft tent, tent wall) |
+| `supplier_order` | 품목명이 B2SIGN 4개 계열 — **flag · tent · yard sign · canvas wrap** |
 | `destination` | HI · AK · PR · VI, 그리고 **AA/AE/AP(군사우편) — 추론이지 Danny 답변 아님** |
 | `po_box` | 주소 줄에 PO Box / P.O. Box / Post Office Box |
 
 `supplier_order`를 먼저 판정한다 — 하와이로 가는 B2SIGN 주문에 "거긴 배송 안 됩니다"보다
 "파트너 제작이라 팀을 통해야 합니다"가 고객이 할 수 있는 행동을 알려준다.
 
-> ⚠️ **B2SIGN 품목 목록은 외부 인테이크 Lambda의 라우팅에서 가져온 것이다.**
-> 실제 제품 목록과 대조가 필요하다 — 빠진 품목 하나가 곧 Danny가 전화로 수습할 건이 된다.
+### B2SIGN 21개 제품 (Kai가 실제 카탈로그에서 확인, 2026-09-24)
+
+```
+Feather Angled Flag   Small / Medium / Large / X-Large
+Feather Convex Flag   Small / Medium / Large
+Teardrop Flag         Small / Medium / Large
+Rectangle Flag        Small / Medium / Large
+10ft Event Tent · 10ft Tent Half Wall · 10ft Tent Full Walls
+15ft Event Tent · 15ft Tent Half Walls · 15ft Tent Full Walls
+Yard Sign · Canvas Wrap
+```
+
+**매칭은 이름 목록이 아니라 4개 계열 패턴**(`flag` / `tent` / `yard sign` / `canvas wrap`)
+으로 한다. 사이즈가 하나 추가되거나 제목이 바뀌어도 걸린다.
+
+`flag`는 **기존 인테이크 Lambda가 이미 쓰는 규칙**이다 — 품목명에 `flag`가 있으면
+Flag Banner 폴더로 보낸다. 같은 단어를 써서 규칙이 둘로 갈라지지 않게 했다.
+
+테스트가 **21개 전부를 순회하며** 하나도 안 빠지는지 검사하고, `Flagship Poster` ·
+`Tented Card` 같은 우리 제품이 잘못 걸리지 않는지도 본다.
 
 ---
 

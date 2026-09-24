@@ -315,29 +315,21 @@ rate limit에 영향이 없다.
 
 | 현재 서비스 | 판매 가능한 업그레이드 | 시설 |
 | --- | --- | --- |
-| **Ground** | **3-Day** | 그대로 |
-| 3-Day | **2-Day** | 그대로 |
-| 2-Day | **1-Day** | 그대로 |
+| 3-Days | **2-Days** | 그대로 |
+| 2-Days | **1-Day** | 그대로 |
 | 1-Day | 없음 | 이미 NV |
-| Saturday Overnight · 픽업 | 없음 (사다리 밖) | — |
+| **Ground** · Saturday Overnight · 픽업 | 없음 (사다리 밖) | — |
 
-### Ground는 사다리의 맨 아래 칸이다 (Kai, 2026-09-14)
+### Ground는 사다리에 없다 (Danny 2026-09-24, Kai 확정)
 
-> "ground에서 업그레이드를 하는거지"
+> "If the order is ground shipping, we cannot upgrade.
+>  If the order is express, we can upgrade."
 
-대부분의 주문이 Ground로 나가므로 **업그레이드가 시작되는 곳이 Ground다.** 사다리 밖이
-아니라 첫 번째 칸이다.
+9/14에는 Ground를 맨 아래 칸으로 넣었었다(Kai). Danny 확인 후 **뺐다.**
+Ground와 express는 한 서비스의 두 속도가 아니라 **다른 운영**이다. 요금표가 가격을
+매길 수 있다는 것과 우리가 그걸 이행할 수 있다는 것은 다른 문제다.
 
-**Ground와 3-Day는 다른 서비스다.** 요금표가 별도 열로 값을 매긴다:
-
-| 소계 $150 기준 | 요금 |
-| --- | --- |
-| Ground | **$25.67** |
-| 3-Day | **$86.73** |
-| 차액 | **$61.06** |
-
-(`$15.70`은 소계 $98 이하 구간의 Ground 요금이고, $134–194 구간에서는 $25.67이다.
-구간을 잘못 잡으면 고객에게 틀린 금액이 청구된다.)
+Ground 주문은 `service_not_upgradable`로 거부된다.
 
 ### ★ 실제 문자열 확정 (Kai, 2026-09-14)
 
