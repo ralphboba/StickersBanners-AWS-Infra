@@ -15,6 +15,7 @@
 // never read as yes.
 
 import { folderById, isModifiable, facilityOf } from './orderdesk-folders.mjs';
+import { ineligibleReason } from './upgrade-eligibility.mjs';
 
 /** Internal stage -> what the customer sees, and where it sits on the tracker. */
 const STAGE_COPY = {
@@ -102,12 +103,18 @@ export function nextService(shippingMethod) {
 }
 
 /**
- * Everything the customer page needs about one order, from its folder and
- * current shipping method.
+ * Everything the customer page needs about one order.
  *
- * @param {{ folderId: string|number, shippingMethod?: string }} order
+ * Three separate questions decide whether an upgrade may be offered, and the
+ * customer is told which one said no:
+ *   · is it too late?            the folder (the cutoff)
+ *   · is there anything to sell? the ladder
+ *   · may we sell it at all?     the destination and the product (Danny's rules)
+ *
+ * @param {{ folderId: string|number, shippingMethod?: string,
+ *           shipping?: object, items?: Array<object> }} order
  */
-export function orderStage({ folderId, shippingMethod } = {}) {
+export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   const folder = folderById(folderId);
   const copy = folder ? STAGE_COPY[folder.stage] : null;
 
@@ -133,8 +140,14 @@ export function orderStage({ folderId, shippingMethod } = {}) {
   const legacyMayUpgradeFree = ladder?.from === SERVICE.d3 && !routed;
 
   // The reasons to refuse, in the order they are checked.
+  // Checked before the ladder: a B2SIGN order or a PO box is refused whatever
+  // service it is on, and saying "already on our fastest" to one of those would
+  // be both wrong and confusing.
+  const ineligible = ineligibleReason({ shipping, items });
+
   let blockedBy = null;
   if (!modifiable) blockedBy = folder ? 'shipping' : 'unknown_folder';
+  else if (ineligible) blockedBy = ineligible.blockedBy;
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
   else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';

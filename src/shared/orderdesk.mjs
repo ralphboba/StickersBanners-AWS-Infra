@@ -430,6 +430,12 @@ export function cleanOrder(order) {
     postalCode: order.shipping?.postal_code,
     method: order.shipping_method,
     name: [order.shipping?.first_name, order.shipping?.last_name].filter(Boolean).join(' '),
+    // Street lines are carried for one reason: the store does not ship to PO
+    // boxes, and the customer upgrade page has to refuse them
+    // (shared/upgrade-eligibility.mjs). Routing does not read these.
+    street: order.shipping?.address1,
+    street2: order.shipping?.address2,
+    country: order.shipping?.country,
   };
 
   // See-thru decals are forced to NV and blocked from CA pickup (legacy

@@ -49,6 +49,11 @@ const BLOCKED_COPY = {
   service_not_upgradable: 'This order’s shipping cannot be upgraded online.',
   awaiting_routing: 'We’re still scheduling this order. Check back shortly.',
   unknown_folder: 'This order cannot be changed online right now.',
+  // Refusals that are about the order itself. Each says enough for the
+  // customer to know whether calling would help.
+  supplier_order: 'This order is made by one of our partners, so changes go through our team.',
+  destination: 'We can’t change shipping for this delivery address.',
+  po_box: 'Faster shipping isn’t available to a PO box.',
 };
 
 /**
@@ -104,7 +109,12 @@ export async function handler(event = {}) {
   }
 
   const currentMethod = row.shipping?.method ?? null;
-  const stage = orderStage({ folderId: row.folderId, shippingMethod: currentMethod });
+  const stage = orderStage({
+    folderId: row.folderId,
+    shippingMethod: currentMethod,
+    shipping: row.shipping,
+    items: row.items,
+  });
 
   // ── the quote ─────────────────────────────────────────────────────────
   // The rate card gives the shipping difference. It does NOT give the tax:
