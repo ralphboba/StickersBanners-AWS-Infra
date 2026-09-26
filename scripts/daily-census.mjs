@@ -212,11 +212,52 @@ function main() {
         .map((i) => i.sku || i.name))],
     }));
 
-  const report = { day, polled, gates, b2sign, held, leaks, artwork: null };
-  if (withArtwork) {
-    const queue = artworkQueue(inspected);
-    report.artwork = queue.length ? probeArtwork(day, queue, maxFiles) : { checked: 0, counts: {}, results: [] };
+  // `complete` exists because of what happened on 2026-09-25: the daily routine
+  // finished in three minutes, reported no problems, and never ran the artwork
+  // layer at all -- `_census/2026-09-24/` is empty. The conclusion happened to
+  // be right, which is the dangerous kind of wrong. A report that covers one of
+  // two layers must SAY so, in a field a reader cannot miss, rather than leaving
+  // `artwork: null` for someone to notice.
+  const report = {
+    day, polled, gates, b2sign, held, leaks,
+    complete: false,
+    incomplete: 'artwork layer did not run',
+    artwork: null,
+  };
+
+  if (!withArtwork) {
+    report.incomplete = 'artwork layer skipped on purpose (--no-artwork): '
+      + 'the customer files were NOT opened, so a two-page PDF or an oversized '
+      + 'page would not have been seen';
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = 2; // a partial census is not a pass
+    return;
   }
+
+  const queue = artworkQueue(inspected);
+  try {
+    report.artwork = queue.length
+      ? probeArtwork(day, queue, maxFiles)
+      : { checked: 0, counts: {}, results: [] };
+  } catch (err) {
+    // Still print the layer-1 findings -- they are real and worth having -- but
+    // never let the run look finished.
+    report.incomplete = `artwork layer FAILED: ${err.message}`;
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = 2;
+    return;
+  }
+
+  if (report.artwork.skippedOverCap > 0) {
+    report.incomplete = `${report.artwork.skippedOverCap} artwork file(s) were past `
+      + 'the --max-files cap and never opened';
+    console.log(JSON.stringify(report, null, 2));
+    process.exitCode = 2;
+    return;
+  }
+
+  report.complete = true;
+  delete report.incomplete;
 
   // stdout is the report; stderr carries progress, so `> out.json` is clean.
   console.log(JSON.stringify(report, null, 2));
