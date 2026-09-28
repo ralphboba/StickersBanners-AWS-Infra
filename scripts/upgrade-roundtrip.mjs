@@ -10,8 +10,10 @@
 // restore  PUTs the snapshot back and checks, field by field, that the order
 //          matches what it was before.
 //
-// Credentials come from the environment only: ORDERDESK_STORE_ID and
-// ORDERDESK_API_KEY. Nothing is printed from them.
+// Credentials: either ORDERDESK_STORE_ID and ORDERDESK_API_KEY in the
+// environment, or none at all when the session's egress proxy injects the
+// OrderDesk headers for app.orderdesk.me (Claude Code "API credentials").
+// Nothing is printed from them.
 //
 // The ORDERDESK_UPGRADE_WRITES switch is armed for this process alone, for this
 // one order. The deployed switch is not touched.
@@ -42,7 +44,8 @@ if (!['apply', 'restore'].includes(mode) || !orderName) {
 }
 const storeId = process.env.ORDERDESK_STORE_ID;
 const apiKey = process.env.ORDERDESK_API_KEY;
-if (!storeId || !apiKey) die('ORDERDESK_STORE_ID and ORDERDESK_API_KEY must be set in the environment.');
+if (Boolean(storeId) !== Boolean(apiKey)) die('Set both ORDERDESK_STORE_ID and ORDERDESK_API_KEY, or neither.');
+if (!storeId) console.log('No OrderDesk keys in the environment: relying on proxy-injected headers.');
 
 const headers = (extra) => orderDeskHeaders(storeId, apiKey, extra);
 

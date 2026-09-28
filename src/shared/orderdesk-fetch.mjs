@@ -32,11 +32,17 @@ export function retryAfterMs(res) {
   return Math.min(use, MAX_RETRY_AFTER_S) * 1000;
 }
 
-/** Build request headers for the store. */
+/**
+ * Build request headers for the store.
+ *
+ * A missing credential is left out rather than sent as "undefined": in a
+ * session where the egress proxy injects the OrderDesk headers itself, sending
+ * our own (empty) ones would be wrong.
+ */
 export function orderDeskHeaders(storeId, apiKey, extra = {}) {
   return {
-    'ORDERDESK-STORE-ID': storeId,
-    'ORDERDESK-API-KEY': apiKey,
+    ...(storeId ? { 'ORDERDESK-STORE-ID': storeId } : {}),
+    ...(apiKey ? { 'ORDERDESK-API-KEY': apiKey } : {}),
     ...extra,
   };
 }
