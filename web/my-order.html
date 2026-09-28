@@ -59,6 +59,15 @@
   .notice p { margin:0; font-size:14px; color:var(--warn-ink); }
   .ghost { display:block; text-align:center; border:1px solid var(--line); border-radius:8px; padding:13px; text-decoration:none; color:var(--ink-2); font-weight:600; font-size:14px; margin-top:14px; }
   .muted { color:var(--ink-3); font-size:14px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; }
+  .grid .full { grid-column:1 / -1; }
+  .field label { display:block; font-size:13px; color:var(--ink-2); margin-bottom:4px; }
+  .field input, .field select { width:100%; font:inherit; font-size:15px; padding:10px 11px; border:1px solid var(--line); border-radius:7px; background:var(--paper); color:var(--ink); }
+  .field input:focus, .field select:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
+  button.secondary { display:block; width:100%; background:var(--paper); color:var(--ink); border:1px solid var(--ink); border-radius:8px; padding:13px; font:inherit; font-weight:600; font-size:15px; cursor:pointer; margin-top:14px; }
+  button.secondary[disabled] { opacity:.4; cursor:not-allowed; }
+  .err { color:#A33; font-size:14px; margin:10px 0 0; }
+  @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -126,6 +135,46 @@
         <p class="fine">The amount shown is the total you'll be charged, tax included.
           Nothing changes until you pay the invoice — if you close this page, your order ships
           on its current service.</p>
+      </form>
+
+      <!-- Pickup -> delivery. Two steps, because the tax depends on where it is
+           delivered: pick a service (card price, "plus tax"), type the address,
+           and only then is there a total the customer could be billed. -->
+      <form id="deliver" hidden style="margin-top:18px" novalidate>
+        <fieldset>
+          <legend>Have it delivered instead</legend>
+          <div id="deliverOpts"></div>
+        </fieldset>
+
+        <fieldset style="margin-top:14px">
+          <legend>Delivery address</legend>
+          <div class="grid">
+            <div class="field full"><label for="a1">Street address</label>
+              <input id="a1" autocomplete="address-line1" required></div>
+            <div class="field full"><label for="a2">Apt, suite (optional)</label>
+              <input id="a2" autocomplete="address-line2"></div>
+            <div class="field full"><label for="city">City</label>
+              <input id="city" autocomplete="address-level2" required></div>
+            <div class="field"><label for="state">State</label>
+              <select id="state" autocomplete="address-level1" required></select></div>
+            <div class="field"><label for="zip">ZIP code</label>
+              <input id="zip" autocomplete="postal-code" inputmode="numeric" required></div>
+          </div>
+          <p class="fine" style="margin-top:8px">Delivery within the contiguous US.
+            We can’t ship to PO boxes, Alaska, Hawaii, Puerto Rico or the Virgin Islands.</p>
+        </fieldset>
+
+        <button class="secondary" id="quoteBtn" type="button" disabled>Choose a service above</button>
+        <p class="err" id="quoteErr" hidden></p>
+
+        <div class="total">
+          <span>Amount to pay</span>
+          <span class="v" id="dTotal">—</span>
+        </div>
+        <p class="fine" id="dBreakdown" hidden></p>
+        <button class="cta" id="dSend" type="submit" disabled>Get your total first</button>
+        <p class="fine">Nothing changes until you pay the invoice — if you close this page,
+          your order stays a pickup order.</p>
       </form>
     </div>
   </main>
@@ -214,6 +263,8 @@
         $('send').disabled = true;
         set('send', 'Not available yet');
       });
+    } else if (sh.canConvert && sh.delivery) {
+      renderDelivery(sh.delivery);
     } else {
       set('lockedWhy', sh.reason || '');
       $('locked').hidden = false;
@@ -221,6 +272,133 @@
 
     $('loading').hidden = true;
     $('view').hidden = false;
+  }
+
+  // The states the store delivers to. The API applies the same rules to
+  // whatever is sent; this list only saves the customer a round trip.
+  var STATES = ['AL','AZ','AR','CA','CO','CT','DE','DC','FL','GA','ID','IL','IN','IA',
+    'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM',
+    'NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA',
+    'WV','WI','WY'];
+
+  var QUOTE_ERRORS = {
+    address_incomplete: 'Please fill in the street, city, state and ZIP code.',
+    not_convertible: 'This order can no longer be changed online. Please contact us.',
+    service_not_offered: 'Please choose one of the services above.',
+  };
+
+  function renderDelivery(delivery) {
+    var box = $('deliverOpts');
+    delivery.options.forEach(function (opt, i) {
+      var label = document.createElement('label');
+      label.className = 'opt';
+      var input = document.createElement('input');
+      input.type = 'radio'; input.name = 'dsvc'; input.value = opt.service;
+      var b = document.createElement('span'); b.className = 'b';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = opt.service;
+      var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Plus tax, if any, for your address';
+      b.appendChild(nm); b.appendChild(sub);
+      var pr = document.createElement('span'); pr.className = 'pr';
+      // The card price, never labelled as the amount due. The total below is
+      // the only figure presented as what the customer pays.
+      pr.textContent = money(opt.shipping);
+      label.appendChild(input); label.appendChild(b); label.appendChild(pr);
+      box.appendChild(label);
+    });
+
+    var sel = $('state');
+    var blank = document.createElement('option');
+    blank.value = ''; blank.textContent = 'Select';
+    sel.appendChild(blank);
+    STATES.forEach(function (code) {
+      var el = document.createElement('option');
+      el.value = code; el.textContent = code;
+      sel.appendChild(el);
+    });
+
+    var quoted = null;   // the last total Shopify stood behind, for these inputs
+    var inFlight = 0;    // ignore answers to questions the customer has since changed
+
+    function picked() {
+      var el = document.querySelector('input[name="dsvc"]:checked');
+      return el ? el.value : '';
+    }
+    function address() {
+      return {
+        address1: $('a1').value, address2: $('a2').value, city: $('city').value,
+        province: $('state').value, zip: $('zip').value, country: 'US',
+      };
+    }
+    function complete() {
+      var a = address();
+      return picked() && a.address1.trim() && a.city.trim() && a.province && a.zip.trim();
+    }
+
+    // Any change invalidates the total: it was for a different service or place.
+    function reset() {
+      quoted = null; inFlight++;
+      set('dTotal', '—');
+      $('dBreakdown').hidden = true;
+      $('quoteErr').hidden = true;
+      $('dSend').disabled = true;
+      set('dSend', 'Get your total first');
+      $('quoteBtn').disabled = !complete();
+      set('quoteBtn', picked() ? (complete() ? 'Get my total' : 'Enter your address') : 'Choose a service above');
+    }
+    $('deliver').addEventListener('input', reset);
+    $('deliver').addEventListener('change', reset);
+    reset();
+
+    $('quoteBtn').addEventListener('click', function () {
+      if (!complete()) return;
+      var ticket = ++inFlight;
+      $('quoteBtn').disabled = true;
+      set('quoteBtn', 'Getting your total…');
+      fetch('/api/my-order/quote', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ o: o, s: s, service: picked(), address: address() }),
+      })
+        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+        .then(function (res) {
+          if (ticket !== inFlight) return;   // the inputs changed while we waited
+          $('quoteBtn').disabled = false;
+          set('quoteBtn', 'Get my total');
+          if (!res.ok) {
+            set('quoteErr', res.b.reason || QUOTE_ERRORS[res.b.error] || 'We couldn’t price that. Please try again.');
+            $('quoteErr').hidden = false;
+            return;
+          }
+          if (!res.b.final) {
+            set('quoteErr', 'We can’t calculate the tax right now. Please try again shortly.');
+            $('quoteErr').hidden = false;
+            return;
+          }
+          quoted = res.b;
+          set('dTotal', money(quoted.total));
+          set('dBreakdown', res.b.service + ' ' + money(quoted.shipping) + ' + tax ' + money(quoted.tax));
+          $('dBreakdown').hidden = false;
+          $('dSend').disabled = false;
+          set('dSend', 'Send me the invoice — ' + money(quoted.total));
+        })
+        .catch(function () {
+          if (ticket !== inFlight) return;
+          $('quoteBtn').disabled = false;
+          set('quoteBtn', 'Get my total');
+          set('quoteErr', 'We couldn’t reach our system. Please try again.');
+          $('quoteErr').hidden = false;
+        });
+    });
+
+    $('deliver').addEventListener('submit', function (e) {
+      e.preventDefault();
+      // As with the upgrade: requesting the invoice is a write, and the
+      // switches that would arm it are off. Inert rather than pretending.
+      $('dSend').disabled = true;
+      set('dSend', 'Not available yet');
+    });
+
+    $('deliver').hidden = false;
   }
 })();
 </script>

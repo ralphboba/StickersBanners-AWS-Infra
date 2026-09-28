@@ -4,7 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { orderStage, nextService, isPickup, STEPS } from '../../src/shared/order-stage.mjs';
+import { orderStage, nextService, isPickup, STEPS, DELIVERY_OPTIONS } from '../../src/shared/order-stage.mjs';
 import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
@@ -223,13 +223,67 @@ describe('the methods live orders actually carry', () => {
     }
   });
 
-  test('a pickup order is refused with its own reason, not a generic one', () => {
-    // Converting a pickup to a delivery is what Danny asked for and is not
-    // built. Saying so is better than "cannot be upgraded".
-    for (const id of ['73068', '31301']) {
+});
+
+describe('pickup -> delivery conversion', () => {
+  // Danny: "customers should have the ability to upgrade to delivery."
+  // Kai, 2026-09-28: still allowed after production has finished.
+
+  test('offered in the open and the restricted window', () => {
+    for (const id of ['73068', '31301', '3571']) {
       const s = orderStage({ folderId: id, shippingMethod: 'Georgia Warehouse' });
-      assert.equal(s.canUpgrade, false);
-      assert.equal(s.blockedBy, 'pickup_conversion', id);
+      assert.equal(s.canConvert, true, id);
+      assert.equal(s.blockedBy, null, id);
+      assert.equal(s.canUpgrade, false, `${id}: a conversion is not a speed upgrade`);
+      assert.equal(s.upgradeTo, null, id);
+    }
+  });
+
+  test('to all four sellable services, never Saturday Overnight', () => {
+    const s = orderStage({ folderId: '73068', shippingMethod: 'Texas Warehouse' });
+    assert.deepEqual(s.convertTo, ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
+    assert.ok(!s.convertTo.some((x) => /saturday/i.test(x)));
+    assert.deepEqual([...DELIVERY_OPTIONS], s.convertTo);
+  });
+
+  test('the returned list is a copy, not the frozen original', () => {
+    const s = orderStage({ folderId: '73068', shippingMethod: 'Texas Warehouse' });
+    s.convertTo.pop();
+    assert.equal(DELIVERY_OPTIONS.length, 4);
+  });
+
+  test('refused once the order is completed, or in an unknown folder', () => {
+    assert.equal(orderStage({ folderId: '3516', shippingMethod: 'Georgia Warehouse' }).blockedBy, 'shipping');
+    const u = orderStage({ folderId: '999999', shippingMethod: 'Georgia Warehouse' });
+    assert.equal(u.canConvert, false);
+    assert.equal(u.blockedBy, 'unknown_folder');
+    assert.deepEqual(u.convertTo, []);
+  });
+
+  test('refused for a B2SIGN order, as an upgrade would be', () => {
+    const s = orderStage({
+      folderId: '73068', shippingMethod: 'Georgia Warehouse',
+      items: [{ name: 'Yard Sign 18x24' }],
+    });
+    assert.equal(s.canConvert, false);
+    assert.equal(s.blockedBy, 'supplier_order');
+  });
+
+  test('the pickup address is not judged: there is no delivery address yet', () => {
+    // A pickup order may carry the customer's billing address in shipping,
+    // including a PO box. The address that matters is the one typed at quote time.
+    const s = orderStage({
+      folderId: '73068', shippingMethod: 'Georgia Warehouse',
+      shipping: { street: 'PO Box 12', state: 'HI', country: 'US' },
+    });
+    assert.equal(s.canConvert, true);
+  });
+
+  test('a delivery order is never offered a conversion', () => {
+    for (const m of ['FedEx Ground', 'FedEx 2-Days', 'FedEx 1-Day']) {
+      const s = orderStage({ folderId: '73068', shippingMethod: m });
+      assert.equal(s.canConvert, false, m);
+      assert.deepEqual(s.convertTo, [], m);
     }
   });
 });

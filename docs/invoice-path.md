@@ -321,8 +321,9 @@ Shipping upgraded FedEx 2-Days -> FedEx 1-Day by customer,
 
 | 리소스 | |
 | --- | --- |
-| Lambda `<prefix>-order-status-api` | `functions/order-status-api/index.handler`, src 루트 번들 |
+| Lambda `<prefix>-order-status-api` | `functions/order-status-api/index.handler`, src 루트 번들. 로직은 `routes.mjs`(AWS 의존 없음, 테스트 대상), `index.mjs`는 DynamoDB·Shopify 배선만 |
 | 라우트 `GET /my-order` | **인증 없음** — 고객은 계정이 없다 |
+| 라우트 `POST /my-order/quote` | 같은 Lambda·같은 통합. 픽업 → 배송 전환 가격(주소 기준 세금). 같은 토큰 검사를 먼저 통과 |
 | 페이지 `web/my-order.html` | 기존 `BucketDeployment`가 `web/` 폴더를 통째로 올리므로 자동 |
 
 ### 이 Lambda만 DynamoDB **읽기 전용**이다
@@ -336,7 +337,7 @@ Shipping upgraded FedEx 2-Days -> FedEx 1-Day by customer,
 ### 공개 라우트가 늘어나지 않는지도 검사한다
 
 ```
-unauthenticated === ['GET /my-order', 'POST /webhook/orderdesk']
+unauthenticated === ['GET /my-order', 'POST /my-order/quote', 'POST /webhook/orderdesk']
 ```
 
 스태프 라우트가 실수로 authorizer를 잃으면 이 단언이 깨진다. 라우트를 세는 게 아니라

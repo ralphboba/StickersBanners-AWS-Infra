@@ -245,9 +245,27 @@ new bot message 'once approved nothing can be changed'"*
 | 사유 | 고객이 보는 문구 |
 | --- | --- |
 | `ground_after_production` | "Your order is packed and booked on Ground, so the shipping can no longer be changed." |
-| `pickup_conversion` | "This is a pickup order. To have it delivered instead, contact our team." |
 
-`pickup_conversion`은 **아직 미구현**이라 팀으로 보낸다. 주소 수집이 필요한 별도 작업.
+### 픽업 → 배송 전환 (구현, 2026-09-28)
+
+거부 사유가 아니라 **별도 제안**이다 (`orderStage().canConvert`). 두 단계:
+
+1. `GET /my-order` — 4개 서비스(Ground · 3-Days · 2-Days · 1-Day)를 **카드 가격 + "plus tax"**로.
+   주소가 없으니 세금을 알 수 없고, 그래서 이 숫자는 청구액으로 표시하지 않는다.
+2. 고객이 주소 입력 → `POST /my-order/quote` — 폴더를 **다시** 판정하고(409), 주소를 검사하고
+   (HI·AK·PR·VI·PO box → 422, 미국 외 → 422), 배송비 **전액**을 Shopify `draftOrderCalculate`로
+   그 주소 기준 세금 포함 금액으로 만든다.
+
+| 창 | 전환 |
+| --- | --- |
+| open | ✓ |
+| restricted (Awaiting Shipment / Pickup) | ✓ — 픽업은 애초에 나가는 게 없었다 |
+| closed (Completed · Pay By Check · 모르는 폴더) | ✗ |
+| B2SIGN 주문 | ✗ (`supplier_order`) |
+
+결제 후 쓰기: `applyShippingUpgrade({ …, deliverTo })` — 방법 + 주소 + 금액. 픽업인데 주소가
+없으면, 또는 픽업이 아닌데 주소가 오면 **거부**한다(업그레이드가 몰래 주소를 바꾸는 일은 없다).
+이 주소 쓰기가 OrderDesk 룰 두 개를 발화한다 → [`legacy-collision-audit.md`](legacy-collision-audit.md) C8.
 
 ---
 
@@ -390,11 +408,11 @@ rate limit에 영향이 없다.
 | | 비중 | 지금 |
 | --- | --- | --- |
 | Ground | 70% | ✅ 업그레이드 가능 (되돌린 뒤) |
-| 창고 픽업 | 18% | ⬜ 배송 전환 — 미구현 |
+| 창고 픽업 | 18% | ✅ 배송 전환 (쓰기는 스위치 + C8 확인 대기) |
 | Express | 12% | ✅ |
 
-**픽업 → 배송 전환이 미구현인 동안 18%가 빠진다.** Danny가 원한 기능이고, 주소 수집이
-필요해서 별도 작업이다.
+픽업 → 배송 전환이 붙어서 **세 갈래 전부가 이 페이지에 닿는다.** 전환의 결제 후 쓰기는
+주소를 바꾸기 때문에 레거시 룰과 겹친다 — 켜기 전 Linh 확인 (C8).
 
 ### 시설은 절대 안 바뀐다 ★
 

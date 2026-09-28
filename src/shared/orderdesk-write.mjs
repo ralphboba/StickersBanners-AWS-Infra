@@ -28,6 +28,7 @@
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
 import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
+import { isPickup } from './order-stage.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
 import {
   isSyntheticOrder, orderDeskWritesEnabled,
@@ -195,6 +196,12 @@ export function upgradeAlreadyApplied(order, invoiceRef) {
  * whichever production team already has it — see the ladder rule in
  * docs/order-lifecycle-and-refunds.md.
  *
+ * A pickup converted to a delivery goes through here too, with `deliverTo`:
+ * the address the customer typed and paid for. The two are tied both ways —
+ * a pickup is refused without an address (it would become a delivery to
+ * nowhere), and an address is refused on an order that is not a pickup (an
+ * upgrade must never quietly re-address a shipment).
+ *
  * @param {object}   p
  * @param {string}   p.orderDeskId    OrderDesk order id (we always know it)
  * @param {string}   p.orderName      for the synthetic-order guard and logs
@@ -202,12 +209,14 @@ export function upgradeAlreadyApplied(order, invoiceRef) {
  * @param {number}   p.amount         the shipping difference, BEFORE tax
  * @param {number}   [p.tax]          tax Shopify charged on that difference (0 if none)
  * @param {string}   p.invoiceRef     e.g. "D169" — the idempotency key
+ * @param {{address1: string, address2?: string, city: string, province: string,
+ *          zip: string, country?: string}} [p.deliverTo]  pickup conversions only
  * @param {string}   p.storeId
  * @param {string}   p.apiKey
  * @param {typeof fetch} [p.fetchImpl]
  */
 export async function applyShippingUpgrade({
-  orderDeskId, orderName, toMethod, amount, tax = 0, invoiceRef, storeId, apiKey, fetchImpl,
+  orderDeskId, orderName, toMethod, amount, tax = 0, invoiceRef, deliverTo, storeId, apiKey, fetchImpl,
 }) {
   // Three numbers, and they must be kept apart. `amount` is the shipping
   // charge; `tax` is what Shopify charged on it; their sum is what left the
@@ -222,6 +231,7 @@ export async function applyShippingUpgrade({
   const intent = {
     orderDeskId, toMethod, invoiceRef,
     amount: dollars(deltaCents), tax: dollars(taxCents), paid: dollars(paidCents),
+    ...(deliverTo ? { deliverTo } : {}),
   };
   const opts = fetchImpl ? { fetchImpl } : {};
 
@@ -253,6 +263,19 @@ export async function applyShippingUpgrade({
     return { applied: false, skipped: 'duplicate', intent };
   }
 
+  // Pickup and address go together, judged on the FRESH record: the office may
+  // have changed the method since the customer was quoted.
+  const converting = isPickup(fresh.shipping_method);
+  if (converting && !deliverTo) {
+    return { applied: false, error: 'pickup order needs a delivery address' };
+  }
+  if (!converting && deliverTo) {
+    return { applied: false, error: 'address given for an order that is not a pickup' };
+  }
+  if (converting && !(deliverTo.address1 && deliverTo.city && deliverTo.province && deliverTo.zip)) {
+    return { applied: false, error: 'delivery address incomplete' };
+  }
+
   // 3. Merge. Only these fields change; everything else is the fresh copy.
   const stamp = new Date().toLocaleString('en-CA', {
     timeZone: 'America/New_York',
@@ -264,6 +287,19 @@ export async function applyShippingUpgrade({
   const updated = {
     ...fresh,
     shipping_method: toMethod,
+    // Only the address lines change. Name, company, phone and email stay as
+    // the customer gave them at checkout.
+    ...(converting ? {
+      shipping: {
+        ...(fresh.shipping ?? {}),
+        address1: deliverTo.address1,
+        address2: deliverTo.address2 ?? '',
+        city: deliverTo.city,
+        state: deliverTo.province,
+        postal_code: deliverTo.zip,
+        country: deliverTo.country || 'US',
+      },
+    } : {}),
     // The grand total moves by everything the customer paid, tax included.
     order_total: dollars(cents(fresh.order_total) + paidCents),
     order_notes: [
@@ -271,10 +307,12 @@ export async function applyShippingUpgrade({
       {
         username: 'SBBot',
         date_added: stamp,
-        content: taxCents > 0
-          ? `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} `
-            + `+ $${dollars(taxCents)} tax = $${dollars(paidCents)} (${invoiceRef})`
-          : `Shipping upgraded ${from} -> ${toMethod} by customer, +$${dollars(deltaCents)} (${invoiceRef})`,
+        content: `${converting ? 'Pickup converted to delivery' : 'Shipping upgraded'} `
+          + `${from} -> ${toMethod} by customer, +$${dollars(deltaCents)}`
+          + (taxCents > 0 ? ` + $${dollars(taxCents)} tax = $${dollars(paidCents)}` : '')
+          + ` (${invoiceRef})`
+          + (converting ? `. Deliver to: ${[deliverTo.address1, deliverTo.address2, deliverTo.city,
+            deliverTo.province, deliverTo.zip].filter(Boolean).join(', ')}` : ''),
       },
     ],
   };
@@ -304,6 +342,7 @@ export async function applyShippingUpgrade({
     applied: true,
     from,
     to: toMethod,
+    converted: converting,
     orderTotal: updated.order_total,
     shippingTotal: updated.shipping_total,
     taxTotal: updated.tax_total,

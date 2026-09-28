@@ -247,3 +247,86 @@ describe('tax goes to the tax field, not the shipping field', () => {
     assert.match(note, /= \$36\.68/);
   });
 });
+
+describe('pickup converted to delivery', () => {
+  const PICKUP = {
+    id: '777', shipping_method: 'Georgia Warehouse',
+    order_total: '150.00', shipping_total: '0.00', tax_total: '12.00',
+    shipping: { first_name: 'Ana', last_name: 'Lee', company: 'Lee Co', phone: '555',
+      address1: '1 Billing Rd', city: 'Decatur', state: 'GA', postal_code: '30030', country: 'US' },
+    order_notes: [],
+  };
+  const TO = { address1: '1 Peachtree St', address2: 'Suite 4', city: 'Atlanta', province: 'GA', zip: '30303', country: 'US' };
+  const CONVERT = { ...ARGS, orderDeskId: '777', toMethod: 'FedEx 2-Days', amount: 38.2, tax: 3.06, deliverTo: TO };
+
+  test('writes the method, the address and the money together', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(PICKUP);
+    const r = await applyShippingUpgrade({ ...CONVERT, fetchImpl: od.fetchImpl });
+    assert.equal(r.applied, true);
+    assert.equal(r.converted, true);
+    const body = od.put().body;
+    assert.equal(body.shipping_method, 'FedEx 2-Days');
+    assert.equal(body.order_total, '191.26');
+    assert.equal(body.shipping_total, '38.20');
+    assert.equal(body.tax_total, '15.06');
+    assert.equal(body.shipping.address1, '1 Peachtree St');
+    assert.equal(body.shipping.address2, 'Suite 4');
+    assert.equal(body.shipping.city, 'Atlanta');
+    assert.equal(body.shipping.postal_code, '30303');
+    assert.match(body.order_notes.at(-1).content,
+      /^Pickup converted to delivery Georgia Warehouse -> FedEx 2-Days by customer, \+\$38\.20 \+ \$3\.06 tax = \$41\.26 \(D169\)\. Deliver to: 1 Peachtree St/);
+  });
+
+  test('keeps who it is for: name, company and phone are untouched', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(PICKUP);
+    await applyShippingUpgrade({ ...CONVERT, fetchImpl: od.fetchImpl });
+    const s = od.put().body.shipping;
+    assert.equal(s.first_name, 'Ana');
+    assert.equal(s.company, 'Lee Co');
+    assert.equal(s.phone, '555');
+  });
+
+  test('a pickup without an address is refused, and nothing is written', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(PICKUP);
+    const r = await applyShippingUpgrade({ ...CONVERT, deliverTo: undefined, fetchImpl: od.fetchImpl });
+    assert.equal(r.applied, false);
+    assert.match(r.error, /needs a delivery address/);
+    assert.equal(od.put(), undefined);
+  });
+
+  test('an incomplete address is refused', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(PICKUP);
+    const r = await applyShippingUpgrade({ ...CONVERT, deliverTo: { ...TO, zip: '' }, fetchImpl: od.fetchImpl });
+    assert.match(r.error, /incomplete/);
+    assert.equal(od.put(), undefined);
+  });
+
+  test('an address on an order that is not a pickup is refused: upgrades never re-address', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    const r = await applyShippingUpgrade({ ...ARGS, deliverTo: TO, fetchImpl: od.fetchImpl });
+    assert.equal(r.applied, false);
+    assert.match(r.error, /not a pickup/);
+    assert.equal(od.put(), undefined);
+  });
+
+  test('a plain upgrade never carries a shipping block it did not have', async () => {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const od = fakeOrderDesk(ORDER);
+    await applyShippingUpgrade({ ...ARGS, fetchImpl: od.fetchImpl });
+    assert.equal(od.put().body.shipping, undefined);
+    assert.match(od.put().body.order_notes.at(-1).content, /^Shipping upgraded /);
+  });
+
+  test('switch off: the address is in the reported intent, and nothing is sent', async () => {
+    const od = fakeOrderDesk(PICKUP);
+    const r = await applyShippingUpgrade({ ...CONVERT, fetchImpl: od.fetchImpl });
+    assert.equal(r.skipped, 'disabled');
+    assert.equal(r.intent.deliverTo.zip, '30303');
+    assert.equal(od.calls.length, 0);
+  });
+});

@@ -4,7 +4,7 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchOrderByName, quoteUpgradeWithTax } from '../../src/shared/shopify-orders.mjs';
+import { fetchOrderByName, quoteUpgradeWithTax, toMailingAddress } from '../../src/shared/shopify-orders.mjs';
 import { __resetShopifyClient } from '../../src/shared/shopify-fetch.mjs';
 
 beforeEach(() => { __resetShopifyClient(); });
@@ -23,6 +23,7 @@ const order = (name) => ({
 });
 
 const ARGS = { shop: 's.myshopify.com', token: 't' };
+const ADDR = { street: '1 Main St', city: 'Atlanta', state: 'GA', postalCode: '30301', country: 'US' };
 
 describe('fetchOrderByName', () => {
   test('one exact match comes back', async () => {
@@ -98,13 +99,13 @@ describe('quoteUpgradeWithTax', () => {
   });
 
   test('returns Shopify’s own numbers', async () => {
-    const r = await quoteUpgradeWithTax({ ...ARGS, title: 'Shipping Upgrade', amount: 33.96,
+    const r = await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'Shipping Upgrade', amount: 33.96,
       fetchImpl: calc('33.96', '2.72', '36.68') });
     assert.deepEqual(r, { subtotal: 33.96, tax: 2.72, total: 36.68 });
   });
 
   test('no tax at this address is a real answer, not a missing one', async () => {
-    const r = await quoteUpgradeWithTax({ ...ARGS, title: 'x', amount: 33.96,
+    const r = await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'x', amount: 33.96,
       fetchImpl: calc('33.96', '0.00', '33.96') });
     assert.deepEqual(r, { subtotal: 33.96, tax: 0, total: 33.96 });
   });
@@ -120,20 +121,20 @@ describe('quoteUpgradeWithTax', () => {
         userErrors: [],
       },
     });
-    assert.equal(await quoteUpgradeWithTax({ ...ARGS, title: 'x', amount: 33.96, fetchImpl: partial }), null);
+    assert.equal(await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'x', amount: 33.96, fetchImpl: partial }), null);
   });
 
   test('userErrors mean no quote', async () => {
     const bad = reply({ draftOrderCalculate: { calculatedDraftOrder: null,
       userErrors: [{ field: ['input'], message: 'nope' }] } });
-    assert.equal(await quoteUpgradeWithTax({ ...ARGS, title: 'x', amount: 33.96, fetchImpl: bad }), null);
+    assert.equal(await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'x', amount: 33.96, fetchImpl: bad }), null);
   });
 
   test('a non-positive amount never reaches the network', async () => {
     let called = false;
     const spy = async () => { called = true; };
     for (const a of [0, -1, null, undefined, NaN]) {
-      assert.equal(await quoteUpgradeWithTax({ ...ARGS, title: 'x', amount: a, fetchImpl: spy }), null);
+      assert.equal(await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'x', amount: a, fetchImpl: spy }), null);
     }
     assert.equal(called, false);
   });
@@ -144,12 +145,60 @@ describe('quoteUpgradeWithTax', () => {
       sent = JSON.parse(init.body);
       return (await calc('33.96', '2.72', '36.68')());
     };
-    await quoteUpgradeWithTax({ ...ARGS, title: 'Shipping Upgrade', amount: 33.96,
+    await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'Shipping Upgrade', amount: 33.96,
       customerId: 'gid://shopify/Customer/1', fetchImpl });
     const line = sent.variables.input.lineItems[0];
     assert.equal(line.taxable, true);
     assert.equal(line.requiresShipping, false);
     assert.equal(line.originalUnitPrice, '33.96');
     assert.equal(sent.variables.input.purchasingEntity.customerId, 'gid://shopify/Customer/1');
+  });
+});
+
+describe('the address the tax is priced for', () => {
+  test('no address means no quote, and no call at all', async () => {
+    let called = false;
+    const spy = async () => { called = true; };
+    for (const a of [undefined, null, {}, { street: '1 Main St' }, { state: 'GA' }]) {
+      assert.equal(await quoteUpgradeWithTax({ ...ARGS, shippingAddress: a, title: 'x', amount: 10, fetchImpl: spy }), null);
+    }
+    assert.equal(called, false);
+  });
+
+  test('is sent in the shape Shopify reads, with codes', async () => {
+    let sent;
+    const fetchImpl = async (_u, init) => {
+      sent = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ data: { draftOrderCalculate: {
+        calculatedDraftOrder: { subtotalPriceSet: { shopMoney: { amount: '10' } },
+          totalTaxSet: { shopMoney: { amount: '0.80' } }, totalPriceSet: { shopMoney: { amount: '10.80' } } },
+        userErrors: [] } } }), text: async () => '' };
+    };
+    await quoteUpgradeWithTax({ ...ARGS, shippingAddress: ADDR, title: 'x', amount: 10, fetchImpl });
+    assert.deepEqual(sent.variables.input.shippingAddress, {
+      address1: '1 Main St', city: 'Atlanta', provinceCode: 'GA', zip: '30301', countryCode: 'US',
+    });
+  });
+});
+
+describe('toMailingAddress', () => {
+  test('reads the OrderDesk row spelling', () => {
+    assert.deepEqual(toMailingAddress({ street: '9 Elm', street2: 'Apt 2', city: 'Reno', state: 'nv', postalCode: '89501', country: 'US' }),
+      { address1: '9 Elm', address2: 'Apt 2', city: 'Reno', provinceCode: 'NV', zip: '89501', countryCode: 'US' });
+  });
+
+  test('reads the customer form spelling', () => {
+    assert.deepEqual(toMailingAddress({ address1: '9 Elm', city: 'Reno', province: 'NV', zip: '89501', country: 'US' }),
+      { address1: '9 Elm', city: 'Reno', provinceCode: 'NV', zip: '89501', countryCode: 'US' });
+  });
+
+  test('a blank country is the US; a spelled-out one is turned into its code', () => {
+    assert.equal(toMailingAddress({ state: 'GA', zip: '30301' }).countryCode, 'US');
+    assert.equal(toMailingAddress({ state: 'GA', zip: '30301', country: 'United States' }).countryCode, 'US');
+  });
+
+  test('a spelled-out state is refused rather than half-sent', () => {
+    assert.equal(toMailingAddress({ state: 'Georgia', zip: '30301' }), null);
+    assert.equal(toMailingAddress({ state: 'GA', zip: '' }), null);
   });
 });

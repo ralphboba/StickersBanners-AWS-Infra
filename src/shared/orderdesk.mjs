@@ -435,6 +435,8 @@ export function cleanOrder(order) {
     // (shared/upgrade-eligibility.mjs). Routing does not read these.
     street: order.shipping?.address1,
     street2: order.shipping?.address2,
+    // City completes the address Shopify prices the upgrade's tax for.
+    city: order.shipping?.city,
     country: order.shipping?.country,
   };
 

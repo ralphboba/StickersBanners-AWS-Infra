@@ -46,6 +46,7 @@ describe('ApiStack', () => {
       'GET /my-order',
       'GET /orders',
       'GET /orders/{name}',
+      'POST /my-order/quote',
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
@@ -62,7 +63,7 @@ describe('ApiStack', () => {
     expect(byKey['GET /orders'].AuthorizationType).toBe('JWT');
   });
 
-  test('the customer route is public, and it is the ONLY public GET', () => {
+  test('the customer routes are the only public ones besides the webhook', () => {
     // Customers have no account; the token in their emailed link is the check,
     // and it happens inside the Lambda. Every other route stays behind Cognito,
     // so this assertion is what would catch a staff route losing its authorizer.
@@ -73,7 +74,7 @@ describe('ApiStack', () => {
       .filter((r) => r.AuthorizationType !== 'JWT')
       .map((r) => r.RouteKey)
       .sort();
-    expect(unauthenticated).toEqual(['GET /my-order', 'POST /webhook/orderdesk']);
+    expect(unauthenticated).toEqual(['GET /my-order', 'POST /my-order/quote', 'POST /webhook/orderdesk']);
   });
 
   test('CORS is enabled for the dashboard', () => {

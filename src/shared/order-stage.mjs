@@ -60,14 +60,26 @@ const OFF_LADDER = [
  *
  * Pickup is off the speed ladder because converting one to a delivery is a
  * different transaction: it needs an address we do not have, and a full
- * shipping price rather than a difference. Danny wants it offered; it is its
- * own piece of work.
+ * shipping price rather than a difference. It is offered as a conversion
+ * instead (canConvert below), priced once the customer has typed an address.
  */
 const PICKUP = /\b(warehouse|pick\s*-?\s*up|pickup)\b/i;
 
 export function isPickup(shippingMethod) {
   return PICKUP.test(String(shippingMethod ?? ''));
 }
+
+/**
+ * What a pickup order may be converted to (Danny: "pickup -> express/ground").
+ *
+ * All four sellable services, not one rung: nothing is being shipped at all
+ * yet, so there is no "current speed" to step up from. Saturday Overnight stays
+ * out for the same reason it is off the ladder — whether it reaches an address
+ * is only known once ShipStation has seen it.
+ */
+export const DELIVERY_OPTIONS = Object.freeze([
+  'FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day',
+]);
 
 // ── the exact strings OrderDesk holds ──────────────────────────────────────
 // `to` is written verbatim into shipping_method, so it has to be the text the
@@ -109,8 +121,8 @@ const LADDER = [
  * The next service up from what the customer already has.
  * @param {string} shippingMethod  the order's current shipping_method
  * @returns {{ from: string, to: string|null, top: boolean } | null}
- *          null when the method is not on the ladder at all (Ground, pickup,
- *          anything unrecognised) — those get no self-service upgrade.
+ *          null when the method is not on the ladder at all (pickup, Saturday
+ *          Overnight, anything unrecognised) — those get no speed upgrade.
  */
 export function nextService(shippingMethod) {
   const m = String(shippingMethod ?? '').toLowerCase();
@@ -169,6 +181,29 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   // be both wrong and confusing.
   const ineligible = ineligibleReason({ shipping, items });
 
+  // ── a pickup is a conversion, not an upgrade ────────────────────────────
+  // There is no delivery address on a pickup order, so the destination and
+  // PO-box rules cannot be judged yet: they are applied to the address the
+  // customer types in, at quote time (order-status-api). Only what is known
+  // now is checked here — the window, and whether it is a supplier order.
+  if (pickup) {
+    const supplier = ineligible?.blockedBy === 'supplier_order';
+    const convertible = openness !== 'closed' && !supplier;
+    return {
+      stage, label, step,
+      window: openness,
+      facility: facilityOf(folderId),
+      known: Boolean(folder),
+      canUpgrade: false,
+      upgradeTo: null,
+      canConvert: convertible,
+      convertTo: convertible ? [...DELIVERY_OPTIONS] : [],
+      blockedBy: convertible ? null
+        : (openness === 'closed' ? (folder ? 'shipping' : 'unknown_folder') : 'supplier_order'),
+      currentService: shippingMethod ?? null,
+    };
+  }
+
   let blockedBy = null;
   if (openness === 'closed') blockedBy = folder ? 'shipping' : 'unknown_folder';
   else if (ineligible) blockedBy = ineligible.blockedBy;
@@ -176,7 +211,6 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   // become a delivery, but a Ground order is already manifested for the Ground
   // collection and cannot be pulled back out of it (Kai, 2026-09-28).
   else if (openness === 'restricted' && onGround) blockedBy = 'ground_after_production';
-  else if (pickup) blockedBy = 'pickup_conversion';
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
   else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';
@@ -189,6 +223,8 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
     facility: facilityOf(folderId),
     known: Boolean(folder),
     canUpgrade: blockedBy === null,
+    canConvert: false,
+    convertTo: [],
     blockedBy,
     currentService: ladder?.from ?? (shippingMethod ?? null),
     upgradeTo: blockedBy === null ? ladder.to : null,

@@ -64,6 +64,16 @@
 **12. CA·NV 라벨 경로.** ShipStation store id가 GA(68977)/NJ(68987)/TX(68986)만 있다.
    CA는 별도 OrderDesk 스토어로 가는 것으로 보이는데, **CA·NV는 라벨을 어디서 뽑나?**
 
+## E. 픽업 → 배송 전환
+
+**13. 전환 시 주소 쓰기.** 고객이 픽업을 배송으로 바꾸고 결제하면 OrderDesk에
+   `shipping_method`와 **배송 주소**를 쓴다(스위치 꺼짐). 주소가 바뀌면 `Address Change`
+   (필터 없이 ShipStation 전송)와 `Push Order Address Update to Redis`(봇 HTTP 호출)가 돈다.
+   (a) 봇이 그 호출을 받아도 괜찮은가? (b) `Awaiting Pickup`에 있던 주문은 배송으로 바뀐 뒤
+   어느 폴더로 가야 라벨이 나오나 — `Address Change`의 ShipStation 전송이면 충분한가?
+   (c) `routing.mjs`는 픽업 키워드로 시설을 정하는데, 이미 라우팅된 주문의 방법이 바뀌어도
+   봇이 다시 라우팅하지는 않나?
+
 ---
 
 ## 영문 — 그대로 전달용
@@ -114,6 +124,18 @@
 > 11. What's the timeline for switching the old bot off? While both run, our gate can't hold it back.
 > 12. ShipStation store ids exist for GA, NJ and TX only. CA seems to go to a separate OrderDesk
 >    store — **where do CA and NV labels get printed?**
+>
+> **Pickup → delivery**
+>
+> 13. Customers will be able to turn a warehouse-pickup order into a delivery (Danny asked for
+>    this). After they pay, we'd write the new `shipping_method` **and the delivery address** to
+>    the OrderDesk order — no folder move. Changing the address fires `Address Change` (submits to
+>    ShipStation, no filter) and `Push Order Address Update to Redis` (calls your bot). Three things:
+>    (a) is it fine for your bot to receive that call? (b) for an order already in
+>    `<facility> Awaiting Pickup`, where does it need to be for a label to get printed — is the
+>    ShipStation submit from `Address Change` enough? (c) routing uses the pickup keywords to pick
+>    the facility; if an order that's already been routed stops being a pickup, does anything
+>    re-route it? That write stays switched off until you answer.
 >
 > Thanks,
 > Kai

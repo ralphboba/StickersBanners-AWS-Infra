@@ -17,6 +17,7 @@
 | C5 | `shipping_method` **문자열 표기** | 같은 서비스가 두 표기로 갈림 | ✅ 레거시에 맞춤 |
 | C6 | **폴더 이동** (레거시의 상태 기계) | 상태 기계 파손 | ✅ 우리는 안 옮김 |
 | C7 | `order_notes` | 누적 | 🟢 경미 |
+| C8 | **주소 변경 룰** (픽업 → 배송 전환) | ShipStation 조기 전송 · 레거시 봇 HTTP 호출 | ⚠️ **확인 필요** — 스위치 꺼짐 |
 
 ---
 
@@ -183,13 +184,34 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 
 ---
 
+## C8 — 픽업 → 배송 전환이 주소를 바꾸면 두 룰이 발화한다 ⚠️ 확인 필요
+
+속도 업그레이드는 `shipping_method`만 쓴다. **전환은 주소도 쓴다** — 픽업 주문엔 배송지가
+없으니 고객이 입력한 주소를 OrderDesk `shipping`에 넣어야 한다(`applyShippingUpgrade`의
+`deliverTo`). OrderDesk에서 주소가 바뀌면 기존 룰 두 개가 돈다
+([`orderdesk-rules-audit.md`](orderdesk-rules-audit.md) 발견 1·3):
+
+| 룰 | 필터 | 하는 일 | 전환에 미치는 영향 |
+| --- | --- | --- | --- |
+| `Address Change` | **없음** | Submit Order to ShipStation | 생산 중인 주문이 Awaiting Shipment보다 **먼저** ShipStation에 들어간다. upsert면 무해, 새 레코드면 **중복** |
+| `Push Order Address Update to Redis` ×3 | QTS·Proofing·Manual·Pending Review·Sales·Missing | **Linh 봇의 HTTP API** 호출 | 초기 폴더의 주문이면 레거시 봇이 주소 변경을 통보받는다 |
+
+`Address Change`는 한편으로 **필요한** 룰일 수도 있다. `<시설> Awaiting Pickup`에 있는 주문은
+원래 ShipStation에 갈 일이 없으므로, 배송으로 바뀐 뒤 누군가 ShipStation에 넣어야 라벨이 나온다.
+그 역할을 이 룰이 해줄 가능성이 있다 — 하지만 확인 전에는 가정하지 않는다.
+
+**지금 상태:** 쓰기는 `ORDERDESK_UPGRADE_WRITES` 뒤에 있고 **꺼져 있다.** 페이지와 견적(읽기)은
+아무 룰도 건드리지 않는다. 켜기 전에 Linh·Danny에게 확인한다 (`questions-for-linh.md` 13번).
+
+---
+
 ## 겹치지 않는 것들 (확인함)
 
 | | 왜 안 겹치나 |
 | --- | --- |
 | DynamoDB `JOBS_TABLE` | 레거시는 AWS를 모른다 |
 | SQS 큐 / 파이프라인 | `sb-dev-poller` 비활성. 우리는 큐에 안 넣는다 |
-| ShipStation | 우리는 직접 안 친다. 컷오프 이전에만 쓰므로 재전송도 불필요 |
+| ShipStation | 우리는 직접 안 친다. 속도 업그레이드는 주소를 안 바꾸므로 재전송 룰도 안 돈다 (전환은 예외 — C8) |
 | Zendesk | 업그레이드는 메일을 안 보낸다. Shopify가 보낸다 |
 | FTP / Google Drive | 업그레이드는 아트워크를 안 건드린다 |
 
@@ -210,3 +232,6 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 - [x] **C3** `applyShippingUpgrade`에 재조회·병합 — 완료
 - [ ] **C3b** `applyExpressUpgrade`(레거시 경로)에도 같은 수정
 - [ ] 레거시가 도는 시간대에 미러를 10분 주기로 하루 돌려보고 429 로그 확인
+- [ ] **C8** 전환의 주소 PUT이 `Address Change`(ShipStation)와 Redis push(레거시 봇)를
+      발화해도 되는지 Linh·Danny 확인. `Awaiting Pickup`에서 전환된 주문이 어느 폴더로
+      가야 라벨이 나오는지도 같이

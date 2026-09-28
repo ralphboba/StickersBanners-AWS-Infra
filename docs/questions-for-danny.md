@@ -17,16 +17,15 @@
 9/14에 Kai가 "ground에서 업그레이드를 하는거지"라고 해서 사다리 맨 아래 칸으로 넣었는데,
 Danny 확인 후 **Kai가 Danny 쪽으로 확정했다.** Ground는 사다리에서 빠졌다.
 
-## ⬜ 새 범위 — 픽업 → 배송 전환
+## ✅ 픽업 → 배송 전환 — 구현됨
 
-Danny가 "가능해야 한다"고 했다. 이건 **속도 업그레이드와 다른 기능이다:**
+Danny: "pickup orders - customers should have the ability to upgrade to delivery."
 
-- 고객에게서 **배송 주소를 받아야 한다** (픽업 주문엔 없다)
-- 요금표로 배송비 전액을 매긴다 (차액이 아니라)
-- **라우팅이 픽업 키워드로 시설을 정한다**(`routing.mjs` PICKUP_KEYWORDS) — 픽업을
-  없애면 그 주문의 생산지 판정 근거가 사라진다. Linh 확인 대상일 수 있다
-
-지금 사다리는 픽업을 다루지 않는다(`OFF_LADDER`). **별도 단계로 잡는다.**
+- 4개 서비스 전부 제안 (픽업은 "현재 속도"가 없으므로 한 칸 제한이 없다). Saturday Overnight 제외
+- 고객이 주소를 입력해야 세금 포함 총액이 나온다. HI·AK·PR·VI·PO box·미국 외는 거부
+- 배송비는 요금표 **전액** (차액이 아님)
+- 남은 확인: 전환의 주소 쓰기가 OrderDesk 룰(ShipStation 전송 · 봇 호출)을 발화한다 →
+  Linh 13번. `Awaiting Pickup`에서 전환된 주문이 라벨까지 가는 경로도 같이 확인
 
 ## 아직 답이 없는 것
 

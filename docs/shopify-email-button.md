@@ -83,7 +83,11 @@ hex"는 빼도 된다. 우리 버튼도 `{{ shop.email_accent_color }}`를 쓰�
         </p>
         <table cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px 0;">
           <tr><td style="padding:0 0 4px 0; font-size:14px; line-height:20px; color:#333;">
-            &bull;&nbsp; Upgrade your shipping speed</td></tr>
+            {% if delivery_method == 'pick-up' %}
+            &bull;&nbsp; Have it delivered instead of picking it up
+            {% else %}
+            &bull;&nbsp; Upgrade your shipping speed
+            {% endif %}</td></tr>
           <tr><td style="padding:0 0 0 0; font-size:14px; line-height:20px; color:#333;">
             &bull;&nbsp; Add another product to your order</td></tr>
         </table>
@@ -115,14 +119,18 @@ hex"는 빼도 된다. 우리 버튼도 `{{ shop.email_accent_color }}`를 쓰�
 | `&amp;` | Liquid가 아니라 HTML 이슈. 메일 클라이언트에서 `&`를 그대로 두면 일부가 엔티티로 잘못 파싱한다 |
 | **목록도 `table`** | `<ul>`/`<li>`는 Outlook에서 들여쓰기가 깨진다. 불릿을 `&bull;` 문자로 직접 찍는 게 안전하다 |
 | 항목 두 줄 | 배송 업그레이드 **와** 제품 추가, 둘 다 광고한다 (Kai). 그래서 라벨 후보 중 `Upgrade my shipping`은 절반만 설명하는 셈이 됐다 |
+| 첫 줄은 **픽업이면 문구가 바뀐다** | 픽업 주문도 같은 Order confirmation 템플릿을 받는다. "Upgrade your shipping speed"는 픽업 고객에겐 틀린 말이라 `delivery_method == 'pick-up'`로 갈라 "Have it delivered instead…"를 보여준다. 버튼·링크는 같고, 페이지가 주문을 보고 알아서 전환 화면을 띄운다 |
 
 ## 서버 쪽 계약
 
 `/my-order`가 받는 것:
 
 ```
-GET /my-order?o=S59131&s=<url-encoded order_status_url>
+GET  /my-order?o=S59131&s=<url-encoded order_status_url>
+POST /my-order/quote   { o, s, service, address }     ← 픽업 → 배송 전환 가격
 ```
+
+두 라우트 모두 같은 토큰 검사를 먼저 통과해야 한다 (`routes.mjs` `authorised`).
 
 검증 순서:
 
@@ -135,10 +143,20 @@ GET /my-order?o=S59131&s=<url-encoded order_status_url>
 
 ## 픽업 주문은?
 
-이 템플릿은 픽업 주문에도 같이 쓰인다(`delivery_method == 'pick-up'` 분기 존재). 버튼은
-그대로 두는 게 맞다 — 픽업↔배송 전환이 원래 범위에 있었고, 페이지가 알아서 픽업용 옵션을
-보여주면 된다. 배송 업그레이드만 하고 끝낼 거면 `{% if requires_shipping %}` 조건을 추가한다.
+**같은 이메일이 간다.** Shopify의 Order confirmation 하나가 배송·픽업 둘 다 처리하고, 본문에서
+`delivery_method == 'pick-up'`로 갈린다 (픽업이면 "You'll receive an email when your order is
+ready for pickup."). 위 스니펫은 그 분기 **밖**에 들어가므로 픽업 고객에게도 버튼이 보인다.
 
+그래서 첫 불릿만 같은 조건으로 갈랐다. 버튼과 링크는 동일하고, 페이지(`web/my-order.html`)가
+주문의 shipping_method를 보고 알아서 고른다:
+
+| 주문 | 페이지가 보여주는 것 |
+| --- | --- |
+| 배송 (Ground / 3-Days / 2-Days) | 한 칸 위 업그레이드, 세금 포함 금액 |
+| 픽업 (`Georgia Warehouse` 등) | **배송 전환**: 4개 서비스를 카드 가격 + "plus tax"로 → 주소 입력 → `POST /my-order/quote`가 그 주소 기준 세금 포함 총액 |
+
+픽업 → 배송은 완료(Awaiting Pickup) 뒤에도 가능하다 (Kai, 2026-09-28). Completed 폴더나 B2SIGN
+주문이면 막힌다.
 ## 배포 순서 (되돌리기 쉬운 순으로)
 
 1. **Preview**로 렌더 확인 (Notifications 편집기 우측 상단)

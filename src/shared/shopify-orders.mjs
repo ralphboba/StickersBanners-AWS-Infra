@@ -95,17 +95,63 @@ const CALCULATE = `
   }
 `;
 
+const COUNTRY_NAMES = { 'united states': 'US', 'united states of america': 'US', usa: 'US' };
+
+/**
+ * An address in Shopify's MailingAddressInput shape, or null if it is not
+ * complete enough to tax.
+ *
+ * Accepts both spellings in this codebase: the OrderDesk row's
+ * (street / state / postalCode) and the customer form's
+ * (address1 / province / zip). Shopify wants codes — provinceCode and
+ * countryCode — and silently ignores fields it does not know, so sending
+ * `address` or `state` would not fail: it would price the tax for no address
+ * at all. That is why this returns null instead of a partial address.
+ *
+ * @returns {null | { address1: string, address2?: string, city?: string,
+ *                    provinceCode: string, zip: string, countryCode: string }}
+ */
+export function toMailingAddress(a) {
+  if (!a) return null;
+  const s = (v) => String(v ?? '').trim();
+  const address1 = s(a.address1 ?? a.street);
+  const address2 = s(a.address2 ?? a.street2);
+  const city = s(a.city);
+  const provinceCode = s(a.provinceCode ?? a.province ?? a.state).toUpperCase();
+  const zip = s(a.zip ?? a.postalCode);
+  const rawCountry = s(a.countryCode ?? a.country);
+  const countryCode = rawCountry === ''
+    ? 'US'
+    : (COUNTRY_NAMES[rawCountry.toLowerCase()] ?? rawCountry.toUpperCase());
+
+  if (!/^[A-Z]{2}$/.test(provinceCode) || !zip || !/^[A-Z]{2}$/.test(countryCode)) return null;
+  return {
+    ...(address1 ? { address1 } : {}),
+    ...(address2 ? { address2 } : {}),
+    ...(city ? { city } : {}),
+    provinceCode,
+    zip,
+    countryCode,
+  };
+}
+
 /**
  * @param {object} p
  * @param {string} p.title      the invoice line, e.g. "Shipping Upgrade: 2-Days -> 1-Day"
  * @param {number} p.amount     the shipping difference, before tax
- * @param {string} p.customerId Shopify customer gid, so the tax uses their address
+ * @param {string} p.customerId Shopify customer gid (optional)
+ * @param {object} p.shippingAddress  where it ships; REQUIRED — see below
  * @returns {Promise<null | { subtotal: number, tax: number, total: number }>}
  */
 export async function quoteUpgradeWithTax({
   shop, token, title, amount, customerId, shippingAddress, fetchImpl,
 }) {
   if (!(Number(amount) > 0)) return null;
+
+  // No address, no quote. Without one Shopify still answers — with the tax
+  // for nowhere in particular — and that number would go on the page as final.
+  const address = toMailingAddress(shippingAddress);
+  if (!address) return null;
 
   const input = {
     lineItems: [{
@@ -116,7 +162,7 @@ export async function quoteUpgradeWithTax({
       taxable: true,
     }],
     ...(customerId ? { purchasingEntity: { customerId } } : {}),
-    ...(shippingAddress ? { shippingAddress } : {}),
+    shippingAddress: address,
   };
 
   const payload = await shopifyGraphQL({

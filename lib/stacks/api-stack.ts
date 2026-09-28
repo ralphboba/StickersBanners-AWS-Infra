@@ -62,10 +62,22 @@ export class ApiStack extends cdk.Stack {
     // string is the access check, done inside the Lambda, and it returns the
     // same 404 for a bad token as for an order that does not exist.
     if (props.orderStatusApiFn) {
+      // One integration for both customer routes: the Lambda dispatches on the
+      // method, and both run the same token check before anything else.
+      const orderStatusIntegration = new HttpLambdaIntegration(
+        'OrderStatusIntegration', props.orderStatusApiFn,
+      );
       this.httpApi.addRoutes({
         path: '/my-order',
         methods: [apigw.HttpMethod.GET],
-        integration: new HttpLambdaIntegration('OrderStatusIntegration', props.orderStatusApiFn),
+        integration: orderStatusIntegration,
+      });
+      // Pickup -> delivery: prices one service for the address the customer
+      // typed. Read only, like GET (draftOrderCalculate persists nothing).
+      this.httpApi.addRoutes({
+        path: '/my-order/quote',
+        methods: [apigw.HttpMethod.POST],
+        integration: orderStatusIntegration,
       });
     }
 
