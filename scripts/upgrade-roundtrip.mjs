@@ -3,6 +3,7 @@
 //
 //   node scripts/upgrade-roundtrip.mjs apply   <S-number> --to "FedEx 3-Days" --amount 68.17 --tax 6.07 --yes
 //        [--prep-method "FedEx Ground"]   set the service first (address untouched)
+//        [--deliver-to "addr1|addr2|city|ST|zip"]   pickup -> delivery (writes the address)
 //   node scripts/upgrade-roundtrip.mjs restore <S-number> --yes
 //
 // apply    reads the order, saves the whole record to a snapshot file, runs the
@@ -64,10 +65,14 @@ async function readOrder(id) {
   return (await res.json()).order;
 }
 
+const ADDRESS = ['address1', 'address2', 'city', 'state', 'postal_code', 'country'];
+const addressOf = (o) => ADDRESS.map((k) => o.shipping?.[k] ?? '').join(' | ');
+
 function show(label, o) {
   const folder = folderById(o.folder_id);
   console.log(`\n${label}`);
   for (const k of WATCHED) console.log(`  ${k.padEnd(16)} ${o[k]}${k === 'folder_id' && folder ? ` (${folder.name})` : ''}`);
+  console.log(`  ${'address'.padEnd(16)} ${addressOf(o)}`);
   console.log(`  ${'notes'.padEnd(16)} ${(o.order_notes ?? []).length}`);
 }
 
@@ -105,9 +110,17 @@ if (mode === 'apply') {
   }
 
   process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';   // this process only
+  // Pickup -> delivery: --deliver-to "address1|address2|city|ST|zip"
+  const dt = arg('deliver-to');
+  let deliverTo;
+  if (dt) {
+    const [address1, address2, city, province, zip] = dt.split('|').map((x) => x.trim());
+    deliverTo = { address1, address2, city, province, zip, country: 'US' };
+  }
+
   const r = await applyShippingUpgrade({
     orderDeskId: before.id, orderName, toMethod: to, amount, tax,
-    invoiceRef: `TEST-${Date.now()}`, storeId, apiKey,
+    invoiceRef: `TEST-${Date.now()}`, storeId, apiKey, deliverTo,
   });
   delete process.env.ORDERDESK_UPGRADE_WRITES;
   if (!r.applied) die(`not applied: ${JSON.stringify(r)}`);
@@ -131,6 +144,7 @@ if (mode === 'restore') {
   show('NOW', now);
   const diffs = WATCHED.filter((k) => String(now[k]) !== String(snap[k]));
   if ((now.order_notes ?? []).length !== (snap.order_notes ?? []).length) diffs.push('order_notes');
+  if (addressOf(now) !== addressOf(snap)) diffs.push('address');
   if (diffs.length) die(`\nNOT fully restored: ${diffs.join(', ')}. Snapshot kept at ${snapFile(orderName)}.`);
   fs.renameSync(snapFile(orderName), `${snapFile(orderName)}.restored`);
   console.log('\nRestored: every watched field matches the snapshot.');
