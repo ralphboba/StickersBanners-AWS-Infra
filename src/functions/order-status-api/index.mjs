@@ -54,6 +54,12 @@ const BLOCKED_COPY = {
   supplier_order: 'This order is made by one of our partners, so changes go through our team.',
   destination: 'We can’t change shipping for this delivery address.',
   po_box: 'Faster shipping isn’t available to a PO box.',
+  // Production has finished and the order is with the Ground collection.
+  ground_after_production: 'Your order is packed and booked on Ground, so the '
+    + 'shipping can no longer be changed.',
+  // Pickup to delivery is a conversion rather than an upgrade; not built yet.
+  pickup_conversion: 'This is a pickup order. To have it delivered instead, '
+    + 'contact our team.',
 };
 
 /**

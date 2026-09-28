@@ -153,10 +153,18 @@ describe('through orderStage', () => {
     assert.equal(s.blockedBy, 'supplier_order');
   });
 
-  test('the cutoff still wins over everything', () => {
-    const s = orderStage({ folderId: '3571', shippingMethod: 'FedEx 2-Days',
+  test('a closed folder wins over everything', () => {
+    const s = orderStage({ folderId: '3516', shippingMethod: 'FedEx 2-Days',
       shipping: { state: 'HI' }, items: [{ name: 'Yard Sign' }] });
     assert.equal(s.blockedBy, 'shipping');
+  });
+
+  test('but the destination still applies inside the restricted window', () => {
+    // Express can move up after production; Hawaii still cannot.
+    const s = orderStage({ folderId: '3571', shippingMethod: 'FedEx 2-Days',
+      shipping: { state: 'HI' } });
+    assert.equal(s.canUpgrade, false);
+    assert.equal(s.blockedBy, 'destination');
   });
 
   test('an order with no shipping detail is unaffected by these rules', () => {

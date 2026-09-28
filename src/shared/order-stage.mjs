@@ -14,7 +14,7 @@
 // canUpgrade: false. This gates a charge; "I do not recognise this folder" must
 // never read as yes.
 
-import { folderById, isModifiable, facilityOf } from './orderdesk-folders.mjs';
+import { folderById, windowOf, facilityOf } from './orderdesk-folders.mjs';
 import { ineligibleReason } from './upgrade-eligibility.mjs';
 
 /** Internal stage -> what the customer sees, and where it sits on the tracker. */
@@ -144,8 +144,10 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   const label = copy?.label ?? UNKNOWN_STAGE.label;
   const step = copy?.step ?? UNKNOWN_STAGE.step;
 
-  const modifiable = isModifiable(folderId);
+  const openness = windowOf(folderId);
   const ladder = nextService(shippingMethod);
+  const pickup = isPickup(shippingMethod);
+  const onGround = /\bground\b/i.test(String(shippingMethod ?? ''));
 
   // ── never charge for what the legacy bot may hand over for free ──────────
   // Linh's changeExpress upgrades a 3-day order to 2-day for nothing when it is
@@ -168,8 +170,13 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   const ineligible = ineligibleReason({ shipping, items });
 
   let blockedBy = null;
-  if (!modifiable) blockedBy = folder ? 'shipping' : 'unknown_folder';
+  if (openness === 'closed') blockedBy = folder ? 'shipping' : 'unknown_folder';
   else if (ineligible) blockedBy = ineligible.blockedBy;
+  // Production has finished. Express can still move up and a pickup can still
+  // become a delivery, but a Ground order is already manifested for the Ground
+  // collection and cannot be pulled back out of it (Kai, 2026-09-28).
+  else if (openness === 'restricted' && onGround) blockedBy = 'ground_after_production';
+  else if (pickup) blockedBy = 'pickup_conversion';
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
   else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';
@@ -178,6 +185,7 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
     stage,
     label,
     step,
+    window: openness,
     facility: facilityOf(folderId),
     known: Boolean(folder),
     canUpgrade: blockedBy === null,

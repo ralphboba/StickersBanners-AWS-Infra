@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   FOLDERS, folderById, ORDERDESK_FOLDERS, MIRROR_STATUS_BY_ID,
-  AWAITING_SHIPMENT_IDS, isModifiable, facilityOf,
+  AWAITING_SHIPMENT_IDS, isModifiable, windowOf, facilityOf,
 } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the registry reproduces the maps it replaced', () => {
@@ -60,9 +60,10 @@ describe('integrity', () => {
     assert.deepEqual(shared, ['needs_review'], 'unexpected shared mirror status');
   });
 
-  test('every row states modifiable explicitly — a missing field must not read as yes', () => {
+  test('every row states its window explicitly, and only with a known value', () => {
     for (const f of FOLDERS) {
-      assert.equal(typeof f.modifiable, 'boolean', `${f.name} has no modifiable`);
+      assert.ok(['open', 'restricted', 'closed'].includes(f.window),
+        `${f.name} has window ${JSON.stringify(f.window)}`);
     }
   });
 
@@ -71,32 +72,38 @@ describe('integrity', () => {
   });
 });
 
-describe('the cutoff', () => {
-  test('all five Awaiting Shipment folders are locked', () => {
-    assert.deepEqual([...AWAITING_SHIPMENT_IDS].sort(),
-      ['3571', '43256', '43257', '674353', '79040'].sort());
-    for (const id of AWAITING_SHIPMENT_IDS) {
-      assert.equal(isModifiable(id), false, `${id} must be locked`);
+describe('the three windows', () => {
+  test('production and everything before it is open', () => {
+    for (const id of ['665685', '651474', '653109', '661019', '73066', '73067',
+                      '73068', '73069', '73070', '674352', '42928']) {
+      assert.equal(windowOf(id), 'open', `${id} should be open`);
     }
   });
 
-  test('production is still open, pickup and completed are not', () => {
-    for (const id of ['73068', '73069', '73070', '674352', '42928']) {
-      assert.equal(isModifiable(id), true, `production ${id} should be open`);
+  test('Awaiting Shipment is restricted, not shut — express may still move', () => {
+    assert.deepEqual([...AWAITING_SHIPMENT_IDS].sort(),
+      ['3571', '43256', '43257', '674353', '79040'].sort());
+    for (const id of AWAITING_SHIPMENT_IDS) {
+      assert.equal(windowOf(id), 'restricted', id);
     }
-    for (const id of ['31301', '52437', '52438', '674908', '82463', '3516']) {
-      assert.equal(isModifiable(id), false, `${id} should be locked`);
+  });
+
+  test('Awaiting Pickup is restricted too — a pickup can still become a delivery', () => {
+    for (const id of ['31301', '52437', '52438', '674908', '82463']) {
+      assert.equal(windowOf(id), 'restricted', id);
     }
+  });
+
+  test('completed is shut, and so is an unpaid order', () => {
+    assert.equal(windowOf('3516'), 'closed');
+    assert.equal(windowOf('698334'), 'closed', 'no settled balance to add to');
   });
 
   test('an unknown folder fails CLOSED', () => {
     for (const id of ['999999', '', null, undefined, 'abc', 0]) {
-      assert.equal(isModifiable(id), false, `unknown ${String(id)} must not be modifiable`);
+      assert.equal(windowOf(id), 'closed', `unknown ${String(id)}`);
+      assert.equal(isModifiable(id), false);
     }
-  });
-
-  test('Pay By Check is locked — there is no settled balance to add to', () => {
-    assert.equal(isModifiable('698334'), false);
   });
 });
 
@@ -104,7 +111,7 @@ describe('lookup', () => {
   test('ids match whether passed as string or number', () => {
     assert.equal(folderById('73068')?.name, 'GA');
     assert.equal(folderById(73068)?.name, 'GA');
-    assert.equal(isModifiable(3571), false);
+    assert.equal(windowOf(3571), 'restricted', 'a number id resolves the same as a string');
   });
 
   test('facilityOf finds the facility, and null when there is none', () => {

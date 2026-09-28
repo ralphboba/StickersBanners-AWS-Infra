@@ -221,6 +221,38 @@ new bot message 'once approved nothing can be changed'"*
 
 ---
 
+## ★★ 갱신 — 컷오프는 한 줄이 아니라 두 줄이다 (Kai, 2026-09-28)
+
+아래 9/13 정책을 **이 절이 대체한다.** "Awaiting Shipment에 들어가면 전부 잠김"이
+아니라, 그 단계는 **부분적으로 열려 있다.**
+
+| 창 | 폴더 | 무엇이 되나 |
+| --- | --- | --- |
+| **open** | QTS · Proofing · 각종 검토 · Today/Tomorrow · **생산(GA/NJ/TX/NV/CA)** | 사다리 전부. Ground 포함 |
+| **restricted** | **`<시설> Awaiting Shipment`** · `<시설> Awaiting Pickup` | **Ground ✗** · express → express ✓ · 픽업 → 배송 ✓ |
+| **closed** | Completed Orders · Pay By Check · 모르는 폴더 | 아무것도 |
+
+### 왜 restricted에서 Ground만 막히나
+
+생산이 끝난 시점이다. **Ground는 이미 매니페스트에 잡혀 팔레트에 실려 있어서** 도로
+빼낼 수 없다. express는 라벨만 다시 뽑으면 되고, 픽업은 애초에 나가는 게 없었다.
+
+구현: `orderdesk-folders.mjs`의 각 폴더 행이 `window` 필드를 갖는다(불리언 아님).
+모르는 폴더는 `closed`로 떨어진다 — 돈이 걸린 판정이라 모르면 거부다.
+
+거부 사유가 둘 늘었다:
+
+| 사유 | 고객이 보는 문구 |
+| --- | --- |
+| `ground_after_production` | "Your order is packed and booked on Ground, so the shipping can no longer be changed." |
+| `pickup_conversion` | "This is a pickup order. To have it delivered instead, contact our team." |
+
+`pickup_conversion`은 **아직 미구현**이라 팀으로 보낸다. 주소 수집이 필요한 별도 작업.
+
+---
+
+## 구 정책 (9/13) — 위 절로 대체됨
+
 ## ★ 확정된 정책 — Awaiting Shipment가 컷오프다 (Kai, 2026-09-13)
 
 앞의 3게이트 모델(G1 인쇄 시작 / G2 라벨 출력 / G3 발송)은 **하나로 합쳐졌다.**
