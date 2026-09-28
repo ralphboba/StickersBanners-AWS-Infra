@@ -315,43 +315,54 @@ rate limit에 영향이 없다.
 
 | 현재 서비스 | 판매 가능한 업그레이드 | 시설 |
 | --- | --- | --- |
+| **Ground** | **3-Days** | 그대로 |
 | 3-Days | **2-Days** | 그대로 |
 | 2-Days | **1-Day** | 그대로 |
 | 1-Day | 없음 | 이미 NV |
-| **Ground** · Saturday Overnight · 픽업 | 없음 (사다리 밖) | — |
+| 창고 픽업 · Saturday Overnight | 없음 (사다리 밖) | — |
 
-### Ground는 사다리에 없다 (Danny 2026-09-24, Kai 확정)
+### Ground는 다시 맨 아래 칸 (Kai, 2026-09-28)
 
-> "If the order is ground shipping, we cannot upgrade.
->  If the order is express, we can upgrade."
+9/24에 Danny가 "express만 가능"이라고 해서 뺐다가, Kai 지시로 **되돌렸다.**
 
-9/14에는 Ground를 맨 아래 칸으로 넣었었다(Kai). Danny 확인 후 **뺐다.**
-Ground와 express는 한 서비스의 두 속도가 아니라 **다른 운영**이다. 요금표가 가격을
-매길 수 있다는 것과 우리가 그걸 이행할 수 있다는 것은 다른 문제다.
+**이게 생각보다 큰 차이다.** 실주문 50건을 보면 Ground가 **70%**다. 빼두면 이 기능이
+고객 8명 중 1명에게만 닿는다.
 
-Ground 주문은 `service_not_upgradable`로 거부된다.
+### ★ 실주문 배송방법 분포 (Shopify, 2026-09-28, 최근 50건)
 
-### ★ 실제 문자열 확정 (Kai, 2026-09-14)
+| 값 | 건수 | 비중 |
+| --- | --- | --- |
+| `FedEx Ground` | 35 | **70%** |
+| `Georgia Warehouse` | 7 | 14% |
+| `FedEx 2-Days` | 3 | 6% |
+| `FedEx 2-days` | 2 | 4% |
+| `FedEx 1-Day` | 1 | 2% |
+| `New Jersey Warehouse` | 1 | 2% |
+| `Texas Warehouse` | 1 | 2% |
 
-```
-FedEx Ground · FedEx 3-Days · FedEx 2-Days · FedEx 1-Day
-```
+**여기서 두 가지가 드러났다.**
 
-**3일·2일은 복수(`-Days`), 1일만 단수(`-Day`).** 일관된 규칙으로 추측했다면
-`FedEx 2-Day`를 써서 스토어에 같은 서비스의 표기가 둘이 됐을 것이다. 물어보길 잘했다.
+**1. 픽업은 "pickup"이 아니라 창고 이름으로 적힌다.** `Georgia Warehouse` 등. 우리
+`OFF_LADDER`가 `pickup`/`pick-up`만 보고 있어서 **하나도 안 걸리고 있었다.** 지금은
+안전한 쪽으로 떨어졌지만(사다리에도 안 맞아서 `service_not_upgradable`) 의도한
+동작이 아니었다.
 
-읽기는 관대하게(부분 문자열), **쓰기는 위 표기 그대로** 한다.
+→ `isPickup()`이 **`warehouse`** 라는 단어로 잡는다. `routing.mjs`의 두 글자
+키워드(`ga`/`ca`)와 달리 충돌이 없다 — `Chicago`에는 `ca`와 `ga`가 둘 다 들어 있다.
 
-> ⚠️ `routing.mjs`의 레거시 익스프레스 업그레이드는 `'2-day Shipping'`을 쓴다 —
-> **넷 중 아무것도 아니다.** `ORDERDESK_WRITES`가 꺼져 있어서 아직 피해는 없지만,
-> 그 스위치를 켜는 날 실주문에 인식 불가능한 서비스명이 박힌다.
-> **인테이크 go-live 전에 고쳐야 한다.** (`legacy-collision-audit.md` C5)
+**2. `FedEx 2-Days`와 `FedEx 2-days`가 스토어에 동시에 존재한다.** 읽기는 대소문자를
+무시하므로 둘 다 걸린다. **쓰기는 `FedEx 2-Days` 하나로 정규화한다.**
 
-### 한 칸씩만이다
+### 픽업 + Ground = 현재 주문의 88%
 
-고객 페이지는 **목록이 아니라 옵션 하나**를 보여준다. 3-Day 고객에게 1-Day를 팔지 않는다.
-Saturday Overnight은 사다리에 없으므로 셀프서비스로는 아예 안 판다 — 요금표 5열 중
-실제로 판매 가능한 것은 2-Day와 1-Day 둘뿐이다.
+| | 비중 | 지금 |
+| --- | --- | --- |
+| Ground | 70% | ✅ 업그레이드 가능 (되돌린 뒤) |
+| 창고 픽업 | 18% | ⬜ 배송 전환 — 미구현 |
+| Express | 12% | ✅ |
+
+**픽업 → 배송 전환이 미구현인 동안 18%가 빠진다.** Danny가 원한 기능이고, 주소 수집이
+필요해서 별도 작업이다.
 
 ### 시설은 절대 안 바뀐다 ★
 

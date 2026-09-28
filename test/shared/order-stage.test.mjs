@@ -4,7 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { orderStage, nextService, STEPS } from '../../src/shared/order-stage.mjs';
+import { orderStage, nextService, isPickup, STEPS } from '../../src/shared/order-stage.mjs';
 import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
@@ -23,20 +23,21 @@ describe('the upgrade ladder', () => {
     }
   });
 
-  test('Ground is off the ladder — express only (Danny)', () => {
-    assert.equal(nextService('FedEx Ground'), null);
-    assert.equal(nextService('Ground'), null);
-    assert.equal(nextService('FedEx GROUND'), null);
+  test('Ground is the bottom rung again (Kai, 2026-09-28)', () => {
+    assert.equal(nextService('FedEx Ground').to, 'FedEx 3-Days');
+    assert.equal(nextService('Ground').to, 'FedEx 3-Days');
+    assert.equal(nextService('FedEx GROUND').to, 'FedEx 3-Days');
   });
 
   test('anything off the ladder gets no offer at all', () => {
-    for (const m of ['Local Pickup', 'Saturday Overnight', 'Sat Overnight', '', null, undefined]) {
+    for (const m of ['Saturday Overnight', 'Sat Overnight', '', null, undefined]) {
       assert.equal(nextService(m), null, `"${String(m)}" must not be upgradable`);
     }
   });
 
   test('two notches are never offered', () => {
     assert.equal(nextService('3-day').to, 'FedEx 2-Days');
+    assert.equal(nextService('FedEx Ground').to, 'FedEx 3-Days', 'Ground must not jump past 3-Days');
   });
 });
 
@@ -87,10 +88,10 @@ describe('canUpgrade', () => {
     assert.equal(s.blockedBy, 'already_fastest');
   });
 
-  test('Ground in production: no — express only', () => {
+  test('Ground in production: yes, to 3-Days', () => {
     const s = orderStage({ folderId: '73068', shippingMethod: 'FedEx Ground' });
-    assert.equal(s.canUpgrade, false);
-    assert.equal(s.blockedBy, 'service_not_upgradable');
+    assert.equal(s.canUpgrade, true);
+    assert.equal(s.upgradeTo, 'FedEx 3-Days');
   });
 
   test('Saturday Overnight in production: no, it is off the ladder', () => {
@@ -182,5 +183,49 @@ describe('never collide with the legacy bot', () => {
     const b = orderStage({ folderId: '665685', shippingMethod: '3-day' });
     assert.deepEqual(a, b);
     assert.equal(a.canUpgrade, false);
+  });
+});
+
+describe('the methods live orders actually carry', () => {
+  // Sampled from the store on 2026-09-28: Ground 70%, warehouse pickup 18%,
+  // 2-Days 10%, 1-Day 2%. Every one of these must land somewhere deliberate.
+  const LIVE = [
+    'FedEx Ground', 'FedEx 2-Days', 'FedEx 2-days', 'FedEx 1-Day',
+    'Georgia Warehouse', 'New Jersey Warehouse', 'Texas Warehouse',
+  ];
+
+  test('none of them falls through unrecognised', () => {
+    for (const m of LIVE) {
+      const known = nextService(m) !== null || isPickup(m);
+      assert.ok(known, `"${m}" is neither on the ladder nor recognised as pickup`);
+    }
+  });
+
+  test('both spellings of 2-Days read the same', () => {
+    assert.deepEqual(nextService('FedEx 2-Days'), nextService('FedEx 2-days'),
+      'the store holds both; reading must not care');
+  });
+
+  test('pickup is spelled as the warehouse, not as "pickup"', () => {
+    for (const m of ['Georgia Warehouse', 'New Jersey Warehouse', 'Texas Warehouse']) {
+      assert.equal(isPickup(m), true, m);
+      assert.equal(nextService(m), null, `${m} must not be sold a speed upgrade`);
+    }
+  });
+
+  test('and "pickup" still works, for anywhere that spells it that way', () => {
+    for (const m of ['Local Pickup', 'Pick Up', 'pick-up']) assert.equal(isPickup(m), true, m);
+  });
+
+  test('a shipping service is never mistaken for pickup', () => {
+    for (const m of ['FedEx Ground', 'FedEx 1-Day', 'FedEx 2-Days']) {
+      assert.equal(isPickup(m), false, m);
+    }
+  });
+
+  test('a pickup order in production is refused, with a reason', () => {
+    const s = orderStage({ folderId: '73068', shippingMethod: 'Georgia Warehouse' });
+    assert.equal(s.canUpgrade, false);
+    assert.equal(s.blockedBy, 'service_not_upgradable');
   });
 });

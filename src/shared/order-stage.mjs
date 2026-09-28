@@ -48,9 +48,26 @@ export const STEPS = ['Order received', 'Proof approved', 'In production', 'Read
 // the page would tell the customer they are already on 1-Day when they are not.
 const OFF_LADDER = [
   'saturday', 'sat overnight',   // availability depends on the address (Danny)
-  'ground',                      // express only (Danny)
-  'pickup', 'pick-up', 'pick up',
 ];
+
+/**
+ * Local pickup. On live orders this is spelled as the warehouse, not as
+ * "pickup" — "Georgia Warehouse", "New Jersey Warehouse", "Texas Warehouse"
+ * (checked against the store, 2026-09-28: 18% of recent orders). Matching on
+ * the word "warehouse" catches all of them with none of the collision risk in
+ * routing.mjs's two-letter keywords, where "Chicago" contains both "ca" and
+ * "ga".
+ *
+ * Pickup is off the speed ladder because converting one to a delivery is a
+ * different transaction: it needs an address we do not have, and a full
+ * shipping price rather than a difference. Danny wants it offered; it is its
+ * own piece of work.
+ */
+const PICKUP = /\b(warehouse|pick\s*-?\s*up|pickup)\b/i;
+
+export function isPickup(shippingMethod) {
+  return PICKUP.test(String(shippingMethod ?? ''));
+}
 
 // ── the exact strings OrderDesk holds ──────────────────────────────────────
 // `to` is written verbatim into shipping_method, so it has to be the text the
@@ -67,19 +84,20 @@ const OFF_LADDER = [
 // not done damage — but it is wrong and would set an unrecognised service on a
 // real order the day that switch is armed. See docs/legacy-collision-audit.md C5.
 const SERVICE = {
-  ground: 'FedEx Ground',   // recognised for display; never an upgrade target
+  ground: 'FedEx Ground',
   d3: 'FedEx 3-Days',
   d2: 'FedEx 2-Days',
   d1: 'FedEx 1-Day',
 };
 
-// One rung at a time, and the ladder starts at 3-Days.
+// One rung at a time, starting at Ground.
 //
-// Ground is NOT on it: "If the order is ground shipping, we cannot upgrade. If
-// the order is express, we can upgrade" (Danny, 2026-09-24; Kai confirmed).
-// Ground and express are different operations, not two speeds of one, so a
-// Ground order is refused outright rather than quoted a price we cannot honour.
+// Ground was taken off after Danny said express only (2026-09-24) and put back
+// on Kai's instruction (2026-09-28). That matters more than it sounds:
+// Ground is 70% of recent orders, so with it off the ladder the feature would
+// have reached roughly one customer in eight.
 const LADDER = [
+  { match: ['ground'], from: SERVICE.ground, to: SERVICE.d3 },
   // Substring matches, so '3-day' also catches 'FedEx 3-Days'. Reading is
   // forgiving; writing uses SERVICE above and is exact.
   { match: ['3-day', '3 day', 'three day'], from: SERVICE.d3, to: SERVICE.d2 },
@@ -97,6 +115,7 @@ const LADDER = [
 export function nextService(shippingMethod) {
   const m = String(shippingMethod ?? '').toLowerCase();
   if (OFF_LADDER.some((k) => m.includes(k))) return null;
+  if (isPickup(m)) return null;
   for (const rung of LADDER) {
     if (rung.match.some((k) => m.includes(k))) {
       return { from: rung.from, to: rung.to, top: rung.to === null };
