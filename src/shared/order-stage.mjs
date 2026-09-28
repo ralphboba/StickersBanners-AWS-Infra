@@ -187,8 +187,10 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   // customer types in, at quote time (order-status-api). Only what is known
   // now is checked here — the window, and whether it is a supplier order.
   if (pickup) {
-    const supplier = ineligible?.blockedBy === 'supplier_order';
-    const convertible = openness !== 'closed' && !supplier;
+    // What the order IS still counts: B2SIGN and sticker orders are left alone.
+    const product = ['supplier_order', 'sticker_order'].includes(ineligible?.blockedBy)
+      ? ineligible.blockedBy : null;
+    const convertible = openness !== 'closed' && !product;
     return {
       stage, label, step,
       window: openness,
@@ -199,7 +201,7 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
       canConvert: convertible,
       convertTo: convertible ? [...DELIVERY_OPTIONS] : [],
       blockedBy: convertible ? null
-        : (openness === 'closed' ? (folder ? 'shipping' : 'unknown_folder') : 'supplier_order'),
+        : (openness === 'closed' ? (folder ? 'shipping' : 'unknown_folder') : product),
       currentService: shippingMethod ?? null,
     };
   }

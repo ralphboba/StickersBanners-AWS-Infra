@@ -25,10 +25,12 @@
 //
 // ── refusing is the default ────────────────────────────────────────────────
 // A quote is only produced when we can first reproduce, exactly, what the
-// customer was charged at checkout. If the rate Shopify gives today for their
-// current service is not the amount on their order — a shipping discount, an
-// edited order, the sticker profile's free 2-day, a rate changed since — we
-// cannot say what the difference is, and the page offers nothing.
+// customer was charged at checkout. If the rate Shopify gives for their service
+// at the checkout subtotal is not the amount on their order — a shipping
+// discount, the sticker profile's free 2-day, a rate changed since — we cannot
+// say what the difference is, and the page offers nothing. The difference
+// itself is priced at the CURRENT subtotal, so an edited order is priced on
+// what it is now (Kai).
 
 import { shopifyGraphQL } from './shopify-fetch.mjs';
 import { toMailingAddress } from './shopify-orders.mjs';
@@ -242,10 +244,13 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   // An exemption on the order but not the customer was granted by hand for
   // that one order; Shopify would not carry it to a new draft.
   if (order.orderTaxExempt && !order.customerTaxExempt) return no('tax_exempt_order');
-  if (order.subtotalCents === null) return no('order_unreadable');
-  // Checkout priced the original cart. An edited order would be priced on a
-  // different subtotal today, and which one is fair is not ours to decide.
-  if (order.currentSubtotalCents !== order.subtotalCents) return no('order_edited');
+  if (order.subtotalCents === null || order.currentSubtotalCents === null) return no('order_unreadable');
+  // Two subtotals, two jobs (Kai, 2026-09-28: "new subtotal"):
+  //   · checkout's (subtotalPriceSet) proves what the customer paid was the
+  //     plain rate — no discount, no hand-set price;
+  //   · the current one (after any edit) is what the change is priced on.
+  // For an order nobody edited they are the same number and one lookup serves.
+  const edited = order.currentSubtotalCents !== order.subtotalCents;
 
   if (order.shippingLines.length !== 1) return no('shipping_unverified');
   const line = order.shippingLines[0];
@@ -259,10 +264,13 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   const address = mode === 'convert' ? toMailingAddress(deliverTo) : order.shippingAddress;
   if (!address) return no('no_address');
 
-  const rates = await checkoutRates({
-    shop, token, fetchImpl, subtotalCents: order.subtotalCents, address, customerId: order.customerId,
+  const lookup = (subtotalCents) => checkoutRates({
+    shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId,
   });
-  if (!rates) return no('rates_unavailable');
+  const atCheckout = await lookup(order.subtotalCents);
+  if (!atCheckout) return no('rates_unavailable');
+  const now = edited ? await lookup(order.currentSubtotalCents) : atCheckout;
+  if (!now) return no('rates_unavailable');
 
   let fromCents;
   if (mode === 'convert') {
@@ -270,12 +278,14 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
     if (line.originalCents !== 0) return no('price_unverified');
     fromCents = 0;
   } else {
-    fromCents = rates.get(line.title);
-    // THE check: today's rate for their service must be what they paid.
-    if (fromCents === undefined || fromCents !== line.originalCents) return no('price_unverified');
+    // THE check: checkout's rate for their service must be what they paid.
+    if (atCheckout.get(line.title) !== line.originalCents) return no('price_unverified');
+    // The difference is between two full rates at the current subtotal.
+    fromCents = now.get(line.title);
+    if (fromCents === undefined) return no('service_unavailable');
   }
 
-  const toCentsRate = rates.get(to);
+  const toCentsRate = now.get(to);
   if (toCentsRate === undefined) return no('service_unavailable');
   const shippingCents = toCentsRate - fromCents;
   if (shippingCents <= 0) return no('not_an_upgrade');
@@ -289,6 +299,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
 
   return {
     ok: true, mode, from: line.title, to,
+    pricedAtSubtotalCents: order.currentSubtotalCents,
     fromCents, toCents: toCentsRate, shippingCents,
     taxCents: priced.taxCents, totalCents: priced.totalCents,
     draftInput,
@@ -297,18 +308,17 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
 
 /**
  * What a pickup order could be delivered for, before the customer has typed an
- * address: the rate for each service at their subtotal, BEFORE TAX. Priced at
+ * address: the rate for each service at their current subtotal, BEFORE TAX. Priced at
  * the billing address — every state we deliver to is in the one Domestic zone,
  * so the rate does not depend on which — and never presented as the amount due.
  *
  * @returns {Promise<Array<{ service: string, shippingCents: number }> | null>}
  */
 export async function deliveryEstimates({ shop, token, order, services, fetchImpl }) {
-  if (!order || order.currency !== USD || order.subtotalCents === null) return null;
-  if (order.currentSubtotalCents !== order.subtotalCents) return null;
+  if (!order || order.currency !== USD || order.currentSubtotalCents === null) return null;
   if (!order.billingAddress || order.billingAddress.countryCode !== 'US') return null;
   const rates = await checkoutRates({
-    shop, token, fetchImpl, subtotalCents: order.subtotalCents,
+    shop, token, fetchImpl, subtotalCents: order.currentSubtotalCents,
     address: order.billingAddress, customerId: order.customerId,
   });
   if (!rates) return null;

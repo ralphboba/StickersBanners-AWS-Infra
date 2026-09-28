@@ -328,3 +328,15 @@ describe('the restricted window, service by service', () => {
     assert.equal(orderStage({ folderId: '999999' }).window, 'closed');
   });
 });
+
+describe('sticker orders', () => {
+  test('no upgrade and no conversion', () => {
+    const items = [{ name: 'Round Stickers' }];
+    const up = orderStage({ folderId: '73068', shippingMethod: 'FedEx Ground', items });
+    assert.equal(up.canUpgrade, false);
+    assert.equal(up.blockedBy, 'sticker_order');
+    const pick = orderStage({ folderId: '73068', shippingMethod: 'Georgia Warehouse', items });
+    assert.equal(pick.canConvert, false);
+    assert.equal(pick.blockedBy, 'sticker_order');
+  });
+});

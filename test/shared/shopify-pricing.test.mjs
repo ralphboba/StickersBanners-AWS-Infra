@@ -155,9 +155,36 @@ describe('refuses whenever it cannot reproduce what the customer paid', () => {
     assert.equal((await quote(fakeShopify({ order }))).reason, 'shipping_discounted');
   });
 
-  test('the order was edited after checkout', async () => {
-    const order = shopifyOrder({ currentSubtotalPriceSet: { shopMoney: { amount: '180.0', currencyCode: 'USD' } } });
-    assert.equal((await quote(fakeShopify({ order }))).reason, 'order_edited');
+  test('an edited order is priced on its NEW subtotal', async () => {
+    // Paid Ground $25.67 at $150; edited up to $200, where the live rates are
+    // Ground $26.20 and 3-Days $92.83. The change is 92.83 − 26.20.
+    const order = shopifyOrder({ currentSubtotalPriceSet: { shopMoney: { amount: '200.0', currencyCode: 'USD' } } });
+    const RATES_200 = [['FedEx Ground', '26.20'], ['FedEx 3-Days', '92.83'], ['FedEx 2-Days', '139.14'], ['FedEx 1-Day', '192.06']];
+    const sent = [];
+    const base = fakeShopify({ order });
+    const fetchImpl = async (url, init) => {
+      const body = JSON.parse(init.body);
+      if (body.query.includes('RateCheck') && body.variables.input.lineItems[0].originalUnitPriceWithCurrency.amount === '200.00') {
+        sent.push('200');
+        return { ok: true, status: 200, text: async () => '', json: async () => ({ data: { draftOrderCalculate: { userErrors: [],
+          calculatedDraftOrder: { availableShippingRates: RATES_200.map(([title, amount]) => ({ title, price: { amount, currencyCode: 'USD' } })) } } } }) };
+      }
+      return base.fetchImpl(url, init);
+    };
+    const q = await quote({ fetchImpl });
+    assert.equal(q.ok, true);
+    assert.deepEqual(sent, ['200'], 'rates asked again at the new subtotal');
+    assert.equal(q.pricedAtSubtotalCents, 20000);
+    assert.equal(q.fromCents, 2620);
+    assert.equal(q.toCents, 9283);
+    assert.equal(q.shippingCents, 6663);
+  });
+
+  test('an edit does not excuse a paid price that was never the rate', async () => {
+    const order = shopifyOrder({ currentSubtotalPriceSet: { shopMoney: { amount: '200.0', currencyCode: 'USD' } } });
+    order.shippingLines.nodes[0].originalPriceSet.shopMoney.amount = '10.00';
+    order.shippingLines.nodes[0].discountedPriceSet.shopMoney.amount = '10.00';
+    assert.equal((await quote(fakeShopify({ order }))).reason, 'price_unverified');
   });
 
   test('OrderDesk says a different service than Shopify charged for', async () => {

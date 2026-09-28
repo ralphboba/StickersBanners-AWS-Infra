@@ -96,6 +96,31 @@ export function isB2Sign(items = []) {
 }
 
 /**
+ * Sticker products ship on their own Shopify delivery profile: one rate,
+ * "FedEx 2-days", free, and checkout offers nothing faster. Kai (2026-09-28):
+ * leave them out of shipping changes altogether. These are the five products
+ * in that profile, matched by name so a size variant is still caught.
+ */
+const STICKER_PATTERNS = [
+  /\bbumper\s*stickers?\b/,     // also Political Bumper Stickers
+  /\bround\s*stickers?\b/,
+  /\boval\s*stickers?\b/,
+  /\bkiss[\s-]*cut\s*stickers?\b/,
+];
+
+export const STICKER_CATALOGUE = [
+  'Bumper Stickers', 'Round Stickers', 'Oval Stickers',
+  'Custom Shape Kiss-Cut Stickers', 'Political Bumper Stickers',
+];
+
+export function isStickerOrder(items = []) {
+  return (items ?? []).some((it) => {
+    const name = String(it?.name ?? '').toLowerCase();
+    return STICKER_PATTERNS.some((re) => re.test(name));
+  });
+}
+
+/**
  * May this order be offered a shipping upgrade at all?
  *
  * Answers only the questions about WHAT the order is and WHERE it is going.
@@ -107,6 +132,7 @@ export function isB2Sign(items = []) {
  */
 export function ineligibleReason({ shipping, items } = {}) {
   if (isB2Sign(items)) return { blockedBy: 'supplier_order' };
+  if (isStickerOrder(items)) return { blockedBy: 'sticker_order' };
   if (isNoShipDestination(shipping)) return { blockedBy: 'destination' };
   if (isPoBox(shipping?.street, shipping?.street2)) return { blockedBy: 'po_box' };
   return null;

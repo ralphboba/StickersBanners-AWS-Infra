@@ -32,6 +32,7 @@ const BLOCKED_COPY = {
   // Refusals that are about the order itself. Each says enough for the
   // customer to know whether calling would help.
   supplier_order: 'This order is made by one of our partners, so changes go through our team.',
+  sticker_order: 'Sticker orders ship on their own schedule, so the shipping can’t be changed online.',
   destination: 'We can’t change shipping for this delivery address.',
   po_box: 'We can’t ship to a PO box.',
   // Production has finished and the order is with the Ground collection.

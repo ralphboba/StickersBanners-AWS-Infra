@@ -174,3 +174,24 @@ describe('through orderStage', () => {
     assert.equal(s.canUpgrade, true);
   });
 });
+
+describe('sticker products are left out (Kai, 2026-09-28)', () => {
+  test('every product in the sticker delivery profile is caught', async () => {
+    const { STICKER_CATALOGUE, isStickerOrder } = await import('../../src/shared/upgrade-eligibility.mjs');
+    for (const name of STICKER_CATALOGUE) assert.equal(isStickerOrder([{ name }]), true, name);
+    assert.equal(isStickerOrder([{ name: 'Bumper Stickers - 3" x 10"' }]), true);
+  });
+
+  test('banners and decals are not stickers', async () => {
+    const { isStickerOrder } = await import('../../src/shared/upgrade-eligibility.mjs');
+    for (const name of ['Custom Vinyl Banners', 'Window See-Thru Decals', 'X-Banner', 'Adhesive Banners / Window Decals']) {
+      assert.equal(isStickerOrder([{ name }]), false, name);
+    }
+  });
+
+  test('a mixed order with any sticker is left out too', async () => {
+    const { ineligibleReason } = await import('../../src/shared/upgrade-eligibility.mjs');
+    assert.deepEqual(ineligibleReason({ items: [{ name: 'X-Banner' }, { name: 'Oval Stickers' }] }),
+      { blockedBy: 'sticker_order' });
+  });
+});
