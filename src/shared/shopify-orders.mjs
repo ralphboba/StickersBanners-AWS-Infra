@@ -1,7 +1,8 @@
-// The Shopify reads this feature needs. Two of them.
+// Reading an order's access token from Shopify, and shaping addresses for it.
+// Pricing lives in shopify-pricing.mjs.
 //
-// Both are queries. Nothing here writes, and the transport refuses a mutation
-// that is not calculate-only, so an accidental orderUpdate cannot leave here.
+// Nothing here writes, and the transport refuses a mutation that is not
+// calculate-only, so an accidental orderUpdate cannot leave here.
 
 import { shopifyGraphQL } from './shopify-fetch.mjs';
 
@@ -71,30 +72,6 @@ export async function fetchOrderByName({ shop, token, orderName, fetchImpl }) {
   };
 }
 
-/**
- * What Shopify would actually charge for the upgrade, tax included.
- *
- * draftOrderCalculate prices a draft without creating one — no draft, no order,
- * no invoice, nothing persisted. It is the only honest source for the tax: the
- * rate depends on the destination, and a figure we worked out ourselves could
- * differ from the money that actually moves.
- *
- * Returns null rather than a guess if Shopify cannot price it. The page shows
- * no amount in that case.
- */
-const CALCULATE = `
-  mutation UpgradeQuote($input: DraftOrderInput!) {
-    draftOrderCalculate(input: $input) {
-      calculatedDraftOrder {
-        subtotalPriceSet { shopMoney { amount } }
-        totalTaxSet { shopMoney { amount } }
-        totalPriceSet { shopMoney { amount } }
-      }
-      userErrors { field message }
-    }
-  }
-`;
-
 const COUNTRY_NAMES = { 'united states': 'US', 'united states of america': 'US', usa: 'US' };
 
 /**
@@ -133,60 +110,4 @@ export function toMailingAddress(a) {
     zip,
     countryCode,
   };
-}
-
-/**
- * @param {object} p
- * @param {string} p.title      the invoice line, e.g. "Shipping Upgrade: 2-Days -> 1-Day"
- * @param {number} p.amount     the shipping difference, before tax
- * @param {string} p.customerId Shopify customer gid (optional)
- * @param {object} p.shippingAddress  where it ships; REQUIRED — see below
- * @returns {Promise<null | { subtotal: number, tax: number, total: number }>}
- */
-export async function quoteUpgradeWithTax({
-  shop, token, title, amount, customerId, shippingAddress, fetchImpl,
-}) {
-  if (!(Number(amount) > 0)) return null;
-
-  // No address, no quote. Without one Shopify still answers — with the tax
-  // for nowhere in particular — and that number would go on the page as final.
-  const address = toMailingAddress(shippingAddress);
-  if (!address) return null;
-
-  const input = {
-    lineItems: [{
-      title,
-      originalUnitPrice: Number(amount).toFixed(2),
-      quantity: 1,
-      requiresShipping: false,
-      taxable: true,
-    }],
-    ...(customerId ? { purchasingEntity: { customerId } } : {}),
-    shippingAddress: address,
-  };
-
-  const payload = await shopifyGraphQL({
-    shop, token, fetchImpl, query: CALCULATE, variables: { input },
-  });
-
-  const result = payload?.data?.draftOrderCalculate;
-  const errs = result?.userErrors ?? [];
-  if (errs.length > 0) {
-    console.warn(JSON.stringify({ msg: 'Shopify could not price the upgrade', errs }));
-    return null;
-  }
-
-  const calc = result?.calculatedDraftOrder;
-  const num = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-  const subtotal = num(calc?.subtotalPriceSet?.shopMoney?.amount);
-  const tax = num(calc?.totalTaxSet?.shopMoney?.amount);
-  const total = num(calc?.totalPriceSet?.shopMoney?.amount);
-
-  // All three or nothing. A partial answer is how a customer gets quoted a
-  // number that is missing its tax.
-  if (subtotal === null || tax === null || total === null) return null;
-  return { subtotal, tax, total };
 }

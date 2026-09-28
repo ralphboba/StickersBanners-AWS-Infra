@@ -20,7 +20,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
-import { quoteUpgradeWithTax } from '../../shared/shopify-orders.mjs';
+import { fetchOrderForPricing, quoteShippingChange, deliveryEstimates } from '../../shared/shopify-pricing.mjs';
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeHandler } from './routes.mjs';
 
@@ -35,30 +35,42 @@ async function loadRow(orderName) {
   return res?.Item;
 }
 
-/**
- * Ask Shopify what it would actually charge. Returns null on any problem, and
- * the caller then offers no price at all — a page that shows nothing is a
- * nuisance; a page that shows a number we cannot bill is a refund.
- */
-async function priceWithTax(row, quote, title) {
+async function shopifyCreds() {
+  const [shop, token] = await Promise.all([
+    getSecret('shopify', 'shop-domain'),
+    getSecret('shopify', 'admin-token'),
+  ]);
+  return { shop, token };
+}
+
+// Every Shopify failure becomes "no price", never an error page and never a
+// guess: a page that shows nothing is a nuisance; a number we cannot bill is
+// a refund.
+async function loadShopifyOrder(orderName) {
   try {
-    const [shop, token] = await Promise.all([
-      getSecret('shopify', 'shop-domain'),
-      getSecret('shopify', 'admin-token'),
-    ]);
-    return await quoteUpgradeWithTax({
-      shop,
-      token,
-      title: title ?? `Shipping Upgrade: ${quote.from} → ${quote.to}`,
-      amount: quote.amount,
-      // Required: without an address the quote comes back null and the page
-      // shows no price (shopify-orders.mjs toMailingAddress).
-      shippingAddress: row.shipping,
-    });
+    return await fetchOrderForPricing({ ...(await shopifyCreds()), orderName });
   } catch (err) {
-    console.warn(JSON.stringify({ msg: 'upgrade quote unavailable', err: String(err) }));
+    console.warn(JSON.stringify({ msg: 'Shopify order read failed', orderName, err: String(err) }));
     return null;
   }
 }
 
-export const handler = makeHandler({ loadRow, priceWithTax });
+async function quote(args) {
+  try {
+    return await quoteShippingChange({ ...(await shopifyCreds()), ...args });
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'Shopify quote failed', err: String(err) }));
+    return { ok: false, reason: 'shopify_error' };
+  }
+}
+
+async function estimates(args) {
+  try {
+    return await deliveryEstimates({ ...(await shopifyCreds()), ...args });
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'Shopify estimates failed', err: String(err) }));
+    return null;
+  }
+}
+
+export const handler = makeHandler({ loadRow, loadShopifyOrder, quote, estimates });

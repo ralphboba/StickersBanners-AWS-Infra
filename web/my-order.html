@@ -296,12 +296,14 @@
       input.type = 'radio'; input.name = 'dsvc'; input.value = opt.service;
       var b = document.createElement('span'); b.className = 'b';
       var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = opt.service;
-      var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Plus tax, if any, for your address';
+      var priced = typeof opt.shipping === 'number';
+      var sub = document.createElement('span'); sub.className = 'sub';
+      sub.textContent = priced ? 'Plus tax, if any, for your address' : 'Priced once you enter your address';
       b.appendChild(nm); b.appendChild(sub);
       var pr = document.createElement('span'); pr.className = 'pr';
       // The card price, never labelled as the amount due. The total below is
       // the only figure presented as what the customer pays.
-      pr.textContent = money(opt.shipping);
+      pr.textContent = priced ? money(opt.shipping) : '—';
       label.appendChild(input); label.appendChild(b); label.appendChild(pr);
       box.appendChild(label);
     });

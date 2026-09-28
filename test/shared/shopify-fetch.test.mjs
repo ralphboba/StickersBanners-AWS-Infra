@@ -63,6 +63,26 @@ describe('it will not write', () => {
     assert.equal(checkReadOnly('mutation S { draftOrderComplete(id: "x") { draftOrder { id } } }').ok, false);
   });
 
+  test('a write riding in the same document as a calculate is refused', () => {
+    const doc = `mutation Sneaky($i: DraftOrderInput!) {
+      a: draftOrderCalculate(input: $i) { calculatedDraftOrder { totalTaxSet { shopMoney { amount } } } }
+      b: draftOrderCreate(input: $i) { draftOrder { id } }
+    }`;
+    assert.equal(checkReadOnly(doc).ok, false);
+  });
+
+  test('several calculates in one document are fine (aliases)', () => {
+    const doc = `mutation Two($a: DraftOrderInput!, $b: DraftOrderInput!) {
+      x: draftOrderCalculate(input: $a) { calculatedDraftOrder { availableShippingRates { title } } }
+      y: draftOrderCalculate(input: $b) { calculatedDraftOrder { totalTaxSet { shopMoney { amount } } } }
+    }`;
+    assert.equal(checkReadOnly(doc).ok, true);
+  });
+
+  test('a mutation that invokes nothing is refused', () => {
+    assert.equal(checkReadOnly('mutation Empty { __typename }').ok, false);
+  });
+
   test('queries pass, including an anonymous one', () => {
     assert.equal(checkReadOnly('query Q { shop { name } }').ok, true);
     assert.equal(checkReadOnly('{ shop { name } }').ok, true);

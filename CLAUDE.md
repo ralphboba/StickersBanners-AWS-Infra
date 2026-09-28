@@ -7,6 +7,10 @@ authority: **Linh** (legacy author).
 ## Read this first
 - **`docs/linh-requirements.md`** — Linh's own answers (routing, credentials,
   behaviour) = the spec the system must match. Do not forget these.
+- **`docs/pricing-and-tax.md`** — customer charges: shipping price AND tax both
+  come from Shopify (`shopify-pricing.mjs`), never from a table in code (the PDF
+  card was wrong on 17% of real orders). No quote unless we reproduce exactly
+  what checkout charged. Money is integer cents (`money.mjs`).
 
 ## Non-negotiables Linh set
 - **Routing**: NV/CA by ZIP; **GA/NJ/TX ship by state** (state lists still to be

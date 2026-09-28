@@ -128,7 +128,7 @@ export class ComputeStack extends cdk.Stack {
     // --- order-status-api: the customer's view of their own order ---
     // Public (no Cognito): the customer is not logged in, and the link in their
     // confirmation email is what authorises them. Bundles src root for
-    // shared/order-stage, order-token, fedex-rates and shopify-orders.
+    // shared/order-stage, order-token, shopify-orders and shopify-pricing.
     this.orderStatusApi = new lambda.Function(this, 'OrderStatusApi', {
       ...base,
       functionName: `${config.prefix}-order-status-api`,

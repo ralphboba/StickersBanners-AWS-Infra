@@ -226,7 +226,9 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 - [ ] **C5b** `routing.mjs`의 `'2-day Shipping'` 수정 (인테이크 go-live 전)
 - [ ] **C4** OrderDesk rate limit이 키 단위인지 스토어 단위인지 확인
 - [ ] **C4b** Shopify **전용 커스텀 앱** 생성 — OrderDesk 연동 토큰 재사용 금지.
-      스코프는 `read_orders`만(견적은 저장을 안 하므로). 토큰은 SSM
+      스코프는 `read_orders` · `read_customers` · `write_draft_orders`
+      (`draftOrderCalculate`는 저장을 안 하지만 Shopify가 이 스코프를 요구한다 —
+      [`pricing-and-tax.md`](pricing-and-tax.md) §5). 토큰은 SSM
       `/sb/dev/shopify/admin-token`, 도메인은 `/sb/dev/shopify/shop-domain`.
       **채팅에 붙여넣지 말 것.**
 - [x] **C3** `applyShippingUpgrade`에 재조회·병합 — 완료

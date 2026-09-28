@@ -270,9 +270,13 @@ note : Upgraded 2-Day → 1-Day via D169 (customer self-service)
 
 | 숫자 | 출처 |
 | --- | --- |
-| 배송 차액 (세전) | **요금표** (`fedex-rates.mjs`) |
-| 그 차액에 붙는 세금 | **Shopify** (`draftOrderCalculate` — 초안을 만들지 않고 가격만 계산) |
-| 고객이 낼 총액 | 위 둘의 합 = **화면에 보여주는 숫자** |
+| 배송 차액 (세전) | **Shopify** — 그 주문 소계에서 체크아웃이 보여줄 요금끼리의 차 (`availableShippingRates`) |
+| 그 차액에 붙는 세금 | **Shopify** — 차액을 **배송 라인**으로 올린 초안 계산 (`draftOrderCalculate`, 저장 없음) |
+| 고객이 낼 총액 | Shopify의 total (차액 + 세금 검산) = **화면에 보여주는 숫자** |
+
+> 2026-09-28: PDF 요금표(`fedex-rates.mjs`)는 실제 스토어와 17% 어긋나서 삭제했다. 세금도
+> 상품 라인이 아니라 배송 라인으로 계산해야 맞는다. 검증 과정 전체는
+> [`pricing-and-tax.md`](pricing-and-tax.md).
 
 `draftOrderCalculate`는 아무것도 생성하지 않으므로 견적 단계에서 호출해도 안전하다.
 그 다음 `draftOrderCreate`에 **같은 입력**을 넘기면 금액이 달라질 수 없다.

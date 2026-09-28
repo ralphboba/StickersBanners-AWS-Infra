@@ -23,7 +23,7 @@ Danny: "pickup orders - customers should have the ability to upgrade to delivery
 
 - 4개 서비스 전부 제안 (픽업은 "현재 속도"가 없으므로 한 칸 제한이 없다). Saturday Overnight 제외
 - 고객이 주소를 입력해야 세금 포함 총액이 나온다. HI·AK·PR·VI·PO box·미국 외는 거부
-- 배송비는 요금표 **전액** (차액이 아님)
+- 배송비는 체크아웃 요금 **전액** (차액이 아님) — Shopify에서 직접 받는다 (`pricing-and-tax.md`)
 - 남은 확인: 전환의 주소 쓰기가 OrderDesk 룰(ShipStation 전송 · 봇 호출)을 발화한다 →
   Linh 13번. `Awaiting Pickup`에서 전환된 주문이 라벨까지 가는 경로도 같이 확인
 

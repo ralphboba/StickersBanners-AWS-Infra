@@ -60,10 +60,15 @@ export function checkReadOnly(document) {
   if (kind !== 'mutation') return { ok: true };
 
   // The operation NAME is chosen by us and proves nothing; what matters is the
-  // field being invoked. Look for a calculate-only field in the selection.
-  const invokes = [...String(document).matchAll(/\b([a-zA-Z][a-zA-Z0-9_]*)\s*\(/g)]
-    .map((m) => m[1]);
-  const allowed = invokes.some((f) => CALCULATE_ONLY_MUTATIONS.has(f));
+  // fields being invoked. EVERY field called with arguments must be
+  // calculate-only: one allowed field must not carry a draftOrderCreate in
+  // beside it. The header (`mutation Name($v: Type!)`) is cut off first so the
+  // operation's own name and variable list are not mistaken for fields.
+  const stripped = String(document).replace(/#[^\n]*/g, '');
+  const bodyStart = stripped.indexOf('{');
+  const body = bodyStart >= 0 ? stripped.slice(bodyStart) : '';
+  const invokes = [...body.matchAll(/\b([a-zA-Z][a-zA-Z0-9_]*)\s*\(/g)].map((m) => m[1]);
+  const allowed = invokes.length > 0 && invokes.every((f) => CALCULATE_ONLY_MUTATIONS.has(f));
   if (allowed) return { ok: true };
 
   return {

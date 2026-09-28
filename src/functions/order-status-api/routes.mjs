@@ -5,7 +5,7 @@
 
 import { orderStage, STEPS } from '../../shared/order-stage.mjs';
 import { authorisesOrder } from '../../shared/order-token.mjs';
-import { quoteUpgrade, priceOf } from '../../shared/fedex-rates.mjs';
+import { centsToDollars } from '../../shared/money.mjs';
 import { isNoShipDestination, isPoBox } from '../../shared/upgrade-eligibility.mjs';
 
 const json = (statusCode, body) => ({
@@ -40,6 +40,16 @@ const BLOCKED_COPY = {
   // Delivery conversion, address typed by the customer.
   outside_us: 'We can only deliver within the United States.',
 };
+
+/**
+ * When the order is eligible but we cannot price it exactly (see
+ * shopify-pricing.mjs for every reason). The internal reason is logged, never
+ * shown: "your shipping was discounted" or "your order was edited" is not
+ * something to announce, and the answer for the customer is the same.
+ */
+const UNPRICEABLE_COPY = 'We can’t price a shipping change for this order online. '
+  + 'Contact us and we’ll sort it out.';
+const SERVICE_UNAVAILABLE_COPY = 'That service isn’t available for this order online.';
 
 /**
  * Load the row and check the token. Shared by both routes, so the quote route
@@ -77,12 +87,16 @@ function stageFor(row) {
 }
 
 /**
- * Build the handler around the two things that leave the process: the row
- * store and Shopify. index.mjs supplies the real ones; the tests supply fakes,
- * which is why this file imports nothing from AWS.
+ * Build the handler around what leaves the process: the row store and
+ * Shopify. index.mjs supplies the real ones; the tests supply fakes, which is
+ * why this file imports nothing from AWS.
  *
  * @param {{ loadRow: (orderName: string) => Promise<object|undefined>,
- *           priceWithTax: (row: object, quote: object, title?: string) => Promise<object|null> }} deps
+ *           loadShopifyOrder: (orderName: string) => Promise<object|null>,
+ *           quote: (p: object) => Promise<object>,
+ *           estimates: (p: object) => Promise<Array<object>|null> }} deps
+ *   quote / estimates are shopify-pricing's quoteShippingChange and
+ *   deliveryEstimates with the credentials already bound.
  */
 export function makeHandler(deps) {
   const authorisedFor = (orderName, url) => authorised(deps, orderName, url);
@@ -91,6 +105,10 @@ export function makeHandler(deps) {
     if (method === 'POST') return quoteDelivery(deps, authorisedFor, event);
     return status(deps, authorisedFor, event);
   };
+}
+
+function logRefusal(orderName, reason) {
+  console.log(JSON.stringify({ msg: 'shipping change not priced', orderName, reason }));
 }
 
 // ── GET /my-order ──────────────────────────────────────────────────────────
@@ -105,38 +123,51 @@ async function status(deps, authorised, event) {
   const stage = stageFor(row);
 
   // ── the upgrade quote ─────────────────────────────────────────────────
-  // The rate card gives the shipping difference. It does NOT give the tax:
-  // whether shipping is taxable, and at what rate, depends on the destination,
-  // and a figure we invented would differ from the money Shopify takes. So the
-  // tax comes from Shopify (draftOrderCalculate, which creates nothing) and
-  // `total` is only final once it has answered.
+  // Price AND tax both come from Shopify (shopify-pricing.mjs). A quote exists
+  // only when today's checkout rate for the customer's current service is
+  // exactly what they paid; otherwise the difference is not knowable and the
+  // page offers nothing rather than a number we might have to refund.
   let upgrade = null;
+  let refusal = null;
+  const shopifyOrder = (stage.canUpgrade || stage.canConvert)
+    ? await deps.loadShopifyOrder(orderName)
+    : null;
+
   if (stage.canUpgrade) {
-    const quote = quoteUpgrade(row.totals?.subtotal, stage.currentService, stage.upgradeTo);
-    if (quote) {
-      const priced = await deps.priceWithTax(row, quote);
+    const q = await deps.quote({ order: shopifyOrder, to: stage.upgradeTo, expectedFrom: currentMethod });
+    if (q.ok) {
       upgrade = {
-        to: quote.to,
-        shipping: quote.amount,
-        tax: priced?.tax ?? null,
-        total: priced?.total ?? null,
-        final: Boolean(priced),
-        currentPrice: quote.fromPrice,
-        newPrice: quote.toPrice,
+        to: q.to,
+        shipping: centsToDollars(q.shippingCents),
+        tax: centsToDollars(q.taxCents),
+        total: centsToDollars(q.totalCents),
+        final: true,
+        currentPrice: centsToDollars(q.fromCents),
+        newPrice: centsToDollars(q.toCents),
       };
+    } else {
+      logRefusal(orderName, q.reason);
+      refusal = q.reason === 'service_unavailable' ? SERVICE_UNAVAILABLE_COPY : UNPRICEABLE_COPY;
     }
   }
 
   // ── the delivery conversion ───────────────────────────────────────────
-  // A pickup order has no delivery address, and without one there is no tax
-  // to compute. So each option is shown at its card price, marked "plus tax",
-  // and the exact total is produced by POST once the customer has typed an
-  // address. The page never presents the card price as the amount due.
+  // No delivery address yet, so no tax yet. Each option shows the rate
+  // checkout would charge, marked "plus tax"; the amount due is produced by
+  // POST once the customer has typed an address. A rate we could not fetch is
+  // shown as a name without a price, never as a guess.
   let delivery = null;
   if (stage.canConvert) {
+    const est = await deps.estimates({ order: shopifyOrder, services: stage.convertTo });
+    const byService = new Map((est ?? []).map((e) => [e.service, e.shippingCents]));
     const options = stage.convertTo
-      .map((service) => ({ service, shipping: priceOf(row.totals?.subtotal, service) }))
-      .filter((o) => o.shipping !== null);
+      // With estimates, list only what checkout actually offers at this
+      // subtotal; without them, list the services and price them at quote time.
+      .filter((service) => !est || byService.has(service))
+      .map((service) => ({
+        service,
+        shipping: byService.has(service) ? centsToDollars(byService.get(service)) : null,
+      }));
     if (options.length) delivery = { options, needsAddress: true, final: false };
   }
 
@@ -148,7 +179,8 @@ async function status(deps, authorised, event) {
       current: stage.currentService ?? currentMethod,
       canUpgrade: Boolean(upgrade),
       canConvert: Boolean(delivery),
-      reason: offering ? null : (BLOCKED_COPY[stage.blockedBy] ?? BLOCKED_COPY.unknown_folder),
+      reason: offering ? null
+        : (refusal ?? BLOCKED_COPY[stage.blockedBy] ?? BLOCKED_COPY.unknown_folder),
       upgrade,
       delivery,
     },
@@ -191,7 +223,7 @@ async function quoteDelivery(deps, authorised, event) {
   if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
     return json(400, { error: 'address_incomplete' });
   }
-  // The rate card is FedEx domestic. Nothing else has a price we could stand by.
+  // The store's rates cover one Domestic (US) zone. Nothing else has a price.
   if (address.country !== 'US') {
     return json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us });
   }
@@ -205,23 +237,25 @@ async function quoteDelivery(deps, authorised, event) {
     return json(422, { error: 'po_box', reason: BLOCKED_COPY.po_box });
   }
 
-  const shipping = priceOf(row.totals?.subtotal, service);
-  if (shipping === null) return json(422, { error: 'unpriceable' });
-
-  const priced = await deps.priceWithTax(
-    // The typed address REPLACES the order's: a pickup order's shipping block
-    // holds whatever was on file, and the tax is owed where it is delivered.
-    { ...row, shipping: { ...address, method: service } },
-    { from: stage.currentService, to: service, amount: shipping },
-    `Delivery: ${service} (was ${stage.currentService})`,
-  );
+  const order = await deps.loadShopifyOrder(orderName);
+  const q = await deps.quote({
+    order, to: service, expectedFrom: row.shipping?.method ?? null,
+    // The typed address REPLACES the order's: tax is owed where it is delivered.
+    deliverTo: address,
+  });
+  if (!q.ok) {
+    logRefusal(orderName, q.reason);
+    return json(422, {
+      error: q.reason === 'service_unavailable' ? 'service_unavailable' : 'unpriceable',
+      reason: q.reason === 'service_unavailable' ? SERVICE_UNAVAILABLE_COPY : UNPRICEABLE_COPY,
+    });
+  }
 
   return json(200, {
     service,
-    shipping,
-    tax: priced?.tax ?? null,
-    total: priced?.total ?? null,
-    // As with the upgrade: only a figure Shopify stands behind is final.
-    final: Boolean(priced),
+    shipping: centsToDollars(q.shippingCents),
+    tax: centsToDollars(q.taxCents),
+    total: centsToDollars(q.totalCents),
+    final: true,
   });
 }
