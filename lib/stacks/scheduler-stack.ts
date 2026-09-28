@@ -28,6 +28,8 @@ export interface SchedulerStackProps extends cdk.StackProps {
    * directly immediately before charging.
    */
   readonly mirrorIntervalMinutes?: number;
+  /** Undo unpaid shipping changes. Ships DISABLED. */
+  readonly shippingChangeExpiryFn?: lambda.IFunction;
 }
 
 /**
@@ -51,6 +53,7 @@ export class SchedulerStack extends cdk.Stack {
   public readonly pollerSchedule: scheduler.Schedule;
   public readonly demoSchedule?: scheduler.Schedule;
   public readonly mirrorSchedule: scheduler.Schedule;
+  public readonly expirySchedule?: scheduler.Schedule;
 
   constructor(scope: Construct, id: string, props: SchedulerStackProps) {
     super(scope, id, props);
@@ -107,5 +110,17 @@ export class SchedulerStack extends cdk.Stack {
       enabled: true,
     });
     new cdk.CfnOutput(this, 'MirrorScheduleName', { value: this.mirrorSchedule.scheduleName });
+
+    // Unpaid shipping changes — DISABLED. It commits Shopify order edits
+    // (behind SHOPIFY_WRITES as well); turning it on is part of going live.
+    if (props.shippingChangeExpiryFn) {
+      this.expirySchedule = new scheduler.Schedule(this, 'ShippingChangeExpiry', {
+        scheduleName: `${config.prefix}-shipping-change-expiry`,
+        description: 'Undo shipping changes left unpaid past their deadline',
+        schedule: scheduler.ScheduleExpression.rate(Duration.hours(1)),
+        target: new targets.LambdaInvoke(props.shippingChangeExpiryFn, { retryAttempts: 0 }),
+        enabled: false,
+      });
+    }
   }
 }

@@ -153,6 +153,8 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   webhookFn: computeStack.webhook,
   orderApiFn: computeStack.orderApi,
   orderStatusApiFn: computeStack.orderStatusApi,
+  orderChangeRequestFn: computeStack.orderChangeRequest,
+  shopifyPaidFn: computeStack.shopifyPaid,
   approvalFn: computeStack.approval,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,
@@ -203,6 +205,7 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   demoFeederFn: computeStack.demoFeeder,
   demoIntervalMinutes: 10,
   mirrorIntervalMinutes: 1, // display-only real-order sync (EventBridge floor is 1 min)
+  shippingChangeExpiryFn: computeStack.shippingChangeExpiry, // schedule ships DISABLED
 
   description: `StickersBanners schedules (${config.env})`,
 });

@@ -4,7 +4,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { getConfig } from '../lib/config/environments';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
 
-function synth(intervalMinutes?: number) {
+function synth(intervalMinutes?: number, withExpiry = false) {
   const app = new cdk.App();
   const config = getConfig('dev');
   const env = { account: '123456789012', region: 'us-east-1' };
@@ -19,11 +19,20 @@ function synth(intervalMinutes?: number) {
     env,
     pollerFn,
     intervalMinutes,
+    ...(withExpiry ? { shippingChangeExpiryFn: pollerFn } : {}),
   });
   return Template.fromStack(stack);
 }
 
 describe('SchedulerStack', () => {
+  test('the unpaid-shipping-change expiry ships DISABLED', () => {
+    synth(undefined, true).hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-shipping-change-expiry',
+      ScheduleExpression: 'rate(1 hour)',
+      State: 'DISABLED',
+    });
+  });
+
   test('creates the real-poll and mirror schedules', () => {
     synth().resourceCountIs('AWS::Scheduler::Schedule', 2);
   });

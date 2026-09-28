@@ -47,6 +47,9 @@ export class ComputeStack extends cdk.Stack {
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
   public readonly orderStatusApi: lambda.Function;
+  public readonly orderChangeRequest: lambda.Function;
+  public readonly shopifyPaid: lambda.Function;
+  public readonly shippingChangeExpiry: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
   public readonly demoFeeder: lambda.Function;
@@ -149,6 +152,46 @@ export class ComputeStack extends cdk.Stack {
     // whose rate-limit bucket the legacy program depends on
     // (docs/legacy-collision-audit.md C4b).
     this.grantSecretsRead(this.orderStatusApi, config);
+
+    // --- shipping change: the three functions that DO write ---------------
+    // Kept apart from orderStatusApi so the public read-only function stays
+    // read-only. Every Shopify write in them is behind SHOPIFY_WRITES and every
+    // Order Desk write behind ORDERDESK_UPGRADE_WRITES; both default off.
+    const changeEnv = {
+      JOBS_TABLE: jobsTable.tableName,
+      SB_ENV: config.env,
+      SHOPIFY_WRITES: 'disabled',
+      ORDERDESK_UPGRADE_WRITES: 'disabled',
+    };
+    this.orderChangeRequest = new lambda.Function(this, 'OrderChangeRequest', {
+      ...base,
+      functionName: `${config.prefix}-order-change-request`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-change-request/index.handler',
+      environment: changeEnv,
+      description: 'Customer "send me the invoice": commit the order edit, email the balance invoice',
+    });
+    this.shopifyPaid = new lambda.Function(this, 'ShopifyPaid', {
+      ...base,
+      functionName: `${config.prefix}-shopify-paid`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shopify-paid/index.handler',
+      environment: changeEnv,
+      description: 'Shopify orders/paid: write the paid shipping change to Order Desk, tell Google Chat',
+    });
+    this.shippingChangeExpiry = new lambda.Function(this, 'ShippingChangeExpiry', {
+      ...base,
+      functionName: `${config.prefix}-shipping-change-expiry`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shipping-change-expiry/index.handler',
+      timeout: Duration.minutes(2),
+      environment: changeEnv,
+      description: 'Undo shipping changes left unpaid past their deadline',
+    });
+    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry]) {
+      jobsTable.grantReadWriteData(fn);
+      this.grantSecretsRead(fn, config);
+    }
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.

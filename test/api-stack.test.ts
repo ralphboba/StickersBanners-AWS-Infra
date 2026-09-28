@@ -26,6 +26,8 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     webhookFn: fn('Webhook'),
     orderApiFn: fn('OrderApi'),
     orderStatusApiFn: fn('OrderStatusApi'),
+    orderChangeRequestFn: fn('OrderChangeRequest'),
+    shopifyPaidFn: fn('ShopifyPaid'),
     approvalFn: fn('Approval'),
     userPool,
     userPoolClient,
@@ -47,10 +49,12 @@ describe('ApiStack', () => {
       'GET /orders',
       'GET /orders/{name}',
       'POST /my-order/quote',
+      'POST /my-order/request',
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
       'POST /webhook/orderdesk',
+      'POST /webhook/shopify-paid',
     ]);
   });
 
@@ -74,7 +78,12 @@ describe('ApiStack', () => {
       .filter((r) => r.AuthorizationType !== 'JWT')
       .map((r) => r.RouteKey)
       .sort();
-    expect(unauthenticated).toEqual(['GET /my-order', 'POST /my-order/quote', 'POST /webhook/orderdesk']);
+    // Each checks its caller itself: the order-status token (my-order), the
+    // Shopify HMAC (shopify-paid), the shared secret (orderdesk).
+    expect(unauthenticated).toEqual([
+      'GET /my-order', 'POST /my-order/quote', 'POST /my-order/request',
+      'POST /webhook/orderdesk', 'POST /webhook/shopify-paid',
+    ]);
   });
 
   test('CORS is enabled for the dashboard', () => {
@@ -113,9 +122,9 @@ describe('ApiStack', () => {
 
   test('routes integrate with a Lambda', () => {
     const template = synth();
-    // webhook + order-api + order-status-api + one shared approval
-    // integration (approve & reject)
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
+    // webhook + order-api + order-status-api + order-change-request +
+    // shopify-paid + one shared approval integration (approve & reject)
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 6);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

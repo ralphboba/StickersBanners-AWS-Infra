@@ -21,6 +21,10 @@ export interface ApiStackProps extends cdk.StackProps {
    * authorisation. Read-only, and the Lambda's own role cannot write.
    */
   readonly orderStatusApiFn?: lambda.IFunction;
+  /** "Send me the invoice" — public, token-checked inside the Lambda. */
+  readonly orderChangeRequestFn?: lambda.IFunction;
+  /** Shopify orders/paid webhook — public, HMAC-checked inside the Lambda. */
+  readonly shopifyPaidFn?: lambda.IFunction;
   readonly userPool: cognito.IUserPool;
   readonly userPoolClient: cognito.IUserPoolClient;
 }
@@ -78,6 +82,21 @@ export class ApiStack extends cdk.Stack {
         path: '/my-order/quote',
         methods: [apigw.HttpMethod.POST],
         integration: orderStatusIntegration,
+      });
+    }
+
+    if (props.orderChangeRequestFn) {
+      this.httpApi.addRoutes({
+        path: '/my-order/request',
+        methods: [apigw.HttpMethod.POST],
+        integration: new HttpLambdaIntegration('OrderChangeRequestIntegration', props.orderChangeRequestFn),
+      });
+    }
+    if (props.shopifyPaidFn) {
+      this.httpApi.addRoutes({
+        path: '/webhook/shopify-paid',
+        methods: [apigw.HttpMethod.POST],
+        integration: new HttpLambdaIntegration('ShopifyPaidIntegration', props.shopifyPaidFn),
       });
     }
 

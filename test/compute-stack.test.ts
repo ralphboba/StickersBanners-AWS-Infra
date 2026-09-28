@@ -41,10 +41,23 @@ describe('ComputeStack', () => {
       'sb-dev-demo-feeder',
       'sb-dev-notify-consumer',
       'sb-dev-order-api',
+      'sb-dev-order-change-request',
       'sb-dev-order-status-api',
       'sb-dev-poller',
+      'sb-dev-shipping-change-expiry',
+      'sb-dev-shopify-paid',
       'sb-dev-webhook',
     ]);
+  });
+
+  test('the shipping-change functions ship with both write switches off', () => {
+    const fns = Object.values(synth().findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+    expect(fns).toHaveLength(3);
+    for (const fn of fns) {
+      expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBe('disabled');
+      expect(fn.Properties.Environment.Variables.ORDERDESK_UPGRADE_WRITES).toBe('disabled');
+    }
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {

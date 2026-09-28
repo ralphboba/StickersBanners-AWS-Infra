@@ -322,7 +322,8 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
       // What commitShippingChange needs to stage the same edit again at the
       // customer's click, and the balance it must still come to.
       edit: { orderId: order.id, removeLineId: line.id, title: to, priceCents: newLineCents,
-        expectedOutstandingCents: edit.outstandingCents },
+        expectedOutstandingCents: edit.outstandingCents, calculatedOrderId: edit.calculatedOrderId,
+        restore: { title: line.title, priceCents: line.originalCents } },
     };
   }
 

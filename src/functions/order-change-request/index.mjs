@@ -1,0 +1,49 @@
+// "Send me the invoice" — POST /my-order/request (routes.mjs requestChange).
+//
+// A separate function from order-status-api on purpose: that one is reachable
+// without authentication and is READ ONLY. This one may commit an order edit,
+// email an invoice and write the pending change record, and every one of
+// those is behind SHOPIFY_WRITES (shopify-order-edit.mjs) or a condition on
+// the record.
+
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+
+import { getSecret } from '../../shared/secrets.mjs';
+import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
+import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
+import { makeHandler } from '../order-status-api/routes.mjs';
+
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const JOBS_TABLE = process.env.JOBS_TABLE;
+const creds = async () => {
+  const [shop, token] = await Promise.all([getSecret('shopify', 'shop-domain'), getSecret('shopify', 'admin-token')]);
+  return { shop, token };
+};
+
+export const handler = makeHandler({
+  loadRow: async (orderName) => (await ddb.send(new GetCommand({
+    TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
+  loadShopifyOrder: async (orderName) => fetchOrderForPricing({ ...(await creds()), orderName }),
+  quote: async (args) => {
+    try { return await quoteShippingChange({ ...(await creds()), ...args }); } catch (err) {
+      console.warn(JSON.stringify({ msg: 'quote failed', err: String(err) }));
+      return { ok: false, reason: 'shopify_error' };
+    }
+  },
+  estimates: async () => null,
+  loadPending: async (orderName) => (await ddb.send(new GetCommand({
+    TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'CHANGE' } })))?.Item ?? null,
+  // One open change per order: a second pending record is refused by the
+  // table, not just by the route's earlier check.
+  savePending: async (change) => ddb.send(new PutCommand({
+    TableName: JOBS_TABLE,
+    Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
+    ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
+    ExpressionAttributeNames: { '#s': 'status' },
+    ExpressionAttributeValues: { ':pending': 'pending' },
+  })),
+  commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
+  sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
+  now: () => Date.now(),
+});

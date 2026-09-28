@@ -5,7 +5,7 @@
 
 import { orderStage, STEPS } from '../../shared/order-stage.mjs';
 import { authorisesOrder } from '../../shared/order-token.mjs';
-import { centsToDollars } from '../../shared/money.mjs';
+import { centsToDollars, toCents } from '../../shared/money.mjs';
 import { isNoShipDestination, isPoBox } from '../../shared/upgrade-eligibility.mjs';
 
 const json = (statusCode, body) => ({
@@ -103,6 +103,8 @@ export function makeHandler(deps) {
   const authorisedFor = (orderName, url) => authorised(deps, orderName, url);
   return async function handler(event = {}) {
     const method = String(event?.requestContext?.http?.method ?? event?.httpMethod ?? 'GET').toUpperCase();
+    const path = String(event?.rawPath ?? event?.requestContext?.http?.path ?? event?.path ?? '');
+    if (method === 'POST' && path.endsWith('/request')) return requestChange(deps, authorisedFor, event);
     if (method === 'POST') return quoteDelivery(deps, authorisedFor, event);
     return status(deps, authorisedFor, event);
   };
@@ -259,4 +261,91 @@ async function quoteDelivery(deps, authorised, event) {
     total: centsToDollars(q.totalCents),
     final: true,
   });
+}
+
+// ── POST /my-order/request ─────────────────────────────────────────────────
+// "Send me the invoice". The only route here that changes anything, and only
+// behind SHOPIFY_WRITES (deps.commitEdit / deps.sendInvoice refuse otherwise).
+//
+//   1. re-decide from the current row and re-quote from a fresh staged edit;
+//   2. commit ONLY if the balance is still exactly what the page showed —
+//      otherwise nothing is committed and the new figure goes back;
+//   3. record the pending change (the paid webhook and the expiry job act on
+//      it), then ask Shopify to email the invoice for the balance.
+// Pickup conversions are not self-committed yet: they need the order's
+// address changed first, and that write is not built.
+const REVERT_AFTER_MS = 48 * 60 * 60 * 1000;
+
+async function requestChange(deps, authorised, event) {
+  // The read-only status function has no write dependencies; only the
+  // order-change-request function is built with them.
+  if (!deps.commitEdit || !deps.sendInvoice || !deps.savePending) return json(503, { error: 'not_available' });
+  let body;
+  try { body = JSON.parse(event?.body ?? '{}'); } catch { return json(400, { error: 'bad_json' }); }
+  const orderName = String(body.o ?? '').trim();
+  const got = await authorised(orderName, String(body.s ?? '').trim());
+  if (got.response) return got.response;
+  const { row } = got;
+
+  const service = String(body.service ?? '');
+  const expected = toCents(body.expectedTotal);
+  if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
+
+  const stage = stageFor(row);
+  if (!stage.canUpgrade || stage.upgradeTo !== service) {
+    return json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY });
+  }
+
+  const existing = await deps.loadPending(orderName);
+  if (existing?.status === 'pending') {
+    return existing.to === service
+      ? json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents) })
+      : json(409, { error: 'already_pending' });
+  }
+  if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
+
+  const order = await deps.loadShopifyOrder(orderName);
+  const q = await deps.quote({ order, to: service, expectedFrom: row.shipping?.method ?? null });
+  if (!q.ok || !q.edit) {
+    logRefusal(orderName, q.reason ?? 'no_edit');
+    return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+  }
+  if (q.totalCents !== expected) {
+    return json(409, { error: 'price_changed', total: centsToDollars(q.totalCents),
+      shipping: centsToDollars(q.shippingCents), tax: centsToDollars(q.taxCents) });
+  }
+
+  const now = deps.now();
+  const ref = `CHG-${orderName}-${now}`;
+  const committed = await deps.commitEdit({
+    orderName, calculatedOrderId: q.edit.calculatedOrderId,
+    staffNote: `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
+  });
+  if (!committed.committed) {
+    if (committed.skipped) return json(503, { error: 'not_available' });
+    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
+    return json(502, { error: 'commit_failed' });
+  }
+
+  const change = {
+    orderName, ref, status: 'pending',
+    orderDeskId: row.source?.orderDeskId ?? null,
+    shopifyOrderId: q.edit.orderId,
+    from: q.from, to: q.to, shippingCents: q.shippingCents, taxCents: q.taxCents,
+    restore: q.edit.restore,
+    committedAt: new Date(now).toISOString(),
+    revertAfter: new Date(now + REVERT_AFTER_MS).toISOString(),
+  };
+  // Shopify is the authority on what is owed. If the committed balance is not
+  // the one quoted, the team looks before any invoice goes out.
+  if (committed.outstandingCents !== q.totalCents) {
+    await deps.savePending({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
+      committedOutstandingCents: committed.outstandingCents });
+    return json(502, { error: 'commit_mismatch' });
+  }
+  await deps.savePending(change);
+
+  const invoice = await deps.sendInvoice({ orderName, orderId: q.edit.orderId });
+  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
+  return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent) });
 }

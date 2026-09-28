@@ -150,6 +150,8 @@ describe('an upgrade priced from the live store', () => {
     assert.deepEqual(q.edit, {
       orderId: 'gid://shopify/Order/1', removeLineId: 'gid://shopify/ShippingLine/77',
       title: 'FedEx 3-Days', priceCents: 8673, expectedOutstandingCents: 6511,
+      calculatedOrderId: 'gid://shopify/CalculatedOrder/5',
+      restore: { title: 'FedEx Ground', priceCents: 2567 },
     });
   });
 

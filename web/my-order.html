@@ -258,10 +258,36 @@
 
       $('upgrade').addEventListener('submit', function (e) {
         e.preventDefault();
-        // Requesting the invoice is a write and is not built yet — the switches
-        // that would arm it are off. Deliberately inert rather than pretending.
+        var picked = document.querySelector('input[name="svc"]:checked');
+        if (!picked || !(parseFloat(picked.value) > 0)) return;
         $('send').disabled = true;
-        set('send', 'Not available yet');
+        set('send', 'Sending your invoice…');
+        // The server re-prices from Shopify and commits only if the amount is
+        // still exactly the one shown here.
+        fetch('/api/my-order/request', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ o: o, s: s, service: up.to, expectedTotal: up.total }),
+        })
+          .then(function (r) { return r.json().then(function (b) { return { status: r.status, b: b }; }); })
+          .then(function (res) {
+            if (res.status === 200) {
+              set('send', 'Invoice sent — check your email');
+              return;
+            }
+            if (res.status === 409 && res.b.error === 'price_changed') {
+              // Show the new figure and let the customer decide again.
+              up.total = res.b.total;
+              set('upPrice', '+' + money(up.total));
+              picked.value = String(up.total);
+              set('total', money(up.total));
+              $('send').disabled = false;
+              set('send', 'The amount changed — send me the invoice for ' + money(up.total));
+              return;
+            }
+            set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+          })
+          .catch(function () { set('send', 'We couldn’t reach our system — please try again'); $('send').disabled = false; });
       });
     } else if (sh.canConvert && sh.delivery) {
       renderDelivery(sh.delivery);
