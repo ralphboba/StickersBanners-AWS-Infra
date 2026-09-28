@@ -23,6 +23,9 @@ authority: **Linh** (legacy author).
 - **Pipeline ends at the production folder** (`pickup_*`); production owns
   "completed". Don't build a completed transition.
 - **Zendesk** proof-ready email is the only external notification (Google Chat off).
+  Exception (Kai, 2026-09-28): one Google Chat line per *paid* shipping change,
+  sent after the Order Desk write succeeds (`src/shared/gchat.mjs`). Webhook URL
+  is a secret — SSM, never committed.
 - Intake is by **polling** the OrderDesk QTS folder (no webhook).
 
 ## Safety

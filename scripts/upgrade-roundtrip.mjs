@@ -4,6 +4,7 @@
 //   node scripts/upgrade-roundtrip.mjs apply   <S-number> --to "FedEx 3-Days" --amount 68.17 --tax 6.07 --yes
 //        [--prep-method "FedEx Ground"]   set the service first (address untouched)
 //        [--deliver-to "addr1|addr2|city|ST|zip"]   pickup -> delivery (writes the address)
+//        [--notify]   post the Google Chat line after a successful write (GCHAT_WEBHOOK_URL)
 //   node scripts/upgrade-roundtrip.mjs restore <S-number> --yes
 //
 // apply    reads the order, saves the whole record to a snapshot file, runs the
@@ -30,6 +31,7 @@ import os from 'node:os';
 import { applyShippingUpgrade } from '../src/shared/orderdesk-write.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../src/shared/orderdesk-fetch.mjs';
 import { folderById } from '../src/shared/orderdesk-folders.mjs';
+import { upgradeMessage, sendChat } from '../src/shared/gchat.mjs';
 
 const WATCHED = ['shipping_method', 'shipping_total', 'tax_total', 'order_total', 'folder_id'];
 const SNAP_DIR = path.join(os.tmpdir(), 'sb-upgrade-roundtrip');
@@ -126,6 +128,15 @@ if (mode === 'apply') {
   if (!r.applied) die(`not applied: ${JSON.stringify(r)}`);
 
   show('AFTER', await readOrder(before.id));
+
+  // --notify: the Google Chat line, sent only because the write succeeded.
+  // The webhook comes from GCHAT_WEBHOOK_URL and is never printed.
+  if (process.argv.includes('--notify')) {
+    const text = upgradeMessage({ orderName, from: r.from, to, amount, tax, converted: r.converted, test: true });
+    const sent = await sendChat({ webhookUrl: process.env.GCHAT_WEBHOOK_URL, orderName, text });
+    console.log(`\nGoogle Chat: ${sent.sent ? 'sent' : `NOT sent (${sent.skipped}${sent.status ? ' ' + sent.status : ''})`}`);
+    console.log(`  "${text}"`);
+  }
   console.log(`\nCheck it in OrderDesk, then: node scripts/upgrade-roundtrip.mjs restore ${orderName} --yes`);
 }
 
