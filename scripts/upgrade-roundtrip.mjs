@@ -2,6 +2,7 @@
 // One-order test of the post-payment OrderDesk write, and its undo.
 //
 //   node scripts/upgrade-roundtrip.mjs apply   <S-number> --to "FedEx 3-Days" --amount 68.17 --tax 6.07 --yes
+//        [--prep-method "FedEx Ground"]   set the service first (address untouched)
 //   node scripts/upgrade-roundtrip.mjs restore <S-number> --yes
 //
 // apply    reads the order, saves the whole record to a snapshot file, runs the
@@ -88,6 +89,20 @@ if (mode === 'apply') {
   fs.mkdirSync(SNAP_DIR, { recursive: true });
   fs.writeFileSync(snapFile(orderName), JSON.stringify(before, null, 2));
   console.log(`\nsnapshot saved: ${snapFile(orderName)}`);
+
+  // Optional: put the order on a delivery service first, e.g. to test a speed
+  // upgrade on an order that started as a pickup. Changes shipping_method only;
+  // the address is not touched, so Order Desk's address rules do not fire.
+  const prep = arg('prep-method');
+  if (prep) {
+    const fresh = await readOrder(before.id);
+    const res = await orderDeskFetch(`${ORDERDESK_API}/orders/${before.id}`, {
+      method: 'PUT', headers: headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ ...fresh, shipping_method: prep }),
+    });
+    if (!res.ok) die(`prep PUT ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    show(`PREP    shipping_method -> ${prep}`, await readOrder(before.id));
+  }
 
   process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';   // this process only
   const r = await applyShippingUpgrade({
