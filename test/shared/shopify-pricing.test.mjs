@@ -30,9 +30,12 @@ function shopifyOrder(over = {}) {
     customer: { id: 'gid://shopify/Customer/9', taxExempt: false },
     subtotalPriceSet: { shopMoney: { amount: '150.0', currencyCode: 'USD' } },
     currentSubtotalPriceSet: { shopMoney: { amount: '150.0', currencyCode: 'USD' } },
+    currentTotalPriceSet: { shopMoney: { amount: '185.61' } },   // 150 + 25.67 + 9.94 tax
+    totalOutstandingSet: { shopMoney: { amount: '0.0' } },
     shippingAddress: NJ,
     billingAddress: NJ,
     shippingLines: { nodes: [{
+      id: 'gid://shopify/ShippingLine/77',
       title: 'FedEx Ground', isRemoved: false,
       originalPriceSet: { shopMoney: { amount: '25.67' } },
       discountedPriceSet: { shopMoney: { amount: '25.67' } },
@@ -45,7 +48,7 @@ function shopifyOrder(over = {}) {
  * A fake Shopify. Routes by operation name, records every request, and prices
  * the charge with the tax function you give it.
  */
-function fakeShopify({ order = shopifyOrder(), rates = RATES_150, tax = () => '0.00', calc } = {}) {
+function fakeShopify({ order = shopifyOrder(), rates = RATES_150, tax = () => '0.00', calc, stageOutstanding, stageTotal } = {}) {
   const sent = [];
   const fetchImpl = async (_url, init) => {
     const body = JSON.parse(init.body);
@@ -72,9 +75,38 @@ function fakeShopify({ order = shopifyOrder(), rates = RATES_150, tax = () => '0
       };
       return ok({ draftOrderCalculate: { userErrors: [], calculatedDraftOrder: c } });
     }
+    if (body.query.includes('EditBegin')) {
+      return ok({ orderEditBegin: { userErrors: [], calculatedOrder: {
+        id: 'gid://shopify/CalculatedOrder/5',
+        shippingLines: order.shippingLines.nodes.map((l) => ({ id: l.id.replace('ShippingLine', 'CalculatedShippingLine'),
+          title: l.title, stagedStatus: 'NONE', price: { shopMoney: { amount: l.originalPriceSet.shopMoney.amount } } })),
+      } } });
+    }
+    if (body.query.includes('EditStage')) {
+      // Balance = new line − removed line + the tax Shopify charges on it.
+      const added = Number(body.variables.add.price.amount);
+      const removed = Number(order.shippingLines.nodes[0].originalPriceSet.shopMoney.amount);
+      const diff = +(added - removed).toFixed(2);
+      const t = Number(tax(diff.toFixed(2)));
+      const outstanding = stageOutstanding ?? (diff + t).toFixed(2);
+      const before = Number(order.currentTotalPriceSet.shopMoney.amount);
+      return ok({
+        removed: { userErrors: [] },
+        added: { userErrors: [], calculatedOrder: {
+          id: 'gid://shopify/CalculatedOrder/5',
+          totalPriceSet: { shopMoney: { amount: stageTotal ?? (before + Number(outstanding)).toFixed(2), currencyCode: 'USD' } },
+          totalOutstandingSet: { shopMoney: { amount: String(outstanding), currencyCode: 'USD' } },
+          shippingLines: [],
+        } },
+      });
+    }
     throw new Error(`unexpected query: ${body.query.slice(0, 60)}`);
   };
-  return { fetchImpl, sent, charge: () => sent.find((b) => b.query.includes('ChargeQuote')) };
+  return {
+    fetchImpl, sent,
+    charge: () => sent.find((b) => b.query.includes('ChargeQuote')),
+    stage: () => sent.find((b) => b.query.includes('EditStage')),
+  };
 }
 
 async function quote(fake, extra = {}) {
@@ -96,19 +128,13 @@ describe('an upgrade priced from the live store', () => {
     assert.equal(q.totalCents, 6511);
   });
 
-  test('the charge goes to Shopify as SHIPPING, beside a $0 taxable item', async () => {
+  test('priced on the customer’s own order: remove the paid line, add the new one', async () => {
     const fake = fakeShopify();
     await quote(fake);
-    const input = fake.charge().variables.input;
-    assert.deepEqual(input.shippingLine.priceWithCurrency, { amount: '61.06', currencyCode: 'USD' });
-    assert.equal(input.shippingLine.title, 'FedEx Ground → FedEx 3-Days');
-    assert.equal(input.lineItems.length, 1);
-    assert.deepEqual(input.lineItems[0].originalUnitPriceWithCurrency, { amount: '0.00', currencyCode: 'USD' });
-    assert.equal(input.lineItems[0].taxable, true);
-    assert.equal(input.lineItems[0].requiresShipping, true);
-    assert.equal(input.acceptAutomaticDiscounts, false, 'a store discount must not eat the charge');
-    assert.equal(input.purchasingEntity.customerId, 'gid://shopify/Customer/9', 'so exemptions apply');
-    assert.equal(input.shippingAddress.provinceCode, 'NJ');
+    const v = fake.stage().variables;
+    assert.equal(v.remove, 'gid://shopify/CalculatedShippingLine/77');
+    assert.deepEqual(v.add, { title: 'FedEx 3-Days', price: { amount: '86.73', currencyCode: 'USD' } });
+    assert.equal(fake.charge(), undefined, 'no draft is priced for an upgrade');
   });
 
   test('rates are asked for at the Shopify subtotal, not OrderDesk’s', async () => {
@@ -119,10 +145,24 @@ describe('an upgrade priced from the live store', () => {
     assert.equal(rc.acceptAutomaticDiscounts, false);
   });
 
-  test('the quote carries the draft input, for the invoice to reuse unchanged', async () => {
-    const fake = fakeShopify();
-    const q = await quote(fake);
-    assert.deepEqual(q.draftInput, fake.charge().variables.input);
+  test('the quote carries what the commit needs, and the balance it must come to', async () => {
+    const q = await quote(fakeShopify({ tax: () => '4.05' }));
+    assert.deepEqual(q.edit, {
+      orderId: 'gid://shopify/Order/1', removeLineId: 'gid://shopify/ShippingLine/77',
+      title: 'FedEx 3-Days', priceCents: 8673, expectedOutstandingCents: 6511,
+    });
+  });
+
+  test('the balance is Shopify’s, cent for cent, even when it is not rate × amount', async () => {
+    // S64227: 68.17 at 8.9% is 6.07 by multiplication, 6.08 on the order.
+    const q = await quote(fakeShopify({ stageOutstanding: '65.12' }));
+    assert.equal(q.totalCents, 6512);
+    assert.equal(q.taxCents, 6512 - 6106);
+  });
+
+  test('an order that already owes money is not stacked on', async () => {
+    const order = shopifyOrder({ totalOutstandingSet: { shopMoney: { amount: '10.00' } } });
+    assert.equal((await quote(fakeShopify({ order }))).reason, 'balance_due');
   });
 
   test('every request it sends passes the read-only guard', async () => {
@@ -214,14 +254,8 @@ describe('refuses whenever it cannot reproduce what the customer paid', () => {
   });
 
   test('Shopify’s answer does not add up', async () => {
-    const calc = {
-      currencyCode: 'USD',
-      subtotalPriceSet: { shopMoney: { amount: '0.0', currencyCode: 'USD' } },
-      totalShippingPriceSet: { shopMoney: { amount: '0.0' } },   // a discount ate it
-      totalTaxSet: { shopMoney: { amount: '0.0' } },
-      totalPriceSet: { shopMoney: { amount: '0.0' } },
-    };
-    assert.equal((await quote(fakeShopify({ calc }))).reason, 'calc_inconsistent');
+    // The edited total must grow by exactly the balance on a fully paid order.
+    assert.equal((await quote(fakeShopify({ stageOutstanding: '61.06', stageTotal: '300.00' }))).reason, 'edit_inconsistent');
   });
 
   test('a downgrade or no change is not sold', async () => {

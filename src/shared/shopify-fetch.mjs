@@ -21,6 +21,8 @@
 //     by being rejected.
 
 /** Admin API version. Pinned: an unpinned version changes under you. */
+import { shopifyWritesEnabled } from './write-gates.mjs';
+
 export const SHOPIFY_API_VERSION = '2025-07';
 
 /**
@@ -31,7 +33,19 @@ export const SHOPIFY_API_VERSION = '2025-07';
  * no order and no record. It is the only way to learn what Shopify will
  * actually charge, and guessing that number is what we are avoiding.
  */
-const CALCULATE_ONLY_MUTATIONS = new Set(['draftOrderCalculate']);
+const CALCULATE_ONLY_MUTATIONS = new Set([
+  'draftOrderCalculate',
+  // An order edit is staged on a CalculatedOrder and changes nothing until
+  // orderEditCommit. Beginning one and staging lines is how Shopify quotes the
+  // exact balance a change would leave (shopify-order-edit.mjs).
+  'orderEditBegin', 'orderEditAddShippingLine', 'orderEditRemoveShippingLine',
+]);
+
+/**
+ * Mutations that DO persist, allowed only through `write: true` and only while
+ * SHOPIFY_WRITES is armed. Anything else is refused even then.
+ */
+const WRITE_MUTATIONS = new Set(['orderEditCommit', 'orderInvoiceSend']);
 
 /** Below this many points left, wait for the bucket to refill before sending. */
 const LOW_WATER_POINTS = 200;
@@ -104,11 +118,29 @@ let pendingWaitMs = 0;
  * @param {(ms:number)=>Promise<void>} [p.sleep]
  * @returns {Promise<{ data: object }>}
  */
+/** Is this a document of allowed persisting mutations, and nothing else? */
+export function checkWrite(document) {
+  const stripped = String(document).replace(/#[^\n]*/g, '');
+  const bodyStart = stripped.indexOf('{');
+  const body = bodyStart >= 0 ? stripped.slice(bodyStart) : '';
+  const invokes = [...body.matchAll(/\b([a-zA-Z][a-zA-Z0-9_]*)\s*\(/g)].map((m) => m[1]);
+  const ok = invokes.length > 0 && invokes.every((f) => WRITE_MUTATIONS.has(f) || CALCULATE_ONLY_MUTATIONS.has(f));
+  return ok ? { ok: true } : { ok: false, reason: 'refused: not an allowed write' };
+}
+
 export async function shopifyGraphQL({
-  shop, token, query, variables, fetchImpl, sleep = defaultSleep,
+  shop, token, query, variables, fetchImpl, sleep = defaultSleep, write = false,
 }) {
-  const gate = checkReadOnly(query);
-  if (!gate.ok) throw new Error(`Shopify ${gate.reason}`);
+  if (write) {
+    // Checked here as well as by the caller: the transport is the last place
+    // a stray write could be stopped.
+    if (!shopifyWritesEnabled()) throw new Error('Shopify write refused: SHOPIFY_WRITES is not enabled');
+    const w = checkWrite(query);
+    if (!w.ok) throw new Error(`Shopify ${w.reason}`);
+  } else {
+    const gate = checkReadOnly(query);
+    if (!gate.ok) throw new Error(`Shopify ${gate.reason}`);
+  }
   if (!shop || !token) throw new Error('Shopify: missing shop or token');
 
   const run = async () => {

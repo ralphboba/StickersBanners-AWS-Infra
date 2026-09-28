@@ -36,6 +36,7 @@ import { shopifyGraphQL } from './shopify-fetch.mjs';
 import { toMailingAddress } from './shopify-orders.mjs';
 import { toCents, centsToAmount } from './money.mjs';
 import { isPickup } from './order-stage.mjs';
+import { stageShippingChange } from './shopify-order-edit.mjs';
 
 const ORDER_FOR_PRICING = `
   query OrderForPricing($q: String!) {
@@ -47,10 +48,13 @@ const ORDER_FOR_PRICING = `
         customer { id taxExempt }
         subtotalPriceSet { shopMoney { amount currencyCode } }
         currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+        currentTotalPriceSet { shopMoney { amount } }
+        totalOutstandingSet { shopMoney { amount } }
         shippingAddress { address1 address2 city provinceCode zip countryCodeV2 }
         billingAddress { address1 address2 city provinceCode zip countryCodeV2 }
         shippingLines(first: 5) {
           nodes {
+            id
             title
             isRemoved
             originalPriceSet { shopMoney { amount } }
@@ -112,7 +116,10 @@ export async function fetchOrderForPricing({ shop, token, orderName, fetchImpl }
   const o = exact[0];
   const lines = (o.shippingLines?.nodes ?? []).filter((l) => !l.isRemoved);
   return {
+    id: o.id,
     name: o.name,
+    currentTotalCents: toCents(o.currentTotalPriceSet?.shopMoney?.amount),
+    outstandingCents: toCents(o.totalOutstandingSet?.shopMoney?.amount),
     currency: o.subtotalPriceSet?.shopMoney?.currencyCode ?? null,
     subtotalCents: toCents(o.subtotalPriceSet?.shopMoney?.amount),
     currentSubtotalCents: toCents(o.currentSubtotalPriceSet?.shopMoney?.amount),
@@ -122,6 +129,7 @@ export async function fetchOrderForPricing({ shop, token, orderName, fetchImpl }
     shippingAddress: addressFrom(o.shippingAddress),
     billingAddress: addressFrom(o.billingAddress),
     shippingLines: lines.map((l) => ({
+      id: l.id,
       title: l.title,
       originalCents: toCents(l.originalPriceSet?.shopMoney?.amount),
       discountedCents: toCents(l.discountedPriceSet?.shopMoney?.amount),
@@ -290,6 +298,38 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   const shippingCents = toCentsRate - fromCents;
   if (shippingCents <= 0) return no('not_an_upgrade');
 
+  if (mode === 'upgrade') {
+    // Priced on the customer's own order (Order Edit): remove the paid line,
+    // add the new service, read the balance Shopify would invoice. The new
+    // line is priced so the balance's shipping part is exactly shippingCents:
+    // what they paid plus the difference of the two rates at the current
+    // subtotal (equal to the new rate unless the order was edited).
+    if (order.outstandingCents !== 0) return no('balance_due');
+    const newLineCents = line.originalCents + shippingCents;
+    const edit = await stageShippingChange({
+      shop, token, fetchImpl,
+      orderId: order.id, removeLineId: line.id, title: to,
+      priceCents: newLineCents, totalBeforeCents: order.currentTotalCents,
+    });
+    if (!edit.ok) return no(edit.reason);
+    const taxCents = edit.outstandingCents - shippingCents;
+    if (taxCents < 0) return no('calc_inconsistent');
+    return {
+      ok: true, mode, from: line.title, to,
+      pricedAtSubtotalCents: order.currentSubtotalCents,
+      fromCents, toCents: toCentsRate, shippingCents,
+      taxCents, totalCents: edit.outstandingCents,
+      // What commitShippingChange needs to stage the same edit again at the
+      // customer's click, and the balance it must still come to.
+      edit: { orderId: order.id, removeLineId: line.id, title: to, priceCents: newLineCents,
+        expectedOutstandingCents: edit.outstandingCents },
+    };
+  }
+
+  // Pickup -> delivery: the tax depends on an address the order does not have
+  // yet, so it is priced on a draft at the typed address. (Committing it as an
+  // order edit also needs the order's shipping address changed first — not
+  // built; see docs/pricing-and-tax.md.)
   const draftInput = buildChargeDraftInput({
     orderName: order.name.replace(/^#/, ''),
     from: line.title, to, amountCents: shippingCents, address, customerId: order.customerId,
