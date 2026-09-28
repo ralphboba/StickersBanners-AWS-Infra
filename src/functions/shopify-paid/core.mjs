@@ -9,6 +9,8 @@
 //   · the Shopify signature is checked before anything is read;
 //   · it acts only on an order that has a PENDING change record, written when
 //     the edit was committed — every other paid order is ignored;
+//   · the folder is re-checked at payment time: paid too late means nothing
+//     is written and the team is told a refund is needed;
 //   · the Order Desk write is idempotent on the change's reference, so a
 //     repeated webhook cannot add the money twice (tested live on S64262);
 //   · Chat hears only about a write that actually happened.
@@ -40,6 +42,8 @@ const reply = (statusCode, body) => ({ statusCode, body: JSON.stringify(body) })
  * @param {{ webhookSecret: () => Promise<string>,
  *           loadPending: (orderName: string) => Promise<object|null>,
  *           markDone: (orderName: string, ref: string, result: object) => Promise<void>,
+ *           markAttention: (orderName: string, ref: string, reason: string) => Promise<void>,
+ *           stillAllowed: (change: object) => Promise<{ allowed: boolean, reason?: string, label?: string }>,
  *           applyOrderDesk: (change: object) => Promise<object>,
  *           notify: (orderName: string, text: string) => Promise<object> }} deps
  */
@@ -60,6 +64,23 @@ export function makePaidHandler(deps) {
     const change = await deps.loadPending(orderName);
     if (!change) return reply(200, { ignored: 'no_pending_change' });
     if (change.status === 'done') return reply(200, { ignored: 'already_done', ref: change.ref });
+    if (change.status === 'attention') return reply(200, { ignored: 'already_flagged', ref: change.ref });
+
+    // ── paid too late? ─────────────────────────────────────────────────
+    // The quote was right when it was given; the customer may pay days later.
+    // By then the order may have gone to Awaiting Shipment (Ground can no
+    // longer change) or Completed. Re-decide from Order Desk NOW; if the change
+    // is no longer allowed, write nothing and tell the team — the customer has
+    // paid for something we cannot do, and that needs a person and a refund.
+    const late = await deps.stillAllowed(change);
+    if (!late.allowed) {
+      await deps.markAttention(orderName, change.ref, late.reason);
+      await deps.notify(orderName, `${orderName} PAID for ${change.from} → ${change.to} `
+        + `(+$${centsToDollars((change.shippingCents ?? 0) + (change.taxCents ?? 0)).toFixed(2)}) but the order is now `
+        + `${late.label ?? 'past the point of change'} — NOT applied. Refund or handle by hand.`
+        + (change.test ? ' (TEST)' : ''));
+      return reply(200, { written: false, reason: 'too_late', detail: late.reason });
+    }
 
     const result = await deps.applyOrderDesk(change);
     if (!result.applied && result.skipped !== 'duplicate') {

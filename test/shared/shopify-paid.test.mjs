@@ -13,12 +13,14 @@ const event = (payload, { topic = 'orders/paid', hmac } = {}) => {
 const CHANGE = { orderName: 'S64262', ref: 'CHG-1', orderDeskId: '49', from: 'FedEx Ground', to: 'FedEx 3-Days',
   shippingCents: 1738, taxCents: 104, status: 'pending' };
 
-function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground' } } = {}) {
-  const log = { applied: [], done: [], chat: [] };
+function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground' }, allowed = { allowed: true } } = {}) {
+  const log = { applied: [], done: [], chat: [], attention: [] };
   const handler = makePaidHandler({
     webhookSecret: async () => SECRET,
     loadPending: async (name) => (change && name === change.orderName ? change : null),
     markDone: async (name, ref) => { log.done.push([name, ref]); },
+    markAttention: async (name, ref, why) => { log.attention.push([name, ref, why]); },
+    stillAllowed: async () => allowed,
     applyOrderDesk: async (c) => { log.applied.push(c.ref); return apply; },
     notify: async (name, text) => { log.chat.push(text); return { sent: true }; },
   });
@@ -67,6 +69,22 @@ describe('orders/paid', () => {
     const r = await handler(event({ name: 'S64262', financial_status: 'paid' }));
     assert.equal(r.statusCode, 500);
     assert.equal(log.done.length, 0);
+    assert.equal(log.chat.length, 0);
+  });
+
+  test('paid too late: nothing written, the team is told a refund is needed', async () => {
+    const { handler, log } = harness({ allowed: { allowed: false, reason: 'ground_after_production', label: 'Ready to ship' } });
+    const r = body(await handler(event({ name: 'S64262', financial_status: 'paid' })));
+    assert.deepEqual(r, { written: false, reason: 'too_late', detail: 'ground_after_production' });
+    assert.equal(log.applied.length, 0);
+    assert.deepEqual(log.attention, [['S64262', 'CHG-1', 'ground_after_production']]);
+    assert.equal(log.chat.length, 1);
+    assert.match(log.chat[0], /^S64262 PAID for FedEx Ground → FedEx 3-Days \(\+\$18\.42\) but the order is now Ready to ship — NOT applied\. Refund/);
+  });
+
+  test('a flagged change is not flagged again on a repeat webhook', async () => {
+    const { handler, log } = harness({ change: { ...CHANGE, status: 'attention' } });
+    assert.equal(body(await handler(event({ name: 'S64262', financial_status: 'paid' }))).ignored, 'already_flagged');
     assert.equal(log.chat.length, 0);
   });
 

@@ -20,6 +20,7 @@ import { applyShippingUpgrade } from '../src/shared/orderdesk-write.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../src/shared/orderdesk-fetch.mjs';
 import { sendChat } from '../src/shared/gchat.mjs';
 import { centsToDollars } from '../src/shared/money.mjs';
+import { stillAllowed } from '../src/shared/paid-recheck.mjs';
 
 const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const die = (m) => { console.error(m); process.exit(1); };
@@ -51,6 +52,8 @@ const handler = makePaidHandler({
   webhookSecret: async () => SECRET,
   loadPending: async (name) => (name === orderName ? store : null),
   markDone: async (_n, ref) => { store = { ...store, status: 'done', doneRef: ref }; },
+  markAttention: async (_n, ref, why) => { store = { ...store, status: 'attention', why }; console.log(`flagged: ${why}`); },
+  stillAllowed: async (c) => stillAllowed((await (await orderDeskFetch(`${ORDERDESK_API}/orders/${c.orderDeskId}`, { headers: orderDeskHeaders() })).json()).order, c),
   applyOrderDesk: async (c) => {
     process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
     try {
