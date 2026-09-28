@@ -5,6 +5,7 @@
 //        [--prep-method "FedEx Ground"]   set the service first (address untouched)
 //        [--deliver-to "addr1|addr2|city|ST|zip"]   pickup -> delivery (writes the address)
 //        [--notify]   post the Google Chat line after a successful write (GCHAT_WEBHOOK_URL)
+//        [--ref X] [--twice]   fixed payment reference; apply it a second time to test duplicates
 //   node scripts/upgrade-roundtrip.mjs restore <S-number> --yes
 //
 // apply    reads the order, saves the whole record to a snapshot file, runs the
@@ -120,14 +121,32 @@ if (mode === 'apply') {
     deliverTo = { address1, address2, city, province, zip, country: 'US' };
   }
 
+  const invoiceRef = arg('ref') ?? `TEST-${Date.now()}`;
   const r = await applyShippingUpgrade({
     orderDeskId: before.id, orderName, toMethod: to, amount, tax,
-    invoiceRef: `TEST-${Date.now()}`, storeId, apiKey, deliverTo,
+    invoiceRef, storeId, apiKey, deliverTo,
   });
   delete process.env.ORDERDESK_UPGRADE_WRITES;
   if (!r.applied) die(`not applied: ${JSON.stringify(r)}`);
 
-  show('AFTER', await readOrder(before.id));
+  const after = await readOrder(before.id);
+  show('AFTER', after);
+
+  // --twice: the same payment delivered again, as Shopify sometimes does.
+  // The second run must find its own note and change nothing.
+  if (process.argv.includes('--twice')) {
+    process.env.ORDERDESK_UPGRADE_WRITES = 'enabled';
+    const again = await applyShippingUpgrade({
+      orderDeskId: before.id, orderName, toMethod: to, amount, tax,
+      invoiceRef, storeId, apiKey, deliverTo,
+    });
+    delete process.env.ORDERDESK_UPGRADE_WRITES;
+    const second = await readOrder(before.id);
+    show(`SECOND RUN, same ref ${invoiceRef}: ${again.applied ? 'APPLIED AGAIN' : `skipped (${again.skipped ?? again.error})`}`, second);
+    const same = WATCHED.every((k) => String(second[k]) === String(after[k]))
+      && (second.order_notes ?? []).length === (after.order_notes ?? []).length;
+    console.log(same && !again.applied ? '\nDuplicate refused: nothing changed.' : '\nDUPLICATE WAS APPLIED — totals changed.');
+  }
 
   // --notify: the Google Chat line, sent only because the write succeeded.
   // The webhook comes from GCHAT_WEBHOOK_URL and is never printed.
