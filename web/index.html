@@ -337,12 +337,51 @@ async function demoMove(o,dir){
   await loadCounts();
   showDetail(o.orderName); // reopen on its new folder
 }
+/** Called as each missing thumbnail removes itself; the last one explains. */
+function proofGone(){
+  const box=document.getElementById('proofs'); if(!box) return;
+  if(!box.querySelector('.proofitem')){ const n=box.querySelector('.noproof'); if(n) n.style.display='block'; }
+}
 async function showDetail(name){
   let o; try { o=await api(`/orders/${encodeURIComponent(name)}`); } catch(e){ return; }
   const f=FMAP[o.status]||{name:o.status,color:'--muted'};
   const items=(o.items||[]).map(it=>`<div style="font-size:13px;padding:4px 0;color:var(--muted)">
     <b style="color:var(--ink)">${esc(it.quantity)}× ${esc(it.name||it.sku)}</b> — ${esc(it.width)}×${esc(it.height)} ${esc(it.unit||'ft')}, ${esc((it.finishingRaw)||'')}</div>`).join('');
-  const proofUrl = CONFIG.cdnBase ? `${CONFIG.cdnBase}/${encodeURIComponent(name)}/` : null;
+  // The proof files, named exactly as proofFiles() in
+  // src/functions/proof-approval/core.mjs builds them for the customer page:
+  // `{order}/{itemNo}-1v1.tif_review.jpg` and friends on the DZI CDN.
+  //
+  // This used to link `${cdnBase}/${order}/` -- an S3 "folder", which is not an
+  // object, so S3 answered AccessDenied for EVERY order, processed or not. And
+  // it was shown whenever needsProof was true, which only means an order WILL
+  // need a proof: S64494, sitting In Queue and never processed, got the link.
+  //
+  // Staff do not get the customer page: that one has an Approve button, and a
+  // click there resumes the real workflow on the customer's behalf. Here each
+  // item's own thumbnail is shown and links to its full review image. Whether a
+  // proof exists is decided by the file loading, not by guessing from status --
+  // a thumbnail that 403s simply removes itself.
+  const proofBase = CONFIG.cdnBase ? String(CONFIG.cdnBase).replace(/\/+$/,'') : '';
+  const proofItems = (proofBase && !o.mirror) ? (o.items||[]).map((it,i)=>{
+    const itemNo = it.itemNo ?? i+1;
+    const prefix = `${proofBase}/${encodeURIComponent(name)}/${encodeURIComponent(`${itemNo}-1v1.tif`)}`;
+    return { itemNo, label: it.name||it.sku||`Item ${itemNo}`,
+             thumb: `${prefix}_thumbnail.jpg`, review: `${prefix}_review.jpg` };
+  }) : [];
+  const proofSection = !o.needsProof ? ''
+    : o.mirror
+      ? `<p class="noproof" style="margin-top:12px;font-size:13px;color:var(--muted)">No proof from this system — this order is shown for reference only and is being handled by Linh's program.</p>`
+      : !proofItems.length ? ''
+      : `<div id="proofs" style="margin-top:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Proof</div>
+          ${proofItems.map(p=>`<a class="proofitem" href="${esc(p.review)}" target="_blank" rel="noopener"
+               style="display:inline-block;margin:0 8px 8px 0;text-align:center;font-size:12px;color:var(--accent);text-decoration:none">
+               <img src="${esc(p.thumb)}" alt="" loading="lazy"
+                    style="display:block;max-width:140px;max-height:140px;border:1px solid var(--line);border-radius:6px;background:#fff"
+                    onerror="this.closest('.proofitem').remove();proofGone()">
+               ${esc(p.itemNo)}. open ↗</a>`).join('')}
+          <p class="noproof" style="display:none;font-size:13px;color:var(--muted)">No proof has been generated for this order yet.</p>
+        </div>`;
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
   // Demo controls: step this synthetic order forward/back through the pipeline.
@@ -367,7 +406,7 @@ async function showDetail(name){
       <dt>Created</dt><dd>${fmtDate(o.createdAt)}</dd>
     </dl>
     <div style="border-top:1px solid var(--line);padding-top:12px">${items||'<span style="color:var(--faint)">No line items</span>'}</div>
-    ${proofUrl&&o.needsProof?`<p style="margin-top:12px"><a href="${proofUrl}" target="_blank" rel="noopener" style="color:var(--accent)">Open proof viewer ↗</a></p>`:''}
+    ${proofSection}
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
       <div class="err" id="actErr"></div></div>`:''}

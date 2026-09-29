@@ -386,22 +386,43 @@ function extensionFromUrl(url) {
  */
 function extensionFromShopify(url) {
   const lastSegment = (s) => decodeURIComponent(String(s).split('/').pop()).replace(/\s+/g, '');
+  const escaped = escapeHashInFilename(url);
   let fileName;
   try {
-    fileName = lastSegment(new URL(url).pathname);
+    fileName = lastSegment(new URL(escaped).pathname);
   } catch {
-    fileName = lastSegment(String(url ?? '').split('?')[0]);
+    fileName = lastSegment(String(escaped).split('?')[0]);
   }
   return fileName && fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : null;
 }
 
 /** Legacy sanitizeFileLink (Shopify path only): percent-encode the artwork link. */
+/**
+ * A literal `#` in an upload URL is part of the FILENAME, not a fragment.
+ *
+ * The store builds upload URLs from the customer's own file name without
+ * escaping it, so `Banner #6.jpg` arrives as `.../Banner #6.jpg`. Every URL
+ * parser — ours and legacy's — reads that `#` as the start of a fragment and
+ * throws the rest away: the pathname ends at `Banner `, there is no extension,
+ * and the order is called missing-file. S63815 on 2026-09-26 was 18 vinyl
+ * banners with 18 perfectly good .jpg files, all sent to manual for it.
+ *
+ * Fixing only the extension is worse than not fixing it: the order would clear
+ * the gate and then resize would request `.../Banner%20` and die on a 404. So
+ * both the extension and the download URL go through here. An S3 object URL
+ * never carries a meaningful fragment, so no information is lost.
+ */
+function escapeHashInFilename(url) {
+  return String(url ?? '').replace(/#/g, '%23');
+}
+
 function sanitizeFileLink(fileLink) {
   if (!fileLink) return fileLink;
+  const escaped = escapeHashInFilename(fileLink);
   try {
-    return new URL(fileLink).href;
+    return new URL(escaped).href;
   } catch {
-    return encodeURI(String(fileLink).trim());
+    return encodeURI(String(escaped).trim()).replace(/%2523/g, '%23');
   }
 }
 
@@ -422,7 +443,17 @@ function collectArtwork(vl, metadata, variant) {
     // hands the order to sales rather than picking one.
     const fileLink = vl?.['Uploaded File'] || vl?.['UPLOADED FILE'];
     if (!fileLink) {
-      if (vl?.['Uploaded File 1']) return { ...none, hasMultipleFiles: true };
+      // Numbered uploads mean several files, in whatever case the store wrote
+      // them. Legacy checks only `Uploaded File 1` (ShopifyDetails.mjs:216), so
+      // `UPLOADED FILE 1..N` — which the store does emit — falls through to
+      // "missing file" there and did here too. S63808, S63777 and S63752 on
+      // 2026-09-26 carried 3 to 5 files each and were all reported as having
+      // none. This is a DELIBERATE divergence from legacy, approved by Kai: the
+      // order now goes to sales as multiple-files rather than to manual as
+      // missing-file. Both reach a person; only the folder differs, and this
+      // one is the true description of the order.
+      const numbered = Object.keys(vl ?? {}).some((key) => /^uploaded file \d+$/i.test(key.trim()));
+      if (numbered) return { ...none, hasMultipleFiles: true };
       return { ...none, isMissingFile: true };
     }
     const extension = extensionFromShopify(fileLink);
