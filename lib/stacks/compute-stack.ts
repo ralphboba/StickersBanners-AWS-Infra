@@ -8,7 +8,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { EnvironmentConfig } from '../config/types';
-import { secretsArnPattern } from '../config/secrets';
+import { secretsArnPattern, secretsPrefix } from '../config/secrets';
 import { trialConfig } from '../config/trial';
 
 export interface ComputeStackProps extends cdk.StackProps {
@@ -131,13 +131,31 @@ export class ComputeStack extends cdk.Stack {
     this.orderApi = new lambda.Function(this, 'OrderApi', {
       ...base,
       functionName: `${config.prefix}-order-api`,
-      code: lambda.Code.fromAsset(path.join(SRC, 'order-api')),
-      environment: { JOBS_TABLE: jobsTable.tableName },
+      // Bundles src root for shared/approval-link + shared/secrets.
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-api/index.handler',
+      environment: { JOBS_TABLE: jobsTable.tableName, SB_ENV: config.env },
       description: 'Order/job status lookups + demo-only status moves',
     });
     // Read for lookups; write is used ONLY by the demo-only /move route, which is
     // hard-guarded in the handler to DEMO-*/ZZ-* orders.
     jobsTable.grantReadWriteData(this.orderApi);
+    // Mints the customer approval link for the dashboard. Only the approval
+    // group — this function has no business reading OrderDesk/FTP/Zendesk keys.
+    this.orderApi.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'ReadApprovalSettings',
+      actions: ['ssm:GetParametersByPath', 'ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${secretsPrefix(config.env)}/approval`,
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${secretsPrefix(config.env)}/approval/*`,
+      ],
+    }));
+    this.orderApi.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'DecryptViaSsm',
+      actions: ['kms:Decrypt'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
+    }));
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.

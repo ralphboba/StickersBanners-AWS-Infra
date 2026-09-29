@@ -3,7 +3,8 @@
 // Read-only order lookups from the DynamoDB jobs table, behind the
 // Cognito-protected HTTP API:
 //   GET /orders?status=<status>   list orders in a status (GSI1 query)
-//   GET /orders/{name}            one order's META record
+//   GET /orders/{name}            one order's META record (+ customerProofUrl
+//                                 while it waits for the customer)
 //
 // Also callable directly with { orderName } for scripts/tests.
 
@@ -11,6 +12,8 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient, GetCommand, QueryCommand, UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { getGroup } from '../../shared/secrets.mjs';
+import { customerProofLink } from './customer-link.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
@@ -81,6 +84,16 @@ export async function handler(event) {
       new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } }),
     );
     if (!res.Item) return resp(404, { error: 'not found', orderName });
+    // The customer approval page, so staff can open what the customer sees.
+    // Never fails the lookup: no settings, no link.
+    if (res.Item.status === 'proofing') {
+      try {
+        const url = customerProofLink(res.Item, await getGroup('approval'));
+        if (url) return resp(200, { ...res.Item, customerProofUrl: url });
+      } catch (err) {
+        console.warn('could not mint the customer proof link', err);
+      }
+    }
     return resp(200, res.Item);
   }
 

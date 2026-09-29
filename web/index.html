@@ -356,11 +356,14 @@ async function showDetail(name){
   // it was shown whenever needsProof was true, which only means an order WILL
   // need a proof: S64494, sitting In Queue and never processed, got the link.
   //
-  // Staff do not get the customer page: that one has an Approve button, and a
-  // click there resumes the real workflow on the customer's behalf. Here each
-  // item's own thumbnail is shown and links to its full review image. Whether a
-  // proof exists is decided by the file loading, not by guessing from status --
-  // a thumbnail that 403s simply removes itself.
+  // Each item's own thumbnail is shown and links to its full review image.
+  // Whether a proof exists is decided by the file loading, not by guessing from
+  // status -- a thumbnail that 403s simply removes itself.
+  //
+  // Below them, while the order waits in Proofing, the customer's own approval
+  // page (o.customerProofUrl, minted by order-api): the exact page the proof
+  // email links to, guides and all. Its Approve button is the customer's, so
+  // pressing it counts the same as "Send to production" -- labelled as such.
   const proofBase = CONFIG.cdnBase ? String(CONFIG.cdnBase).replace(/\/+$/,'') : '';
   const proofItems = (proofBase && !o.mirror) ? (o.items||[]).map((it,i)=>{
     const itemNo = it.itemNo ?? i+1;
@@ -381,6 +384,10 @@ async function showDetail(name){
                     onerror="this.closest('.proofitem').remove();proofGone()">
                ${esc(p.itemNo)}. open ↗</a>`).join('')}
           <p class="noproof" style="display:none;font-size:13px;color:var(--muted)">No proof has been generated for this order yet.</p>
+          ${o.customerProofUrl?`<a href="${esc(o.customerProofUrl)}" target="_blank" rel="noopener"
+               style="display:block;margin-top:6px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-weight:600;font-size:13px;text-decoration:none;text-align:center">
+               Open customer proof page ↗</a>
+             <div style="margin-top:6px;font-size:12px;color:var(--muted)">The page the customer sees. Its Approve button counts as the customer's approval.</div>`:''}
         </div>`;
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
