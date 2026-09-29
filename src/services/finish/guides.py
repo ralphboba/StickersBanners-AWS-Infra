@@ -26,6 +26,15 @@ VERSION = 1
 DPI = 72
 
 
+def guides_key(order_name, item_no):
+    """Where the sidecar lives in the finished bucket.
+
+    NOT under {order}/: that folder is the print folder, and the transfer step
+    sends everything in it to the facility. Guides are for the proof page only.
+    """
+    return f"_guides/{order_name}/{item_no}.json"
+
+
 def compute_guides(width, height, finishing_obj, grommet=None, pockets=None):
     grommet = grommet or GrommetsAdder()
     pockets = pockets or PolePocketsAdder()

@@ -93,5 +93,14 @@ class GuidesTest(unittest.TestCase):
         self.assertEqual({st["side"] for st in g["strips"]}, {"top", "bottom"})
 
 
+class GuidesKeyTest(unittest.TestCase):
+    def test_sidecar_is_not_in_the_print_folder(self):
+        # ftp/main.py sends everything under {order}/ to the facility.
+        from guides import guides_key
+        key = guides_key("S64570", "1-1")
+        self.assertFalse(key.startswith("S64570/"))
+        self.assertEqual(key, "_guides/S64570/1-1.json")
+
+
 if __name__ == "__main__":
     unittest.main()

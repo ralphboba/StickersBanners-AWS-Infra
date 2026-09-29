@@ -16,9 +16,19 @@ import unittest.mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "services", "ftp"))
 
-from guards import (transfers_enabled, is_demo_order, remote_path,  # noqa: E402
+from guards import (transfers_enabled, is_demo_order, is_transferable, remote_path,  # noqa: E402
                     ftp_base_path, review_mode, transfer_destination,
                     TRANSPORTS, DIVERTIBLE)
+
+
+class WhatGetsSent(unittest.TestCase):
+    def test_print_files_and_proof_jpgs_are_sent(self):
+        for f in ["S64570-1-1 .tif", "S64570-2-1 PPTB.tif", "1-1.jpg"]:
+            self.assertTrue(is_transferable(f), f)
+
+    def test_proof_page_guides_never_reach_the_facility(self):
+        self.assertFalse(is_transferable("1-1.guides.json"))
+        self.assertFalse(is_transferable(""))
 
 
 class TransferSwitch(unittest.TestCase):

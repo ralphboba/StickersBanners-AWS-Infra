@@ -24,7 +24,8 @@ import boto3
 from jobload import load_job
 import ftputil
 
-from guards import is_demo_order, remote_path, transfer_destination, transfers_enabled
+from guards import (is_demo_order, is_transferable, remote_path, transfer_destination,
+                    transfers_enabled)
 from drive_helper import upload_print_folder
 
 
@@ -59,7 +60,7 @@ def download_finished(order_name, dest_dir):
     for page in paginator.paginate(Bucket=FINISHED_BUCKET, Prefix=f"{order_name}/"):
         for obj in page.get("Contents", []):
             fname = obj["Key"].split("/", 1)[1]
-            if not fname:
+            if not is_transferable(fname):
                 continue
             s3.download_file(FINISHED_BUCKET, obj["Key"], os.path.join(local_dir, fname))
             count += 1

@@ -25,6 +25,17 @@ def is_demo_order(name):
     return isinstance(name, str) and name.upper().startswith(("DEMO-", "ZZ-"))
 
 
+def is_transferable(fname):
+    """Whether a file in finished/{order}/ belongs in the facility's folder.
+
+    Everything there is sent, so anything that is NOT for production must be
+    refused here. The proof-page guides sidecar (finish/guides.py) now lives in
+    _guides/, but orders finished on 2026-09-29 before that move still carry a
+    {item}.guides.json in the print folder.
+    """
+    return bool(fname) and not fname.endswith(".guides.json")
+
+
 def transfers_enabled(env=None):
     """Is the real production upload switched on? Defaults to OFF.
 

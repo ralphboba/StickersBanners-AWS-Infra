@@ -26,7 +26,7 @@ from PIL import Image
 
 from finishing_config import build_finishing_obj, final_tif_name
 from grommets import GrommetsAdder
-from guides import compute_guides
+from guides import compute_guides, guides_key
 from pole_pockets import PolePocketsAdder
 
 Image.MAX_IMAGE_PIXELS = None
@@ -81,7 +81,7 @@ def set_stage(order_name, stage):
 
 
 def upload_guides(order_name, item_no, src, finishing_obj):
-    """Sidecar for the proof page: {order}/{item_no}.guides.json.
+    """Sidecar for the proof page, kept out of the print folder (guides_key).
 
     Uses its own adder instances, so the print file's are never touched.
     Never fails the job — the page works without it.
@@ -90,7 +90,7 @@ def upload_guides(order_name, item_no, src, finishing_obj):
         with Image.open(src) as img:
             width, height = img.size
         guides = compute_guides(width, height, finishing_obj)
-        s3.put_object(Bucket=FINISHED_BUCKET, Key=f"{order_name}/{item_no}.guides.json",
+        s3.put_object(Bucket=FINISHED_BUCKET, Key=guides_key(order_name, item_no),
                       Body=json.dumps(guides).encode(), ContentType="application/json")
     except Exception as exc:
         print(f"finish: guides skipped for {order_name}/{item_no}: {exc}", file=sys.stderr)

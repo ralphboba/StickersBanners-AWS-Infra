@@ -82,7 +82,8 @@ def copy_guides(order_name, item_no, dest):
     if not FINISHED_BUCKET:
         return
     try:
-        s3.download_file(FINISHED_BUCKET, f"{order_name}/{item_no}.guides.json", dest)
+        # Same key as finish/guides.py guides_key(): outside the print folder.
+        s3.download_file(FINISHED_BUCKET, f"_guides/{order_name}/{item_no}.json", dest)
     except Exception as exc:
         print(f"proof: no guides for {order_name}/{item_no}: {exc}", file=sys.stderr)
 
