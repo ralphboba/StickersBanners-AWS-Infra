@@ -12,6 +12,7 @@ import {
   DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { getSecret } from '../../shared/secrets.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
@@ -32,6 +33,7 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
+const shopifyCreds = makeShopifyCredentials({ getSecret });
 const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 
 // OrderDesk folder id -> dashboard status, for the display-only mirror.
@@ -183,10 +185,7 @@ export async function handler(event = {}) {
     // lets a customer open their own order.
     let shopify = null;
     try {
-      shopify = {
-        shop: await getSecret('shopify', 'shop-domain'),
-        token: await getSecret('shopify', 'admin-token'),
-      };
+      shopify = await shopifyCreds();
     } catch {
       console.warn(JSON.stringify({ msg: 'Shopify credentials absent; skipping order-status links' }));
     }

@@ -22,6 +22,7 @@ import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
 import { fetchOrderForPricing, quoteShippingChange, deliveryEstimates } from '../../shared/shopify-pricing.mjs';
 import { getSecret } from '../../shared/secrets.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { makeHandler } from './routes.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -35,13 +36,7 @@ async function loadRow(orderName) {
   return res?.Item;
 }
 
-async function shopifyCreds() {
-  const [shop, token] = await Promise.all([
-    getSecret('shopify', 'shop-domain'),
-    getSecret('shopify', 'admin-token'),
-  ]);
-  return { shop, token };
-}
+const shopifyCreds = makeShopifyCredentials({ getSecret });
 
 // Every Shopify failure becomes "no price", never an error page and never a
 // guess: a page that shows nothing is a nuisance; a number we cannot bill is

@@ -225,12 +225,12 @@ Kai의 사다리 규칙("기존 생산팀 유지")이 우리를 여기서 완전
 - [x] **C5** 실제 문자열 확인 — `FedEx Ground / 3-Days / 2-Days / 1-Day`
 - [ ] **C5b** `routing.mjs`의 `'2-day Shipping'` 수정 (인테이크 go-live 전)
 - [ ] **C4** OrderDesk rate limit이 키 단위인지 스토어 단위인지 확인
-- [ ] **C4b** Shopify **전용 커스텀 앱** 생성 — OrderDesk 연동 토큰 재사용 금지.
-      스코프는 `read_orders` · `read_customers` · `write_draft_orders`
-      (`draftOrderCalculate`는 저장을 안 하지만 Shopify가 이 스코프를 요구한다 —
-      [`pricing-and-tax.md`](pricing-and-tax.md) §5). 토큰은 SSM
-      `/sb/dev/shopify/admin-token`, 도메인은 `/sb/dev/shopify/shop-domain`.
-      **채팅에 붙여넣지 말 것.**
+- [x] **C4b** Shopify **전용 앱** 생성 — 2026-09-29 Dev Dashboard에 "Manage My Order Button"
+      (수동 생성, 임베드 없음). OrderDesk 연동 토큰 재사용 금지. 스코프 `read_orders` ·
+      `read_customers` · `write_draft_orders` · `write_order_edits` · `write_orders`.
+      고정 토큰이 없어서 Client ID/secret을 런타임에 ~24시간 토큰으로 교환한다
+      (`shopify-auth.mjs`). SSM `/sb/<env>/shopify/{shop-domain,client-id,client-secret}`.
+      client-secret은 이 앱 웹훅(orders/paid)의 서명 키이기도 하다. **채팅에 붙여넣지 말 것.**
 - [x] **C3** `applyShippingUpgrade`에 재조회·병합 — 완료
 - [ ] **C3b** `applyExpressUpgrade`(레거시 경로)에도 같은 수정
 - [ ] 레거시가 도는 시간대에 미러를 10분 주기로 하루 돌려보고 429 로그 확인

@@ -33,6 +33,14 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   { group: 'orderdesk', key: 'store-id', description: 'OrderDesk store id' },
   { group: 'orderdesk', key: 'webhook-secret', description: 'Shared secret OrderDesk sends with each webhook (validated by the webhook Lambda)' },
 
+  // Shopify — our own Dev Dashboard app "Manage My Order Button" (never OrderDesk's
+  // integration token). Client credentials are traded for a ~24h access token
+  // at runtime (src/shared/shopify-auth.mjs); the client secret also verifies
+  // the app's orders/paid webhook.
+  { group: 'shopify', key: 'shop-domain', description: 'Shopify shop domain (stickersbanners.myshopify.com)' },
+  { group: 'shopify', key: 'client-id', description: 'Shopify app Client ID (Dev Dashboard)' },
+  { group: 'shopify', key: 'client-secret', description: 'Shopify app Client secret — token exchange + webhook HMAC' },
+
   // Zendesk (support ticket integration)
   { group: 'zendesk', key: 'subdomain', description: 'Zendesk subdomain (e.g. stickersbanners)' },
   { group: 'zendesk', key: 'email', description: 'Zendesk API user email' },

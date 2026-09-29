@@ -10,16 +10,14 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 
 import { getSecret } from '../../shared/secrets.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
 import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
-const creds = async () => {
-  const [shop, token] = await Promise.all([getSecret('shopify', 'shop-domain'), getSecret('shopify', 'admin-token')]);
-  return { shop, token };
-};
+const creds = makeShopifyCredentials({ getSecret });
 
 export const handler = makeHandler({
   loadRow: async (orderName) => (await ddb.send(new GetCommand({

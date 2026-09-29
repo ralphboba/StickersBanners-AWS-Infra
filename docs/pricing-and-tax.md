@@ -187,3 +187,11 @@ S64178은 할인 전 $127.36(→ $25.15)이지만 체크아웃은 할인 후 $11
 
 남은 일: 결제 알림 Lambda 배포(CDK + Shopify 웹훅), 커스텀 앱 권한 `write_order_edits`·`write_orders`,
 미결제 수정 자동 되돌리기, 픽업 → 배송 전환의 Order Edit 전환(주소 변경 선행 필요).
+
+## 8. Shopify 앱 (2026-09-29)
+
+Dev Dashboard에 **"Manage My Order Button"** 앱을 수동으로 만들었다(CLI 아님, 관리자 임베드 없음,
+스코프 5개: `read_orders` · `read_customers` · `write_draft_orders` · `write_order_edits` · `write_orders`).
+Saturday Delivery와 합치지 않은 이유: 쓰기 권한이 이미 운영 중인 앱에 섞이지 않고, 문제가 생기면 이 앱만
+끊을 수 있다. 새 앱에는 고정 토큰이 없어서 Lambda가 Client ID/secret을 ~24시간 토큰으로 교환해 메모리에
+두고 만료 10분 전에 갱신한다(`shopify-auth.mjs`). 웹훅 서명 키도 같은 client-secret.

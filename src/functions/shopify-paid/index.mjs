@@ -4,7 +4,7 @@
 // the customer's order edit is committed:
 //   { ref, orderDeskId, from, to, shippingCents, taxCents, deliverTo?, status }
 //
-// Secrets (SSM, never logged): /sb/<env>/shopify/webhook-secret,
+// Secrets (SSM, never logged): /sb/<env>/shopify/client-secret (signs the webhook),
 // /sb/<env>/orderdesk/{store-id,api-key}, /sb/<env>/gchat/webhook-url.
 // Not yet deployed: the CDK route and the Shopify webhook subscription are the
 // remaining steps (docs/pricing-and-tax.md).
@@ -25,7 +25,8 @@ const JOBS_TABLE = process.env.JOBS_TABLE;
 const key = (orderName) => ({ PK: `ORDER#${orderName}`, SK: 'CHANGE' });
 
 export const handler = makePaidHandler({
-  webhookSecret: () => getSecret('shopify', 'webhook-secret'),
+  // Webhooks this app subscribes to are signed with the app's Client secret.
+  webhookSecret: () => getSecret('shopify', 'client-secret'),
   loadPending: async (orderName) => (await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: key(orderName) })))?.Item ?? null,
   markDone: async (orderName, ref, result) => {
     await ddb.send(new UpdateCommand({

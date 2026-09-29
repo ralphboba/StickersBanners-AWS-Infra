@@ -5,6 +5,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { getSecret } from '../../shared/secrets.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing } from '../../shared/shopify-pricing.mjs';
 import { stageShippingChange, commitShippingChange } from '../../shared/shopify-order-edit.mjs';
 import { sendChat } from '../../shared/gchat.mjs';
@@ -12,10 +13,7 @@ import { makeExpiryJob } from './core.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
-const creds = async () => {
-  const [shop, token] = await Promise.all([getSecret('shopify', 'shop-domain'), getSecret('shopify', 'admin-token')]);
-  return { shop, token };
-};
+const creds = makeShopifyCredentials({ getSecret });
 const setStatus = (change, status, extra = {}) => ddb.send(new UpdateCommand({
   TableName: JOBS_TABLE, Key: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE' },
   UpdateExpression: `SET #s = :s, ${Object.keys(extra).map((k) => `${k} = :${k}`).concat('updatedAt = :at').join(', ')}`,
