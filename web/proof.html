@@ -38,7 +38,7 @@
 <style>
   :root{
     --ink:#16181d; --muted:#5b6270; --line:#e3e6ec; --bg:#f6f7f9;
-    --brand:#0f62fe; --ok:#0a7c42; --warn:#a4400b;
+    --brand:#0f62fe; --ok:#0a7c42; --warn:#a4400b; --stage:#cdd1d8;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
@@ -54,8 +54,10 @@
   .proof .cap{color:var(--muted);font-size:13px;margin:8px 2px 0}
   /* Deep-zoom viewer. Fixed height so the page does not jump as tiles load,
      and tall enough that 1:1 on a print file shows a useful amount of it. */
+  /* Grey, not white: a white banner on a white stage has no visible edge, and
+     the edge is exactly what the customer needs to see. */
   .viewer{position:relative;height:min(70vh,560px);border:1px solid var(--line);
-          border-radius:6px;background:#fff;overflow:hidden}
+          border-radius:6px;background:var(--stage);overflow:hidden}
   /* OpenSeadragon overwrites this element's `position` with `relative` when it
      takes it over, which throws away `inset:0` and collapses the box to zero
      height -- its own container is height:100% of that, so the canvas comes
@@ -73,6 +75,29 @@
           padding:0 0 16px;cursor:zoom-in}
   .opener span{background:rgba(22,24,29,.82);color:#fff;font-size:13px;font-weight:600;
                padding:9px 16px;border-radius:999px}
+  /* Flat (no zoom) proof with guides: same grey stage, room for the dimensions. */
+  .flatframe{background:var(--stage);border:1px solid var(--line);border-radius:6px;
+             padding:40px 20px 20px 44px}
+  .flatstage{position:relative;width:100%}
+  .flatstage img{position:absolute;display:block}
+  .guidesvg{overflow:visible;pointer-events:none}
+  .guidesvg text{font-family:inherit;font-weight:600}
+  .flatstage .guidesvg{position:absolute;inset:0;width:100%;height:100%}
+  .legend{margin:10px 2px 0;font-size:13px;color:var(--muted)}
+  .legend .size{color:var(--ink);font-size:14px;margin:0 0 6px}
+  .legend ul{list-style:none;margin:0;padding:0}
+  .legend li{display:flex;gap:10px;align-items:flex-start;margin:4px 0}
+  .legend i{flex:none;display:inline-block;width:18px;height:14px;margin-top:3px}
+  .legend .sw-edge{border:2px solid var(--ink);background:#fff}
+  .legend .sw-grommet{width:14px;border-radius:50%;background:#9aa0a8;border:1.5px solid var(--ink);
+                      box-shadow:inset 0 0 0 3px #9aa0a8,inset 0 0 0 7px var(--stage)}
+  .legend .sw-strip{border:1px dashed var(--ink);
+                    background:repeating-linear-gradient(135deg,#fff 0 3px,#b7bcc4 3px 4px)}
+  .legend .sw-cut{background:rgba(214,40,40,.45);border:1px solid #b42318}
+  .legend label{display:inline-flex;gap:6px;align-items:center;margin-top:6px;color:var(--ink);cursor:pointer}
+  .legend .warn{color:#b42318}
+  .wysiwyg{border:1px solid #bcd0f7;background:#f1f6ff;border-radius:8px;padding:12px 14px;margin-bottom:16px}
+  .wysiwyg b{display:block;margin-bottom:2px}
   .tip{background:#fffbe9;border:1px solid #f0e3b0;border-radius:8px;padding:12px 14px;margin-bottom:20px}
   button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:13px 22px;cursor:pointer}
   .approve{background:var(--brand);color:#fff;width:100%;font-size:16px}
@@ -122,6 +147,13 @@
 
     <div class="card">
       <div id="approveBox">
+        <div class="wysiwyg">
+          <b>What you see is what we print.</b>
+          Your artwork is printed exactly as it appears in this proof &mdash; the
+          same size, proportions and layout, edge to edge. We do not stretch,
+          move or fix anything after you approve, so please check it carefully.
+          The outline, grommet and pocket markings are guides on this page only.
+        </div>
         <button id="approve" class="approve">Approve this proof</button>
         <p class="note">
           Approving sends the order straight to production, and all proofs on
@@ -153,7 +185,21 @@ function problem(title, text) {
   $('problem').hidden = false;
 }
 
-function renderProofs(proofs) {
+/** Finishing guides for each proof, or null. Never blocks the proof itself. */
+async function loadGuides(proofs) {
+  return Promise.all((proofs || []).map(async (p) => {
+    if (!p.guides) return null;
+    try {
+      const r = await fetch(p.guides);
+      if (!r.ok) return null;
+      const g = await r.json();
+      return g && g.face && g.face.w > 0 && g.face.h > 0 ? g : null;
+    } catch { return null; }
+  }));
+}
+
+function renderProofs(proofs, guides) {
+  guides = guides || [];
   const box = $('proofs');
   box.innerHTML = '';
   if (!proofs || !proofs.length) {
@@ -183,14 +229,21 @@ function renderProofs(proofs) {
 
     // Deep zoom when the library and the tiles are both there; otherwise the
     // flat review image, which is what this page showed before zoom existed.
+    const g = guides[i] || null;
+    let overlay = null;
     if (window.OpenSeadragon && p.dzi) {
-      const wrap = deepZoom(p, i === 0);
+      const wrap = deepZoom(p, i === 0, g);
       if (i === 0) pending.push(wrap);
       fig.appendChild(wrap);
+      overlay = wrap;
+    } else if (g) {
+      overlay = flatFrame(p, g, fig, box);
+      fig.appendChild(overlay);
     } else {
       fig.appendChild(flatImage(p, fig, box));
     }
     fig.appendChild(cap);
+    if (g) fig.appendChild(legend(g, overlay));
     box.appendChild(fig);
   });
 
@@ -236,7 +289,7 @@ function oneToOneZoom(viewer) {
   return item.source.dimensions.x / (dpr * viewer.container.clientWidth);
 }
 
-function deepZoom(p, openNow) {
+function deepZoom(p, openNow, g) {
   const wrap = document.createElement('div');
 
   const stage = document.createElement('div');
@@ -275,7 +328,12 @@ function deepZoom(p, openNow) {
       constrainDuringPan: true,
     });
 
-    viewer.addHandler('open', () => { bar.hidden = false; readout(); });
+    host.__viewer = viewer; // lets scripts/proof-render-check.mjs measure it
+    viewer.addHandler('open', () => {
+      if (g) addGuideOverlay(viewer, g, wrap);
+      bar.hidden = false;
+      readout();
+    });
     // `zoom` fires when the spring is aimed at a new value, not when it gets
     // there, and readout() asks for the CURRENT zoom -- so on its own it always
     // printed the previous number. Clicking 100% left "13%" on screen while the
@@ -367,11 +425,301 @@ function deepZoom(p, openNow) {
   return wrap;
 }
 
-function show(data) {
+/* ---------------------------------------------------------------------------
+ * Finishing guides
+ *
+ * Drawn from {order}/{item}-1v1.tif.guides.json, which the finish service
+ * writes from the same code that builds the print file (finish/guides.py).
+ * Every coordinate is a print pixel at 72 per inch, face origin top-left, so
+ * the overlay is exact at any zoom: the outline IS the edge of the piece, and
+ * a pole pocket is drawn at its real 4.5 in, outside the artwork, because
+ * that is where the finisher adds it.
+ * ------------------------------------------------------------------------- */
+const SVGNS = 'http://www.w3.org/2000/svg';
+const INK = '#16181d';
+
+function inchText(px) {
+  const n = Math.round((px / 72) * 100) / 100;
+  return n + ' in';
+}
+
+function sizeText(w, h) {
+  const wi = Math.round((w / 72) * 100) / 100;
+  const hi = Math.round((h / 72) * 100) / 100;
+  let t = wi + ' × ' + hi + ' in';
+  if (wi % 12 === 0 && hi % 12 === 0) t += ' (' + wi / 12 + ' × ' + hi / 12 + ' ft)';
+  return t;
+}
+
+/** Face size plus how far the finishing reaches past each edge, in px. */
+function guideFrame(g) {
+  const f = { W: g.face.w, H: g.face.h, top: 0, bottom: 0, left: 0, right: 0 };
+  for (const st of g.strips || []) f[st.side] += st.depth;
+  f.x = -f.left;
+  f.y = -f.top;
+  f.w = f.W + f.left + f.right;
+  f.h = f.H + f.top + f.bottom;
+  return f;
+}
+
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+/**
+ * The guide drawing, in print pixels. Returns the <svg> and setScale(s), where
+ * s is screen CSS px per print px: line widths, marker sizes and text are
+ * re-sized from it so they stay readable at every zoom while their POSITIONS
+ * stay exact.
+ */
+function guideSvg(g) {
+  const f = guideFrame(g);
+  const svg = svgEl('svg', {
+    class: 'guidesvg',
+    viewBox: f.x + ' ' + f.y + ' ' + f.w + ' ' + f.h,
+    preserveAspectRatio: 'none',
+    'aria-hidden': 'true',
+  });
+  const sized = [];   // [element, attribute, screen px]
+  const size = (e, attr, px) => { sized.push([e, attr, px]); return e; };
+  const labels = [];  // [text element, room in print px, length in chars]
+
+  const defs = svgEl('defs', {}, svg);
+  const hatch = svgEl('pattern', { id: 'hatch' + Math.random().toString(36).slice(2),
+    patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+  size(hatch, 'width', 7); size(hatch, 'height', 7);
+  svgEl('rect', { x: -1e6, y: -1e6, width: 2e6, height: 2e6, fill: '#fff' }, hatch);
+  size(svgEl('line', { x1: 0, y1: -1e6, x2: 0, y2: 1e6, stroke: '#b7bcc4' }, hatch), 'stroke-width', 1.5);
+
+  // Strips added outside the face: pole pockets, retractable stand base.
+  const edge = { top: [0, 0, f.W, 0], bottom: [0, f.H, f.W, f.H],
+                 left: [0, 0, 0, f.H], right: [f.W, 0, f.W, f.H] };
+  for (const st of g.strips || []) {
+    const d = st.depth;
+    const r = { top: [0, -d, f.W, d], bottom: [0, f.H, f.W, d],
+                left: [-d, 0, d, f.H], right: [f.W, 0, d, f.H] }[st.side];
+    if (!r) continue;
+    const band = svgEl('rect', { x: r[0], y: r[1], width: r[2], height: r[3],
+      fill: 'url(#' + hatch.id + ')', stroke: INK }, svg);
+    size(band, 'stroke-width', 1);
+    const e = edge[st.side];
+    const fold = svgEl('line', { x1: e[0], y1: e[1], x2: e[2], y2: e[3], stroke: INK }, svg);
+    size(fold, 'stroke-width', 1.5);
+    size(fold, 'stroke-dasharray', '6 4');
+    const text = (st.kind === 'stand-base' ? 'INTO STAND BASE' : 'POLE POCKET')
+      + ' · ' + inchText(d) + ' · not visible';
+    const vertical = st.side === 'left' || st.side === 'right';
+    const cx = r[0] + r[2] / 2;
+    const cy = r[1] + r[3] / 2;
+    const t = svgEl('text', { x: cx, y: cy, fill: INK, 'text-anchor': 'middle',
+      'dominant-baseline': 'central',
+      transform: vertical ? 'rotate(-90 ' + cx + ' ' + cy + ')' : '' }, svg);
+    t.textContent = text;
+    size(t, 'font-size', 11);
+    labels.push([t, d, vertical ? f.H : f.W, text.length]);
+  }
+
+  // RET only: artwork taller than the stand is cut from the bottom.
+  if (g.cropped && g.cropped.px > 0) {
+    const c = g.cropped.px;
+    svgEl('rect', { x: 0, y: f.H - c, width: f.W, height: c, fill: 'rgba(214,40,40,.45)' }, svg);
+    const t = svgEl('text', { x: f.W / 2, y: f.H - c / 2, fill: '#7a1010',
+      'text-anchor': 'middle', 'dominant-baseline': 'central' }, svg);
+    t.textContent = 'CUT OFF · ' + inchText(c) + ' · not printed';
+    size(t, 'font-size', 11);
+    labels.push([t, c, f.W, t.textContent.length]);
+  }
+
+  // The edge of the printed piece.
+  const outline = svgEl('rect', { x: 0, y: 0, width: f.W, height: f.H, fill: 'none', stroke: INK }, svg);
+  size(outline, 'stroke-width', 2);
+
+  // Grommets: drawn at their real size (about 1/2 in across), never smaller
+  // than a visible dot.
+  const grommets = [];
+  for (const [x, y] of g.grommets || []) {
+    const ring = svgEl('circle', { cx: x, cy: y, fill: '#9aa0a8', stroke: INK }, svg);
+    const hole = svgEl('circle', { cx: x, cy: y, stroke: INK }, svg);
+    hole.style.fill = 'var(--stage)'; // a hole: the stage shows through
+    size(ring, 'stroke-width', 1.2);
+    size(hole, 'stroke-width', 0.8);
+    grommets.push([ring, hole]);
+  }
+
+  // Dimensions of the face, above and to the left of everything else.
+  const dimW = svgEl('g', {}, svg);
+  const dimH = svgEl('g', {}, svg);
+  const wText = svgEl('text', { fill: INK, 'text-anchor': 'middle' }, svg);
+  const hText = svgEl('text', { fill: INK, 'text-anchor': 'middle' }, svg);
+  wText.textContent = inchText(f.W);
+  hText.textContent = inchText(f.H);
+
+  function setScale(s) {
+    if (!(s > 0)) return;
+    const u = 1 / s; // print px per screen px
+    for (const [e, attr, px] of sized) {
+      e.setAttribute(attr, typeof px === 'string'
+        ? px.split(' ').map((n) => n * u).join(' ') : px * u);
+    }
+    // A label is shown only when it fits inside its band.
+    for (const [t, room, len, chars] of labels) {
+      t.style.display = room * s >= 15 && chars * 6.6 <= len * s ? '' : 'none';
+    }
+    const R = Math.max(18, 5 * u);
+    for (const [ring, hole] of grommets) {
+      ring.setAttribute('r', R);
+      hole.setAttribute('r', R * 0.5);
+    }
+    const gap = 14 * u;
+    const tick = 5 * u;
+    const yW = f.y - gap;
+    const xH = f.x - gap;
+    dimW.innerHTML = '';
+    dimH.innerHTML = '';
+    for (const [x1, y1, x2, y2] of [[0, yW, f.W, yW], [0, yW - tick, 0, yW + tick], [f.W, yW - tick, f.W, yW + tick]]) {
+      svgEl('line', { x1, y1, x2, y2, stroke: INK, 'stroke-width': u }, dimW);
+    }
+    for (const [x1, y1, x2, y2] of [[xH, 0, xH, f.H], [xH - tick, 0, xH + tick, 0], [xH - tick, f.H, xH + tick, f.H]]) {
+      svgEl('line', { x1, y1, x2, y2, stroke: INK, 'stroke-width': u }, dimH);
+    }
+    wText.setAttribute('font-size', 12 * u);
+    wText.setAttribute('x', f.W / 2);
+    wText.setAttribute('y', yW - 5 * u);
+    hText.setAttribute('font-size', 12 * u);
+    const hy = f.H / 2;
+    const hx = xH - 5 * u;
+    hText.setAttribute('x', hx);
+    hText.setAttribute('y', hy);
+    hText.setAttribute('transform', 'rotate(-90 ' + hx + ' ' + hy + ')');
+  }
+
+  return { svg, frame: f, setScale };
+}
+
+/** Attach the guides to an open OpenSeadragon viewer. */
+function addGuideOverlay(viewer, g, wrap) {
+  const d = guideSvg(g);
+  const f = d.frame;
+  const W = f.W; // viewport units: the image is 1 wide
+  viewer.addOverlay({
+    element: d.svg,
+    location: new OpenSeadragon.Rect(f.x / W, f.y / W, f.w / W, f.h / W),
+  });
+  // Fit shows the whole finished piece -- pockets included -- with room around
+  // it for the outline and dimensions, not just the artwork edge to edge.
+  // _setContentBounds is what OpenSeadragon itself calls with the image
+  // bounds; the build is vendored, so it cannot change under us.
+  const pad = 0.12 * Math.max(f.w, f.h);
+  if (typeof viewer.viewport._setContentBounds === 'function') {
+    viewer.viewport._setContentBounds(new OpenSeadragon.Rect(
+      (f.x - pad) / W, (f.y - pad) / W, (f.w + 2 * pad) / W, (f.h + 2 * pad) / W),
+      viewer.world.getContentFactor());
+    viewer.viewport.goHome(true);
+  }
+  const rescale = () => d.setScale(viewer.container.clientWidth * viewer.viewport.getZoom(true) / W);
+  viewer.addHandler('update-viewport', rescale);
+  rescale();
+  wrap.guideSvgs = [d.svg];
+}
+
+/** No zoom viewer: the review image on the grey stage, with the same guides. */
+function flatFrame(p, g, fig, box) {
+  const d = guideSvg(g);
+  const f = d.frame;
+  const frame = document.createElement('div');
+  frame.className = 'flatframe';
+  const stage = document.createElement('div');
+  stage.className = 'flatstage';
+  stage.style.aspectRatio = f.w + ' / ' + f.h;
+  // The strips are white on the print file; show them that way under the hatch.
+  const img = document.createElement('img');
+  img.src = p.review;
+  img.alt = 'Proof ' + p.itemNo;
+  img.loading = 'lazy';
+  img.style.left = (-f.x / f.w * 100) + '%';
+  img.style.top = (-f.y / f.h * 100) + '%';
+  img.style.width = (f.W / f.w * 100) + '%';
+  img.style.height = (f.H / f.h * 100) + '%';
+  img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
+  stage.appendChild(img);
+  stage.appendChild(d.svg);
+  frame.appendChild(stage);
+  const rescale = () => d.setScale(stage.clientWidth / f.w);
+  if (window.ResizeObserver) new ResizeObserver(rescale).observe(stage);
+  else window.addEventListener('resize', rescale);
+  requestAnimationFrame(rescale);
+  frame.guideSvgs = [d.svg];
+  return frame;
+}
+
+/** Plain-language key under the proof, plus a switch to hide the guides. */
+function legend(g, host) {
+  const f = guideFrame(g);
+  const el = document.createElement('div');
+  el.className = 'legend';
+  const rows = [];
+  rows.push(['sw-edge', 'Black outline — the edge of your printed piece. '
+    + 'Everything inside it is printed exactly as shown.']);
+  const n = (g.grommets || []).length;
+  if (n) {
+    rows.push(['sw-grommet', n + ' grommet' + (n === 1 ? '' : 's')
+      + ' — metal rings punched through the material about 0.75 in from the edge. '
+      + 'Keep text and logos clear of them.']);
+  }
+  const pockets = (g.strips || []).filter((s) => s.kind === 'pole-pocket');
+  if (pockets.length) {
+    rows.push(['sw-strip', 'Pole pocket (' + pockets.map((s) => s.side).join(' and ')
+      + ', ' + inchText(pockets[0].depth) + ') — extra material added outside your '
+      + 'design and folded to the back for a pole. It does not cover your artwork.']);
+  }
+  const base = (g.strips || []).find((s) => s.kind === 'stand-base');
+  if (base) {
+    rows.push(['sw-strip', 'Stand base (' + inchText(base.depth) + ') — extra material '
+      + 'added below your design that rolls into the stand. It does not cover your artwork.']);
+  }
+  if (g.cropped && g.cropped.px > 0) {
+    rows.push(['sw-cut', '<span class="warn">Cut off — the bottom '
+      + inchText(g.cropped.px) + ' of your artwork is taller than the stand and will not '
+      + 'be printed.</span>', true]);
+  }
+  const size = document.createElement('p');
+  size.className = 'size';
+  size.innerHTML = 'Printed size: <b></b>';
+  size.querySelector('b').textContent = sizeText(f.W, f.H);
+  el.appendChild(size);
+  const ul = document.createElement('ul');
+  for (const [cls, text, html] of rows) {
+    const li = document.createElement('li');
+    const i = document.createElement('i');
+    i.className = cls;
+    const span = document.createElement('span');
+    if (html) span.innerHTML = text; else span.textContent = text;
+    li.appendChild(i);
+    li.appendChild(span);
+    ul.appendChild(li);
+  }
+  el.appendChild(ul);
+  const label = document.createElement('label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = true;
+  box.addEventListener('change', () => {
+    for (const s of (host && host.guideSvgs) || []) s.style.visibility = box.checked ? '' : 'hidden';
+  });
+  label.appendChild(box);
+  label.appendChild(document.createTextNode('Show guides'));
+  el.appendChild(label);
+  return el;
+}
+
+async function show(data) {
   $('loading').hidden = true;
   $('view').hidden = false;
   $('orderName').textContent = data.orderName || '';
-  renderProofs(data.proofs);
+  renderProofs(data.proofs, await loadGuides(data.proofs));
   if (data.status === 'approved') {
     $('approveBox').hidden = true;
     $('approved').hidden = false;

@@ -24,10 +24,12 @@ ddb = boto3.resource("dynamodb")
 
 PROCESSED_BUCKET = os.environ["PROCESSED_BUCKET"]
 DZI_BUCKET = os.environ["DZI_BUCKET"]
+FINISHED_BUCKET = os.environ.get("FINISHED_BUCKET", "")
 JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
 
 CONTENT_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-                 ".dzi": "application/xml", ".xml": "application/xml"}
+                 ".dzi": "application/xml", ".xml": "application/xml",
+                 ".json": "application/json"}
 
 
 def upload_tree(local_dir, bucket, prefix):
@@ -71,6 +73,20 @@ def set_stage(order_name, stage):
         pass  # cosmetic only — never fail the job over the stage label
 
 
+def copy_guides(order_name, item_no, dest):
+    """Bring finish's guides sidecar next to the tiles, for the proof page.
+
+    Optional: an order finished before guides existed has none, and the page
+    then shows the plain proof as before.
+    """
+    if not FINISHED_BUCKET:
+        return
+    try:
+        s3.download_file(FINISHED_BUCKET, f"{order_name}/{item_no}.guides.json", dest)
+    except Exception as exc:
+        print(f"proof: no guides for {order_name}/{item_no}: {exc}", file=sys.stderr)
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "making proof")
@@ -82,11 +98,16 @@ def main():
         out_dir = os.path.join(scratch, "out")
         os.makedirs(out_dir, exist_ok=True)
 
-        for i, _item in enumerate(items, start=1):
-            name = f"{i}-1v1.tif"
+        for i, item in enumerate(items, start=1):
+            # itemNo, not the loop index: it comes from intake and predates the
+            # hardware filter, so a skipped hardware line leaves a gap — the
+            # same numbering resize and finish use to name these files.
+            item_no = f"{item.get('itemNo', i)}-1"
+            name = f"{item_no}v1.tif"
             src = os.path.join(scratch, name)
             s3.download_file(PROCESSED_BUCKET, f"{order_name}/{name}", src)
             prepare_proof(src, out_dir, name)
+            copy_guides(order_name, item_no, os.path.join(out_dir, f"{name}.guides.json"))
             print(f"proof: generated DZI + derivatives for {name}")
 
         uploaded_total = upload_tree(out_dir, DZI_BUCKET, order_name)

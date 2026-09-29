@@ -64,8 +64,13 @@ const proof = (itemNo) => {
     review: `${prefix}_review.jpg`,
     thumbnail: `${prefix}_thumbnail.jpg`,
     dzi: `${prefix}.dzi`,
+    guides: `${prefix}.guides.json`,
   };
 };
+
+// Guides are optional: only checked when the tiles dir has the sidecar.
+const HAS_GUIDES = fs.existsSync(path.join(TILES, ORDER, `${ITEM}-1v1.tif.guides.json`));
+const SHOTS = arg('shots');
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -135,6 +140,62 @@ try {
     check(`dpr ${dpr}: 100% button reaches 1:1`, /\b100%\s*$/.test(pct), pct);
 
     await browser.close();
+  }
+
+  // The guides must sit ON the proof: the outline is the image's own edge, to
+  // the pixel, at fit and after zooming.
+  if (HAS_GUIDES) {
+    const browser = await chromium.launch(LAUNCH);
+    const page = await browser.newPage({ viewport: { width: 1100, height: 950 } });
+    await open(page);
+    const edges = () => {
+      const rect = document.querySelector('.osd svg.guidesvg rect[fill="none"]');
+      const v = document.querySelector('.osd').__viewer;
+      if (!rect || !v) return { overlay: Boolean(rect) };
+      const r = rect.getBoundingClientRect();
+      // Where OpenSeadragon itself draws the image, in page px.
+      const b = v.world.getItemAt(0).getBounds(true);
+      const tl = v.viewport.viewportToViewerElementCoordinates(b.getTopLeft());
+      const br = v.viewport.viewportToViewerElementCoordinates(b.getBottomRight());
+      const c = v.container.getBoundingClientRect();
+      return { overlay: true,
+        g: [r.x, r.y, r.width, r.height],
+        im: [c.x + tl.x, c.y + tl.y, br.x - tl.x, br.y - tl.y] };
+    };
+    const near = (e) => e.overlay && e.g && e.g.every((v, i) => Math.abs(v - e.im[i]) < 1.5);
+    let e = await page.evaluate(edges);
+    check('guides: outline matches the image edge at fit', near(e), JSON.stringify(e));
+    const legend = await page.locator('.legend').count();
+    const note = await page.locator('.wysiwyg').count();
+    check('guides: legend and print-as-shown note present', legend === 1 && note === 1,
+      `legend=${legend} note=${note}`);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/${ORDER}-fit.png`, fullPage: true });
+    await page.evaluate(() => {
+      const v = document.querySelector('.osd').__viewer;
+      v.viewport.zoomBy(3); v.viewport.applyConstraints();
+    });
+    await page.waitForTimeout(2000);
+    e = await page.evaluate(edges);
+    check('guides: outline still on the edge after zoom', near(e), JSON.stringify(e));
+    if (SHOTS) await page.locator('.viewer').first().screenshot({ path: `${SHOTS}/${ORDER}-zoom.png` });
+    await browser.close();
+
+    // Flat fallback draws the same guides over the review image.
+    const b2 = await chromium.launch(LAUNCH);
+    const p2 = await b2.newPage({ viewport: { width: 400, height: 900 } });
+    await p2.route('**/openseadragon.min.js', (r) => r.abort());
+    await open(p2);
+    const flat = await p2.evaluate(() => {
+      const rect = document.querySelector('.flatstage svg.guidesvg rect[fill="none"]');
+      const img = document.querySelector('.flatstage img');
+      if (!rect || !img) return { ok: false };
+      const a = rect.getBoundingClientRect(); const b = img.getBoundingClientRect();
+      return { ok: true, a: [a.x, a.y, a.width, a.height], b: [b.x, b.y, b.width, b.height] };
+    });
+    check('guides (no library, phone width): outline matches the image',
+      flat.ok && flat.a.every((v, i) => Math.abs(v - flat.b[i]) < 1.5), JSON.stringify(flat));
+    if (SHOTS) await p2.screenshot({ path: `${SHOTS}/${ORDER}-flat-phone.png`, fullPage: true });
+    await b2.close();
   }
 
   // Without the library the page must still show the proof and still approve.

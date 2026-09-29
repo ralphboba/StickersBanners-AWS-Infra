@@ -63,6 +63,9 @@ export function proofFiles(orderName, items, cdnBase) {
       review: `${prefix}_review.jpg`,
       thumbnail: `${prefix}_thumbnail.jpg`,
       dzi: `${prefix}.dzi`,
+      // Finishing guides (outline, grommets, pole pockets). May 404 for orders
+      // proofed before guides existed; the page then shows the plain proof.
+      guides: `${prefix}.guides.json`,
     };
   });
 }

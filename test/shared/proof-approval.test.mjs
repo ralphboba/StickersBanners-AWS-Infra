@@ -196,6 +196,8 @@ test('proof URLs match what the proof service actually wrote', async () => {
   const files = proofFiles('SB-1', [{ itemNo: 3, name: 'Banner' }], CDN);
   assert.equal(files[0].review, `${CDN}/SB-1/3-1v1.tif_review.jpg`);
   assert.equal(files[0].dzi, `${CDN}/SB-1/3-1v1.tif.dzi`);
+  // Written by finish (guides.py), copied beside the tiles by proof.
+  assert.equal(files[0].guides, `${CDN}/SB-1/3-1v1.tif.guides.json`);
 });
 
 test('a hardware-filtered item list keeps its OrderDesk item numbers', async () => {
