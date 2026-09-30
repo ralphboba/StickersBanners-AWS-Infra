@@ -40,6 +40,7 @@ from artwork import artwork_extension
 from converter import (PDF_MAX_RENDER_PIXELS, PDF_RENDER_DPI, check_pdf_pages,
                        get_dimensions, pdf_render_dpi)
 from fetch import download
+from orientation import orientation_mismatch, source_size
 
 Image.MAX_IMAGE_PIXELS = None  # same as converter: banners exceed PIL's guard
 
@@ -177,6 +178,13 @@ def probe_item(item, scratch, max_bytes):
             result = {"verdict": "skipped", "reason": "psd not probed"}
         else:
             result = probe_raster(local)
+        # The same question resize now asks before printing (orientation.py):
+        # would this order stop as size-swapped? Not a verdict -- the file is
+        # fine -- but the census should say how many would wait for a person.
+        size = source_size(local, ext)
+        swap = size and orientation_mismatch(size[0], size[1], width_px, height_px)
+        if swap:
+            result = {**result, "sizeSwapped": swap}
     except Exception as err:
         result = {"verdict": "unusable", "reason": "cannot-open",
                   "detail": f"{type(err).__name__}: {str(err)[:300]}"}

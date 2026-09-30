@@ -112,10 +112,20 @@ class TheHoldIsShapedLikeTheGates(unittest.TestCase):
                 return
         self.fail('no UnusableArtwork handler found')
 
-    def test_the_task_still_exits_non_zero(self):
-        # The order is held, but the pipeline must not carry on to finish and
-        # transfer with nothing to send.
-        self.assertIn('sys.exit(1)', SOURCE)
+    def test_a_hold_stops_the_pipeline_without_failing_it(self):
+        # The order is held, and the pipeline must not carry on to finish and
+        # transfer with nothing to send. It used to exit 1 for that, which Step
+        # Functions retried and then caught with MarkFailed -- overwriting
+        # needs_review with "failed" (S61790 is "failed" today). Now the hold
+        # exits 0 and the workflow reads the status back and stops cleanly.
+        for node in ast.walk(TREE):
+            if isinstance(node, ast.ExceptHandler) and isinstance(node.type, ast.Name) \
+                    and node.type.id == 'UnusableArtwork':
+                self.assertIn('sys.exit(0)', ast.get_source_segment(SOURCE, node))
+        wf = open(os.path.join(os.path.dirname(__file__), '..', '..',
+                               'lib', 'stacks', 'workflow-stack.ts'), encoding='utf-8').read()
+        self.assertIn("'CheckHeld'", wf)
+        self.assertIn("'$.afterResize.status', 'needs_review'", wf)
 
 
 if __name__ == '__main__':

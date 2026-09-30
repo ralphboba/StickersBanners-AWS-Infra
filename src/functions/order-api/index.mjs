@@ -5,6 +5,8 @@
 //   GET /orders?status=<status>   list orders in a status (GSI1 query)
 //   GET /orders/{name}            one order's META record (+ customerProofUrl
 //                                 while it waits for the customer)
+//   POST /orders/{name}/size      { choice: swap|keep } for an order resize held
+//                                 as size-swapped; re-runs it (size-decision.mjs)
 //
 // Also callable directly with { orderName } for scripts/tests.
 
@@ -12,11 +14,15 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient, GetCommand, QueryCommand, UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { getGroup } from '../../shared/secrets.mjs';
 import { customerProofLink } from './customer-link.mjs';
+import { applySizeDecision } from './size-decision.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const sqs = new SQSClient({});
 const JOBS_TABLE = process.env.JOBS_TABLE;
+const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 
 // Statuses mirror the OrderDesk folders staff already know.
 const STATUSES = [
@@ -76,6 +82,44 @@ export async function handler(event) {
       ReturnValues: 'ALL_NEW',
     }));
     return resp(200, upd.Attributes);
+  }
+
+  // --- size decision: POST /orders/{name}/size  { choice } ---
+  const isSize = method === 'POST'
+    && (event?.rawPath?.endsWith('/size') || event?.routeKey?.includes('/size'));
+  if (isSize) {
+    if (!orderName) return resp(400, { error: 'missing order name' });
+    let body = {};
+    try { body = JSON.parse(event.body || '{}'); } catch { /* ignore */ }
+    const cur = await ddb.send(
+      new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } }),
+    );
+    const claims = event?.requestContext?.authorizer?.jwt?.claims ?? {};
+    const by = claims.email || claims['cognito:username'] || claims.username || 'staff';
+    const out = applySizeDecision(cur.Item, body.choice, { by });
+    if (out.error) return resp(out.code, { error: out.error, orderName });
+
+    // Back to In Queue, only if it is still the hold we just read: two people
+    // clicking at once must not start two runs.
+    await ddb.send(new UpdateCommand({
+      TableName: JOBS_TABLE,
+      Key: { PK: `ORDER#${orderName}`, SK: 'META' },
+      UpdateExpression: 'SET #s = :q, GSI1PK = :g, #i = :items, sizeDecision = :d REMOVE #h, stage',
+      ConditionExpression: '#s = :held AND #h.reason = :why',
+      ExpressionAttributeNames: { '#s': 'status', '#i': 'items', '#h': 'hold' },
+      ExpressionAttributeValues: {
+        ':q': 'in_queue', ':g': 'STATUS#in_queue', ':items': out.items, ':d': out.decision,
+        ':held': 'needs_review', ':why': 'size-swapped',
+      },
+    }));
+    await sqs.send(new SendMessageCommand({
+      QueueUrl: INTAKE_QUEUE_URL,
+      MessageBody: JSON.stringify(out.job),
+      MessageGroupId: 'intake',
+      // The poller dedupes on the order name; a re-run needs its own id.
+      MessageDeduplicationId: `${orderName}-size-${Date.now()}`,
+    }));
+    return resp(200, { orderName, status: 'in_queue', decision: out.decision });
   }
 
   // --- single order ---

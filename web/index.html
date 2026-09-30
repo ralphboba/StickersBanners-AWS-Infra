@@ -280,6 +280,8 @@ const HOLD_LABEL={
   'special-instructions':'manual · has instructions',
   'dc-order':'manual · DC order',
   'missing-file':'manual · missing/bad file',
+  'bad-artwork':'manual · file cannot print',
+  'size-swapped':'check · size swapped?',
 };
 function holdPill(o){
   if(!o.hold||!o.hold.reason) return '';
@@ -389,6 +391,27 @@ async function showDetail(name){
                Open customer proof page ↗</a>
              <div style="margin-top:6px;font-size:12px;color:var(--muted)">The page the customer sees. Its Approve button counts as the customer's approval.</div>`:''}
         </div>`;
+  // Resize stopped this order: the file looks the other way round from the
+  // order (customer uploaded 8x3, picked 3x8). Staff pick which is right; the
+  // order then re-runs from the top. Our job record only -- never OrderDesk.
+  const swapHold = o.status==='needs_review' && o.hold?.reason==='size-swapped' && !o.mirror;
+  const flagged = swapHold ? (o.hold.items||[]) : [];
+  const pockets = flagged.some(f=>f.hasPockets);
+  const artUrl = (no)=>{ const it=(o.items||[]).find((x,i)=>String(x.itemNo??i+1)===String(no)); return it?.artworkUrl||''; };
+  const sizeBox = swapHold ? `<div class="proofbox">
+    <div class="lab"><b>Size may be swapped.</b> The customer's file is the other way round from what they ordered. Pick which one to print — the order then runs again from the start.</div>
+    ${flagged.map(f=>`<div style="font-size:13px;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
+      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}<br>
+      Ordered <b>${esc(f.ordered)}</b> · file is <b>${esc(f.file)}</b> (${esc(f.fileSize?.[0])}×${esc(f.fileSize?.[1])})
+      ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
+      <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
+      ${f.hasPockets?'<br><span style="color:var(--s-hold)">Has pole pockets / stand base — confirm the layout with the customer before swapping.</span>':''}
+    </div>`).join('')}
+    <div class="btns">
+      <button class="btn approve" id="szswap" ${pockets?'disabled title="Has pole pockets — confirm with the customer first"':''}>Swap to ${flagged.length===1?esc(flagged[0].swapped):'the file\'s way round'}</button>
+      <button class="btn reject" id="szkeep">Keep as ordered</button>
+    </div>
+    <div class="err" id="szErr"></div></div>` : '';
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
   // Demo controls: step this synthetic order forward/back through the pipeline.
@@ -417,11 +440,23 @@ async function showDetail(name){
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
       <div class="err" id="actErr"></div></div>`:''}
+    ${sizeBox}
     ${demoBox}`;
   $('drawer').classList.add('open'); $('scrim').classList.add('open');
   if(demo){
     if($('dfwd')) $('dfwd').onclick=()=>demoMove(o,+1);
     if($('dback')) $('dback').onclick=()=>demoMove(o,-1);
+  }
+  if(swapHold){
+    const decide=async(choice,label)=>{
+      if(!confirm(`${o.orderName}: ${label}?\nThe order will be processed again from the start.`)) return;
+      $('szswap').disabled=true; $('szkeep').disabled=true;
+      try{ await api(`/orders/${encodeURIComponent(o.orderName)}/size`,{method:'POST',body:JSON.stringify({choice})});
+        closeDrawer(); loadFolder(); loadCounts();
+      }catch(e){ $('szErr').textContent=e.message; $('szkeep').disabled=false; if(!pockets) $('szswap').disabled=false; }
+    };
+    $('szswap').onclick=()=>decide('swap', flagged.length===1?`print as ${flagged[0].swapped}`:'swap the flagged items');
+    $('szkeep').onclick=()=>decide('keep','print as ordered (artwork stretched)');
   }
   if(canSend){
     $('send').onclick=async()=>{ try{ $('send').disabled=true;

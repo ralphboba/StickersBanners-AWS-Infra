@@ -89,6 +89,14 @@ export class ApiStack extends cdk.Stack {
       authorizer,
     });
 
+    // Staff answer for an order held as size-swapped (swap / keep as ordered).
+    this.httpApi.addRoutes({
+      path: '/orders/{name}/size',
+      methods: [apigw.HttpMethod.POST],
+      integration: orderApiIntegration,
+      authorizer,
+    });
+
     // Proof review: separate approve/reject routes (clear intent + room for
     // per-route authorization later). Both resume the paused pipeline.
     const approvalIntegration = new HttpLambdaIntegration('ApprovalIntegration', approvalFn);

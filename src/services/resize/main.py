@@ -21,9 +21,23 @@ import boto3
 
 from jobload import load_job
 
-from converter import check_pdf_pages, infer_unit, process_image
+from converter import check_pdf_pages, get_dimensions, infer_unit, process_image
 from artwork import artwork_extension
 from fetch import download
+from orientation import orientation_mismatch, source_size
+
+
+class HeldForReview(RuntimeError):
+    """Stop this order before anything is printed; a person decides next.
+
+    Carries the hold reason and the structured detail the dashboard shows.
+    """
+
+    def __init__(self, reason, explain, detail=None):
+        super().__init__(explain)
+        self.reason = reason
+        self.explain = explain
+        self.detail = detail or []
 
 
 class UnusableArtwork(RuntimeError):
@@ -98,6 +112,50 @@ def set_stage(order_name, stage):
         pass  # cosmetic only — never fail the job over the stage label
 
 
+def item_size(item):
+    """(width, height, unit) as ordered -- the numbers resize prints at."""
+    width = item.get("width", item.get("widthFt"))
+    height = item.get("height", item.get("heightFt"))
+    unit = item.get("unit") or infer_unit(width, height, item.get("sku", ""))
+    return width, height, unit
+
+
+def swapped_items(fetched):
+    """Items whose file is the other way round from the order.
+
+    `fetched` is [(item, item_no, local_path)]. An item staff already decided
+    on (orientationChecked, set by the dashboard) is never asked about again.
+    """
+    found = []
+    for item, item_no, local in fetched:
+        if item.get("orientationChecked"):
+            continue
+        width, height, unit = item_size(item)
+        try:
+            out_w, out_h = get_dimensions(width, height, unit)
+        except (TypeError, ValueError):
+            continue
+        size = source_size(local, os.path.splitext(local)[1].lstrip("."))
+        if not size:
+            continue
+        miss = orientation_mismatch(size[0], size[1], out_w, out_h)
+        if miss:
+            found.append({
+                "itemNo": item_no,
+                "name": item.get("name") or item.get("sku") or "",
+                "ordered": f"{width} x {height} {unit}",
+                "swapped": f"{height} x {width} {unit}",
+                "fileSize": [int(round(size[0])), int(round(size[1]))],
+                "file": miss["file"],
+                "stretchAsOrdered": str(miss["stretchAsOrdered"]),
+                "stretchIfSwapped": str(miss["stretchIfSwapped"]),
+                # A pocket or grommet layout is laid out per side; whether it
+                # turns with the banner is the customer's call, not a button.
+                "hasPockets": bool((item.get("finishingObj") or {}).get("specialFinishing")),
+            })
+    return found
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "resizing")
@@ -106,17 +164,29 @@ def main():
     produced = []
 
     with tempfile.TemporaryDirectory() as scratch:
+        # Fetch everything first, so the whole order is checked before any of
+        # it is printed: a swapped item 3 must not leave items 1-2 half done.
+        fetched = []
         for i, item in enumerate(items, start=1):
             # Use the itemNo the intake assigned BEFORE hardware lines were
             # dropped. Renumbering here would shift every file after a removed
             # stand — legacy numbers with index+1 and only then filters.
-            name = f"{item.get('itemNo', i)}-1"  # legacy naming: {item}-{file}
-            local = fetch_artwork(item, scratch, name)
-            output = os.path.join(scratch, f"{name}v1.tif")
+            item_no = item.get("itemNo", i)
+            name = f"{item_no}-1"  # legacy naming: {item}-{file}
+            fetched.append((item, item_no, fetch_artwork(item, scratch, name)))
 
-            width = item.get("width", item.get("widthFt"))
-            height = item.get("height", item.get("heightFt"))
-            unit = item.get("unit") or infer_unit(width, height, item.get("sku", ""))
+        swapped = swapped_items(fetched)
+        if swapped:
+            lines = [f"Item {s['itemNo']}: the file is {s['file']} "
+                     f"({s['fileSize'][0]}x{s['fileSize'][1]}) but the order is "
+                     f"{s['ordered']}; {s['swapped']} would fit it."
+                     for s in swapped]
+            raise HeldForReview("size-swapped", " ".join(lines), swapped)
+
+        for item, item_no, local in fetched:
+            name = f"{item_no}-1"
+            output = os.path.join(scratch, f"{name}v1.tif")
+            width, height, unit = item_size(item)
             process_image(
                 file_path=local,
                 width=width,
@@ -134,7 +204,7 @@ def main():
     print(json.dumps({"orderName": order_name, "produced": produced}))
 
 
-def hold_for_review(order_name, reason, explain):
+def hold_for_review(order_name, reason, explain, detail=None):
     """Park the order in needs_review, the same shape the intake gate writes.
 
     The gate can only catch what is visible in the order record; whether a PDF
@@ -157,7 +227,8 @@ def hold_for_review(order_name, reason, explain):
                 ":status": "STATUS#needs_review",
                 ":statusName": "needs_review",
                 ":stage": "held",
-                ":hold": {"reason": reason, "explain": explain, "source": "resize"},
+                ":hold": {"reason": reason, "explain": explain, "source": "resize",
+                          **({"items": detail} if detail else {})},
             },
         )
         print(json.dumps({"orderName": order_name, "held": reason,
@@ -167,18 +238,27 @@ def hold_for_review(order_name, reason, explain):
 
 
 if __name__ == "__main__":
+    # A hold exits 0. It used to exit 1, which Step Functions retried three
+    # times and then caught with MarkFailed -- overwriting needs_review with
+    # "failed" and losing the reason (S61790, 2026-09-19, is "failed" today).
+    # The workflow now reads the status after this step and stops cleanly when
+    # the order is held (workflow-stack CheckHeld).
     try:
         main()
+    except HeldForReview as exc:
+        order = os.environ.get("ORDER_NAME", "unknown")
+        print(f"resize: holding {order} ({exc.reason}): {exc.explain}", file=sys.stderr)
+        record_step(order, "held", detail=exc.explain)
+        hold_for_review(order, exc.reason, exc.explain, exc.detail)
+        sys.exit(0)
     except UnusableArtwork as exc:
         # Not our bug and not a transient one: a person has to go back to the
         # customer. Record it as a hold so it lands where staff already look.
         order = os.environ.get("ORDER_NAME", "unknown")
         print(f"resize: unusable artwork for {order}: {exc}", file=sys.stderr)
-        try:
-            record_step(order, "held", detail=str(exc))
-            hold_for_review(order, "bad-artwork", str(exc))
-        finally:
-            sys.exit(1)
+        record_step(order, "held", detail=str(exc))
+        hold_for_review(order, "bad-artwork", str(exc))
+        sys.exit(0)
     except Exception as exc:  # mark failure for the pipeline, then fail the task
         order = os.environ.get("ORDER_NAME", "unknown")
         print(f"resize failed for {order}: {exc}", file=sys.stderr)

@@ -134,12 +134,19 @@ export class ComputeStack extends cdk.Stack {
       // Bundles src root for shared/approval-link + shared/secrets.
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-api/index.handler',
-      environment: { JOBS_TABLE: jobsTable.tableName, SB_ENV: config.env },
-      description: 'Order/job status lookups + demo-only status moves',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+        // Re-runs an order after staff answer a size-swapped hold.
+        INTAKE_QUEUE_URL: intakeQueue.queueUrl,
+      },
+      description: 'Order/job status lookups, demo-only moves, size-swap decisions',
     });
     // Read for lookups; write is used ONLY by the demo-only /move route, which is
     // hard-guarded in the handler to DEMO-*/ZZ-* orders.
     jobsTable.grantReadWriteData(this.orderApi);
+    // Only the size-decision route sends: it puts a held order back on intake.
+    intakeQueue.grantSendMessages(this.orderApi);
     // Mints the customer approval link for the dashboard. Only the approval
     // group — this function has no business reading OrderDesk/FTP/Zendesk keys.
     this.orderApi.addToRolePolicy(new iam.PolicyStatement({

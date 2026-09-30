@@ -256,6 +256,18 @@ function main() {
     return;
   }
 
+  // Orders resize would stop as size-swapped (file the other way round from
+  // the order) -- they wait in Needs Review for a person to pick swap / keep.
+  const swapped = (report.artwork.results ?? []).filter((r) => r.sizeSwapped);
+  report.sizeSwapped = {
+    orders: new Set(swapped.map((r) => r.orderName)).size,
+    items: swapped.map((r) => ({
+      order: r.orderName, item: r.itemNo, name: r.name,
+      output: r.outputPixels, file: r.sizeSwapped.file,
+      stretchAsOrdered: r.sizeSwapped.stretchAsOrdered,
+    })),
+  };
+
   report.complete = true;
   delete report.incomplete;
 

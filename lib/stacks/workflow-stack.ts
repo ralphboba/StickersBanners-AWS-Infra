@@ -214,8 +214,33 @@ export class WorkflowStack extends cdk.Stack {
       )
       .otherwise(route);
 
+    // Resize can stop an order for a person: a file that cannot print
+    // (bad-artwork) or one that looks the other way round from the order
+    // (size-swapped). It records the hold on META and exits 0, and this reads
+    // it back. It used to exit 1, which retried and then MarkFailed overwrote
+    // needs_review with "failed" -- the reason was lost and staff saw a failure.
+    const checkHeld = new tasks.DynamoGetItem(this, 'CheckHeld', {
+      table: jobsTable,
+      key: {
+        PK: tasks.DynamoAttributeValue.fromString(orderPk),
+        SK: tasks.DynamoAttributeValue.fromString('META'),
+      },
+      consistentRead: true,
+      expressionAttributeNames: { '#s': 'status' },
+      projectionExpression: [new tasks.DynamoProjectionExpression().withAttribute('#s')],
+      resultSelector: { 'status.$': '$.Item.status.S' },
+      resultPath: '$.afterResize',
+    });
+    checkHeld.addCatch(markFailed, catchProps);
+    const heldForReview = new sfn.Succeed(this, 'HeldForReview', {
+      comment: 'Stopped before printing; waiting in Needs Review for a person.',
+    });
+    const afterResize = new sfn.Choice(this, 'IsHeld')
+      .when(sfn.Condition.stringEquals('$.afterResize.status', 'needs_review'), heldForReview)
+      .otherwise(finish.next(needsProof));
+
     // Pipeline picks the order up from "In Queue" -> "Printing" while it runs.
-    const definition = markPrinting.next(resize).next(finish).next(needsProof);
+    const definition = markPrinting.next(resize).next(checkHeld).next(afterResize);
 
     this.stateMachine = new sfn.StateMachine(this, 'Pipeline', {
       stateMachineName: `${config.prefix}-pipeline`,
