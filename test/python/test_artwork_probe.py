@@ -43,7 +43,7 @@ class PdfVerdicts(unittest.TestCase):
 
     def test_a_single_page_pdf_of_ordinary_size_is_ok(self):
         path = os.path.join(self.dir, 'a.pdf')
-        make_pdf(path, pages=1, width_in=48, height_in=96)
+        make_pdf(path, pages=1, width_in=36, height_in=48)
         out = artwork_probe.probe_pdf(path, 5184, 4320)
         self.assertEqual(out['verdict'], 'ok')
         self.assertEqual(out['renderDpi'], artwork_probe.PDF_RENDER_DPI,

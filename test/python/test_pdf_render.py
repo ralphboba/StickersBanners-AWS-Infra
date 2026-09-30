@@ -69,18 +69,26 @@ class PagesThatAlreadyWork(unittest.TestCase):
             (8.5, 11),      # letter
             (24, 36),       # poster
             (36, 48),       # 3x4 ft banner
-            (48, 96),       # 4x8 ft banner — 414 Mpx at 300 dpi, still fine
-            (60, 120),      # 5x10 ft banner
         ]:
             with self.subTest(page=f'{width_in}x{height_in}in'):
                 self.assertEqual(
                     pdf_render_dpi(Rect(width_in, height_in), 5184, 4320),
                     PDF_RENDER_DPI)
 
-    def test_the_budget_sits_above_a_real_4x8ft_layout(self):
-        # If this fails the budget was lowered into the range of files that
-        # print correctly today, and their output bytes would change.
-        self.assertGreater(PDF_MAX_RENDER_PIXELS, pixels_at(48, 96, PDF_RENDER_DPI))
+    def test_a_3x4ft_page_still_renders_like_linh(self):
+        # 155.5 Mpx at 300 dpi. Below the budget, so its bytes still match.
+        self.assertGreater(PDF_MAX_RENDER_PIXELS, pixels_at(36, 48, PDF_RENDER_DPI))
+
+    def test_the_budget_is_what_an_8gb_task_holds(self):
+        # 700 Mpx was the old line; 6x8 to 10x8 ft pages died at 8 GB under it
+        # on 2026-09-29. Measured worst case: ~26 bytes a pixel (S64675). Raise
+        # this only with new measurements, not an estimate.
+        self.assertLessEqual(PDF_MAX_RENDER_PIXELS * 26, 5 * 1024 ** 3)
+
+    def test_a_4x8ft_page_steps_down_but_stays_above_the_print(self):
+        dpi = pdf_render_dpi(Rect(48, 96), 3456, 6912)
+        self.assertLess(dpi, PDF_RENDER_DPI)
+        self.assertGreater(dpi, 72 * 2)
 
 
 class TheS61866Page(unittest.TestCase):

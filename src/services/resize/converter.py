@@ -108,16 +108,26 @@ def _rescale_and_save(image: Image.Image, width_px, height_px, output_path, forc
 # floor is the output size itself, so the step-down can never sample BELOW the
 # pixels the resize is about to ask for.
 PDF_RENDER_DPI = 300
-# The budget has to be high enough that it never touches a page that renders
-# fine today -- stepping the dpi down on a working file would change its output
-# bytes, and matching Linh byte for byte is the thing being protected. A 4x8 ft
-# page (48x96 in) is a real banner layout and comes to 414 Mpx at 300 dpi, so
-# the line sits above that.
+# The budget was 700 Mpx, chosen to keep a 4x8 ft page (414 Mpx) at 300 dpi
+# and so byte-identical to Linh. It was an estimate, and it was wrong: on
+# 2026-09-29 five orders with 6x8 to 10x8 ft PDF pages were killed at 8 GB.
+# Measured with their real files on the container's PyMuPDF 1.26.3:
 #
-# 700 Mpx is ~2.1 GB for the pixmap and ~2.8 GB once converted to RGBA, so the
-# peak lands near 4.9 GB of the task's 8 GB. S61866's 1,037 Mpx is the only
-# page measured over the line, and it steps down to 246 dpi rather than dying.
-PDF_MAX_RENDER_PIXELS = 700_000_000
+#   S64610  6x8 ft, old code at 622 Mpx          8.76 GB  -> killed
+#   S64675  19x5 ft, 300 Mpx (after the copy fix) 7.93 GB, 655 s
+#   the other five at 300 Mpx                     2.6 - 4.3 GB
+#
+# Memory is not just our copies of the raster: MuPDF's own render buffers
+# (transparency groups, soft masks) scale with the pixel count and vary per
+# file, from ~14 to ~26 bytes a pixel on those seven. 160 Mpx puts the worst one
+# measured near 4 GB -- half the task.
+#
+# What it costs: a page above 160 Mpx at 300 dpi (bigger than ~3x4 ft) renders
+# below 300 dpi, so its bytes no longer match Linh's. It still renders ABOVE the
+# output's own density (the floor in pdf_render_dpi), so the print file is not
+# softer -- a 4x8 ft page comes out at ~186 dpi for a 72 dpi print. A 3x4 ft
+# page (155.5 Mpx) and everything smaller is untouched.
+PDF_MAX_RENDER_PIXELS = 160_000_000
 
 
 def pdf_render_dpi(page_rect, width_px, height_px,
