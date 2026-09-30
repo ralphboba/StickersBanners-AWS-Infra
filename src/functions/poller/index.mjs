@@ -350,6 +350,11 @@ export async function handler(event = {}) {
         // is there — and it is the only way to compare our verdict against what
         // Linh's program actually did with the same order.
         folderIdNow: order.folder_id === undefined ? null : String(order.folder_id),
+        // OrderDesk's own clock (UTC). For an order Linh's program moved out of
+        // QTS and nothing touched since, dateUpdated is when it moved -- the
+        // only record of how long HIS pipeline takes, to compare against ours.
+        dateAdded: order.date_added ?? null,
+        dateUpdated: order.date_updated ?? null,
         shipping: job.shipping,
         routing: job.routing,
         variant: job.variant,
