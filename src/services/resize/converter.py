@@ -162,7 +162,11 @@ def pixmap_to_image(pix):
         # branch exists only so a future caller cannot get silently wrong
         # colour. Pay for the round trip rather than guess at un-premultiplying.
         return Image.open(io.BytesIO(pix.tobytes("png")))
-    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    # samples_mv, not samples: `samples` hands back a fresh bytes COPY of the
+    # whole raster, so the pixmap, that copy and PIL's own copy were all alive
+    # at once -- three full-page rasters. Reading through the memoryview drops
+    # the middle one. Same bytes in, same pixels out.
+    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples_mv)
 
 
 def _convert_pdf(file_path, width_px, height_px, output_path):
@@ -177,8 +181,12 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
               f"inside {PDF_MAX_RENDER_PIXELS} pixels "
               f"(output is {width_px}x{height_px})")
     pix = page.get_pixmap(dpi=dpi)
-    return _rescale_and_save(pixmap_to_image(pix), width_px, height_px,
-                             output_path, force_rgba=True)
+    image = pixmap_to_image(pix)
+    # PIL has its own copy now. Let the pixmap and the document go before the
+    # resize allocates, instead of holding them to the end of the function.
+    del pix, page
+    doc.close()
+    return _rescale_and_save(image, width_px, height_px, output_path, force_rgba=True)
 
 
 def _convert_postscript(file_path, width_px, height_px, output_path):

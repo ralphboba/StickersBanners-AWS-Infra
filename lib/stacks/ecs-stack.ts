@@ -65,7 +65,10 @@ export class EcsStack extends cdk.Stack {
       // can hold hundreds of megapixels in memory at once.
       { id: 'Resize', key: 'resize', purpose: 'PIL resize, ft/in -> px @72dpi, TIFF', cpu: 1024, memoryMiB: 8192 },
       { id: 'Finish', key: 'finish', purpose: 'print finishing (grommets/pole pockets/etc.)', cpu: 1024, memoryMiB: 2048 },
-      { id: 'Proof', key: 'proof', purpose: 'proof/preview generation', cpu: 512, memoryMiB: 1024 },
+      // 4 GB, not 1: S64734 (2026-09-29) had a 300x46 in banner -- 21600x3312,
+      // 71 Mpx -- and the 1 GB task was killed (exit 137) making its proof.
+      // Billed only for the minutes the task runs.
+      { id: 'Proof', key: 'proof', purpose: 'proof/preview generation', cpu: 512, memoryMiB: 4096 },
       { id: 'Ftp', key: 'ftp', purpose: 'FTP transfer to production facilities', cpu: 512, memoryMiB: 1024 },
     ];
 
