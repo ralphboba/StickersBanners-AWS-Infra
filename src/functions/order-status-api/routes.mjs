@@ -125,6 +125,27 @@ async function status(deps, authorised, event) {
   const currentMethod = row.shipping?.method ?? null;
   const stage = stageFor(row);
 
+  // ── an upgrade already chosen and waiting for payment ─────────────────
+  // The customer clicked, the order was edited, they have not paid yet (closed
+  // the payment page, or came back from the email). Send them back to the same
+  // Shopify payment page rather than offering anything new.
+  const pending = deps.loadPending ? await deps.loadPending(orderName) : null;
+  if (pending?.status === 'pending') {
+    const order = await deps.loadShopifyOrder(orderName);
+    const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
+    if (paymentUrl && order?.outstandingCents > 0) {
+      return json(200, {
+        orderName: row.orderName,
+        stage: { label: stage.label, step: stage.step, steps: STEPS },
+        shipping: {
+          current: pending.from, canUpgrade: false, canConvert: false, reason: null,
+          awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl },
+        },
+        addOns: [],
+      });
+    }
+  }
+
   // ── the upgrade quote ─────────────────────────────────────────────────
   // Price AND tax both come from Shopify (shopify-pricing.mjs). A quote exists
   // only when today's checkout rate for the customer's current service is

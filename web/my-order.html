@@ -106,6 +106,16 @@
         <a class="ghost" href="mailto:sales@stickersbanners.com">Contact us about this order</a>
       </div>
 
+      <div id="awaiting" hidden style="margin-top:18px">
+        <div class="total">
+          <span id="awaitingWhat"></span>
+          <span class="v" id="awaitingTotal"></span>
+        </div>
+        <a class="cta" id="awaitingPay" href="#" style="display:block;text-align:center;text-decoration:none">Pay now</a>
+        <p class="fine">Secure payment on our Shopify checkout. Your order switches to the faster
+          service once the payment goes through.</p>
+      </div>
+
       <form id="upgrade" hidden style="margin-top:18px">
         <fieldset>
           <legend>Faster shipping</legend>
@@ -220,7 +230,14 @@
     var sh = data.shipping || {};
     set('current', sh.current || '—');
 
-    if (sh.canUpgrade && sh.upgrade) {
+    if (sh.awaitingPayment) {
+      var ap = sh.awaitingPayment;
+      set('awaitingWhat', 'Upgrade to ' + ap.to + ' — waiting for payment');
+      set('awaitingTotal', money(ap.total));
+      set('awaitingPay', 'Pay ' + money(ap.total));
+      $('awaitingPay').href = ap.paymentUrl;
+      $('awaiting').hidden = false;
+    } else if (sh.canUpgrade && sh.upgrade) {
       var up = sh.upgrade;
       set('keepName', sh.current);
       set('upName', up.to);

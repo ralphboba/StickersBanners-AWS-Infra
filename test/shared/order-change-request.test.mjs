@@ -117,3 +117,22 @@ describe('Shopify payment page', () => {
     assert.equal(log.commits.length, 0);
   });
 });
+
+describe('page opened again while an upgrade waits for payment', () => {
+  test('GET shows the pending upgrade and the Shopify payment page, nothing new is offered', async () => {
+    const PAY = 'https://stickersbanners.com/1/order_payment/2?secret=x';
+    const deps = {
+      loadRow: async (n) => (n === 'S1' ? ROW : undefined),
+      loadShopifyOrder: async () => ({ name: 'S1', outstandingCents: 1738, paymentUrl: PAY }),
+      quote: async () => { throw new Error('must not quote'); },
+      estimates: async () => null,
+      loadPending: async () => ({ status: 'pending', from: 'FedEx Ground', to: 'FedEx 3-Days', shippingCents: 1738, taxCents: 0 }),
+    };
+    const r = await makeHandler(deps)({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order',
+      queryStringParameters: { o: 'S1', s: URL } });
+    const body = JSON.parse(r.body);
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(body.shipping.awaitingPayment, { from: 'FedEx Ground', to: 'FedEx 3-Days', total: 17.38, paymentUrl: PAY });
+    assert.equal(body.shipping.canUpgrade, false);
+  });
+});

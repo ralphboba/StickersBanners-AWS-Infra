@@ -50,6 +50,7 @@ const ORDER_FOR_PRICING = `
         currentSubtotalPriceSet { shopMoney { amount currencyCode } }
         currentTotalPriceSet { shopMoney { amount } }
         totalOutstandingSet { shopMoney { amount } }
+        paymentCollectionDetails { additionalPaymentCollectionUrl }
         shippingAddress { address1 address2 city provinceCode zip countryCodeV2 }
         billingAddress { address1 address2 city provinceCode zip countryCodeV2 }
         shippingLines(first: 5) {
@@ -120,6 +121,8 @@ export async function fetchOrderForPricing({ shop, token, orderName, fetchImpl }
     name: o.name,
     currentTotalCents: toCents(o.currentTotalPriceSet?.shopMoney?.amount),
     outstandingCents: toCents(o.totalOutstandingSet?.shopMoney?.amount),
+    // Shopify's page for paying a balance on this order (null when nothing is owed).
+    paymentUrl: o.paymentCollectionDetails?.additionalPaymentCollectionUrl ?? null,
     currency: o.subtotalPriceSet?.shopMoney?.currencyCode ?? null,
     subtotalCents: toCents(o.subtotalPriceSet?.shopMoney?.amount),
     currentSubtotalCents: toCents(o.currentSubtotalPriceSet?.shopMoney?.amount),

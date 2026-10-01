@@ -68,4 +68,10 @@ async function estimates(args) {
   }
 }
 
-export const handler = makeHandler({ loadRow, loadShopifyOrder, quote, estimates });
+// Read only: whether an upgrade is already waiting for payment.
+async function loadPending(orderName) {
+  const res = await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'CHANGE' } }));
+  return res?.Item ?? null;
+}
+
+export const handler = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending });
