@@ -12,6 +12,7 @@ import {
   shopifyWritesEnabled,
   blockedReason,
   writeGateStatus,
+  outsideTestScope,
 } from '../../src/shared/write-gates.mjs';
 
 const VARS = ['ORDERDESK_WRITES', 'ORDERDESK_UPGRADE_WRITES', 'SHOPIFY_WRITES'];
@@ -113,5 +114,27 @@ describe('writeGateStatus', () => {
       orderDeskUpgradeWrites: 'ENABLED',
       shopifyWrites: 'disabled',
     });
+  });
+});
+
+describe('WRITE_ONLY_ORDERS test scope', () => {
+  afterEach(() => { delete process.env.WRITE_ONLY_ORDERS; delete process.env.SHOPIFY_WRITES; });
+
+  test('with the list set, an armed switch writes only for the listed orders', () => {
+    process.env.SHOPIFY_WRITES = 'enabled';
+    process.env.WRITE_ONLY_ORDERS = 'S64262';
+    assert.equal(blockedReason('S64262', shopifyWritesEnabled), null);
+    assert.equal(blockedReason('#s64262', shopifyWritesEnabled), null);
+    assert.deepEqual(blockedReason('S64227', shopifyWritesEnabled), { skipped: 'not_test_order' });
+    assert.deepEqual(blockedReason('DEMO-1', shopifyWritesEnabled), { skipped: 'synthetic' });
+  });
+
+  test('the list never arms a switch by itself', () => {
+    process.env.WRITE_ONLY_ORDERS = 'S64262';
+    assert.deepEqual(blockedReason('S64262', shopifyWritesEnabled), { skipped: 'disabled' });
+  });
+
+  test('unset: no effect', () => {
+    assert.equal(outsideTestScope('S64227'), false);
   });
 });

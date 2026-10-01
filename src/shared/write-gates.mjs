@@ -50,16 +50,30 @@ export function shopifyWritesEnabled() {
 }
 
 /**
+ * Test scope. When WRITE_ONLY_ORDERS is set (comma-separated order names), an
+ * armed switch writes for those orders and refuses every other one. Used to
+ * run the real flow end to end on a test order without going live. Unset in
+ * every deployed environment.
+ */
+export function outsideTestScope(name) {
+  const raw = String(process.env.WRITE_ONLY_ORDERS ?? '').trim();
+  if (!raw) return false;
+  const allowed = raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  return !allowed.includes(String(name ?? '').trim().replace(/^#/, '').toUpperCase());
+}
+
+/**
  * One decision for "may this write go out?", so every call site refuses for the
  * same reasons in the same order: synthetic orders first, then the switch.
  *
  * @param {string} orderName
  * @param {() => boolean} gate  one of the *Enabled functions above
- * @returns {null | { skipped: 'synthetic' | 'disabled' }} null when allowed
+ * @returns {null | { skipped: 'synthetic' | 'disabled' | 'not_test_order' }} null when allowed
  */
 export function blockedReason(orderName, gate) {
   if (isSyntheticOrder(orderName)) return { skipped: 'synthetic' };
   if (!gate()) return { skipped: 'disabled' };
+  if (outsideTestScope(orderName)) return { skipped: 'not_test_order' };
   return null;
 }
 

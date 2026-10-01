@@ -95,3 +95,33 @@ describe('orders/paid', () => {
     assert.equal(verifyShopifyHmac('x', sign('x'), SECRET), true);
   });
 });
+
+describe('when is an order paid?', () => {
+  test('a balance paid on a once-refunded order still counts (partially_refunded, nothing outstanding)', async () => {
+    const { handler, log } = harness();
+    const r = await handler(event({ name: '#S64262', financial_status: 'partially_refunded', total_outstanding: '0.00' },
+      { topic: 'orders/updated' }));
+    assert.equal(body(r).written, true);
+    assert.deepEqual(log.applied, ['CHG-1']);
+  });
+
+  test('an edit that leaves a balance is not a payment, whatever the status says', async () => {
+    const { handler, log } = harness();
+    for (const p of [
+      { name: '#S64262', financial_status: 'partially_paid', total_outstanding: '17.38' },
+      { name: '#S64262', financial_status: 'partially_refunded', total_outstanding: '17.38' },
+      { name: '#S64262', financial_status: 'paid', total_outstanding: '0.01' },
+    ]) {
+      const r = await handler(event(p, { topic: 'orders/updated' }));
+      assert.deepEqual(body(r), { ignored: 'not_paid' });
+    }
+    assert.deepEqual(log.applied, []);
+  });
+
+  test('other topics are ignored', async () => {
+    const { handler, log } = harness();
+    const r = await handler(event({ name: '#S64262', financial_status: 'paid', total_outstanding: '0.00' }, { topic: 'orders/create' }));
+    assert.deepEqual(body(r), { ignored: 'topic' });
+    assert.deepEqual(log.applied, []);
+  });
+});

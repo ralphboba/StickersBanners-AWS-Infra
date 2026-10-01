@@ -1,4 +1,4 @@
-// Shopify `orders/paid` -> Order Desk -> Google Chat.
+// Shopify payment (orders/paid, orders/updated) -> Order Desk -> Google Chat.
 //
 // The last step of a self-service shipping change. The customer's order was
 // edited (shopify-order-edit.mjs) and left with a balance; this runs when they
@@ -20,7 +20,26 @@
 import crypto from 'node:crypto';
 
 import { upgradeMessage } from '../../shared/gchat.mjs';
-import { centsToDollars } from '../../shared/money.mjs';
+import { centsToDollars, toCents } from '../../shared/money.mjs';
+
+/**
+ * Topics this handler acts on. orders/paid is the obvious one, but Shopify does
+ * not send it when the balance of an order that was ever partly refunded is
+ * paid: such an order stays "partially_refunded". orders/updated arrives for
+ * every payment, so both are subscribed and the money decides, not the topic.
+ */
+export const PAID_TOPICS = new Set(['orders/paid', 'orders/updated']);
+
+/**
+ * Is nothing left to pay? The webhook body is the REST order: total_outstanding
+ * is the balance. A payload without it falls back to financial_status.
+ */
+export function fullyPaid(order) {
+  const status = String(order?.financial_status ?? '');
+  if (!['paid', 'partially_refunded'].includes(status)) return false;
+  if (order?.total_outstanding === undefined || order?.total_outstanding === null) return status === 'paid';
+  return toCents(String(order.total_outstanding)) === 0;
+}
 
 /** Shopify signs the raw body with the app's webhook secret (base64 HMAC-SHA256). */
 export function verifyShopifyHmac(rawBody, headerHmac, secret) {
@@ -53,13 +72,13 @@ export function makePaidHandler(deps) {
     if (!verifyShopifyHmac(raw, header(event, 'X-Shopify-Hmac-Sha256'), await deps.webhookSecret())) {
       return reply(401, { error: 'bad_signature' });
     }
-    if (header(event, 'X-Shopify-Topic') !== 'orders/paid') return reply(200, { ignored: 'topic' });
+    if (!PAID_TOPICS.has(header(event, 'X-Shopify-Topic'))) return reply(200, { ignored: 'topic' });
 
     let order;
     try { order = JSON.parse(raw); } catch { return reply(400, { error: 'bad_json' }); }
     const orderName = String(order?.name ?? '').replace(/^#/, '');
     if (!orderName) return reply(200, { ignored: 'no_name' });
-    if (order.financial_status !== 'paid') return reply(200, { ignored: 'not_paid' });
+    if (!fullyPaid(order)) return reply(200, { ignored: 'not_paid' });
 
     const change = await deps.loadPending(orderName);
     if (!change) return reply(200, { ignored: 'no_pending_change' });

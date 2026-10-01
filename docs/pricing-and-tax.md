@@ -195,3 +195,12 @@ Dev Dashboard에 **"Manage My Order Button"** 앱을 수동으로 만들었다(C
 Saturday Delivery와 합치지 않은 이유: 쓰기 권한이 이미 운영 중인 앱에 섞이지 않고, 문제가 생기면 이 앱만
 끊을 수 있다. 새 앱에는 고정 토큰이 없어서 Lambda가 Client ID/secret을 ~24시간 토큰으로 교환해 메모리에
 두고 만료 10분 전에 갱신한다(`shopify-auth.mjs`). 웹훅 서명 키도 같은 client-secret.
+
+**결제 알림은 두 개를 구독한다 (`orders/paid` + `orders/updated`).** 부분 환불 기록이 있는 주문은
+잔액을 다 내도 상태가 `partially_refunded`로 남고 `orders/paid`가 안 올 수 있다. 그래서 상태 이름이
+아니라 `total_outstanding`이 0인지로 결제를 판단한다(`fullyPaid`). 중복 알림은 변경 기록 상태와
+OrderDesk 참조번호가 막는다.
+
+**Mac + 터널 실측 (`scripts/local-e2e.mjs`)**: 배포 코드 그대로(페이지, 라우트, 결제 처리)를 노트북에서
+돌리고 Cloudflare 임시 터널로 공개 주소를 얻는다. 쓰기는 `WRITE_ONLY_ORDERS`로 테스트 주문 하나에만,
+인보이스는 `INVOICE_TO`로만 간다. 종료 시 웹훅 등록을 지운다.
