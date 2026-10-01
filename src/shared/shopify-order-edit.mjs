@@ -48,7 +48,11 @@ const STAGE = `
 const COMMIT = `
   mutation EditCommit($id: ID!, $note: String) {
     orderEditCommit(id: $id, notifyCustomer: false, staffNote: $note) {
-      order { id name displayFinancialStatus currentTotalPriceSet { shopMoney { amount } } totalOutstandingSet { shopMoney { amount } } }
+      order {
+        id name displayFinancialStatus
+        currentTotalPriceSet { shopMoney { amount } } totalOutstandingSet { shopMoney { amount } }
+        paymentCollectionDetails { additionalPaymentCollectionUrl }
+      }
       userErrors { field message }
     }
   }
@@ -116,7 +120,8 @@ export async function stageShippingChange({
 
 /**
  * Commit a staged edit. SHOPIFY_WRITES only. The customer is not notified by
- * the edit itself; the balance invoice is sent separately.
+ * the edit itself; they are redirected to Shopify's payment page for the
+ * balance (paymentUrl), and the invoice email is only a fallback.
  */
 export async function commitShippingChange({ shop, token, orderName, calculatedOrderId, staffNote, fetchImpl }) {
   const blocked = blockedReason(orderName, shopifyWritesEnabled);
@@ -131,6 +136,9 @@ export async function commitShippingChange({ shop, token, orderName, calculatedO
     financialStatus: r.order.displayFinancialStatus,
     outstandingCents: toCents(r.order.totalOutstandingSet?.shopMoney?.amount),
     totalCents: toCents(r.order.currentTotalPriceSet?.shopMoney?.amount),
+    // Shopify's own page for paying the balance — the same checkout the
+    // customer used to buy. The customer is sent straight there.
+    paymentUrl: r.order.paymentCollectionDetails?.additionalPaymentCollectionUrl ?? null,
   };
 }
 

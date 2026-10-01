@@ -299,7 +299,8 @@ async function requestChange(deps, authorised, event) {
   const existing = await deps.loadPending(orderName);
   if (existing?.status === 'pending') {
     return existing.to === service
-      ? json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents) })
+      ? json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
+        ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) })
       : json(409, { error: 'already_pending' });
   }
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
@@ -343,8 +344,14 @@ async function requestChange(deps, authorised, event) {
       committedOutstandingCents: committed.outstandingCents });
     return json(502, { error: 'commit_mismatch' });
   }
-  await deps.savePending(change);
+  await deps.savePending({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}) });
 
+  // Shopify's own payment page for the balance: the customer pays exactly as
+  // they did at checkout, nothing of ours handles the card. Only if Shopify
+  // gave no such page do we fall back to emailing the invoice.
+  if (committed.paymentUrl) {
+    return json(200, { requested: true, total: centsToDollars(q.totalCents), paymentUrl: committed.paymentUrl });
+  }
   const invoice = await deps.sendInvoice({ orderName, orderId: q.edit.orderId });
   if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
   return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent) });

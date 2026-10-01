@@ -96,3 +96,24 @@ describe('Send me the invoice', () => {
     assert.equal(log.commits.length, 0);
   });
 });
+
+describe('Shopify payment page', () => {
+  const PAY = 'https://stickersbanners.com/94758830375/order_payment/7504207282471?secret=x';
+
+  test('when Shopify gives a payment page, the customer is sent there and no invoice is emailed', async () => {
+    const { handler, log } = build({ commit: { committed: true, outstandingCents: 3621, paymentUrl: PAY } });
+    const { status, body } = read(await post(handler, OK));
+    assert.equal(status, 200);
+    assert.deepEqual(body, { requested: true, total: 36.21, paymentUrl: PAY });
+    assert.equal(log.invoices.length, 0);
+    assert.equal(log.saved[0].paymentUrl, PAY);
+  });
+
+  test('a second click on a pending change goes back to the same payment page', async () => {
+    const { handler, log } = build({ pending: { status: 'pending', to: 'FedEx 1-Day', shippingCents: 3396, taxCents: 225, paymentUrl: PAY } });
+    const { status, body } = read(await post(handler, OK));
+    assert.equal(status, 200);
+    assert.equal(body.paymentUrl, PAY);
+    assert.equal(log.commits.length, 0);
+  });
+});

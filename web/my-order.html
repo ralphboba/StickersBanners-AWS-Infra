@@ -133,7 +133,7 @@
         </div>
         <button class="cta" id="send" type="submit" disabled>Select an upgrade above</button>
         <p class="fine">The amount shown is the total you'll be charged, tax included.
-          Nothing changes until you pay the invoice — if you close this page, your order ships
+          Nothing changes until you pay — if you leave the payment page, your order ships
           on its current service.</p>
       </form>
 
@@ -251,7 +251,7 @@
         var v = picked ? parseFloat(picked.value) : 0;
         set('total', money(v));
         $('send').disabled = !(v > 0);
-        set('send', v > 0 ? 'Send me the invoice — ' + money(v) : 'Select an upgrade above');
+        set('send', v > 0 ? 'Pay ' + money(v) + ' and upgrade' : 'Select an upgrade above');
       };
       Array.prototype.forEach.call(radios, function (el) { el.addEventListener('change', update); });
       update();
@@ -261,7 +261,7 @@
         var picked = document.querySelector('input[name="svc"]:checked');
         if (!picked || !(parseFloat(picked.value) > 0)) return;
         $('send').disabled = true;
-        set('send', 'Sending your invoice…');
+        set('send', 'Opening secure checkout…');
         // The server re-prices from Shopify and commits only if the amount is
         // still exactly the one shown here.
         fetch('/api/my-order/request', {
@@ -269,8 +269,19 @@
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({ o: o, s: s, service: up.to, expectedTotal: up.total }),
         })
-          .then(function (r) { return r.json().then(function (b) { return { status: r.status, b: b }; }); })
+          .then(function (r) {
+            return r.text().then(function (t) {
+              var b = {};
+              try { b = JSON.parse(t); } catch (err) { b = {}; }
+              return { status: r.status, b: b };
+            });
+          })
           .then(function (res) {
+            if (res.status === 200 && res.b.paymentUrl) {
+              // Shopify's own payment page, the same checkout as the original order.
+              window.location.href = res.b.paymentUrl;
+              return;
+            }
             if (res.status === 200) {
               set('send', 'Invoice sent — check your email');
               return;
@@ -282,7 +293,7 @@
               picked.value = String(up.total);
               set('total', money(up.total));
               $('send').disabled = false;
-              set('send', 'The amount changed — send me the invoice for ' + money(up.total));
+              set('send', 'The amount changed — pay ' + money(up.total) + ' and upgrade');
               return;
             }
             set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
