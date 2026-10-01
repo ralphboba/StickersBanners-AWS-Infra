@@ -5,7 +5,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { getConfig } from '../lib/config/environments';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev') {
+function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string) {
   const app = new cdk.App();
   const config = getConfig(envName);
   // Dependencies live in their own stack (mirrors the real app wiring).
@@ -25,6 +25,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     jobsTable,
     intakeQueue,
     notifyQueue,
+    shippingChangeTestOrders,
   });
   return Template.fromStack(stack);
 }
@@ -58,6 +59,28 @@ describe('ComputeStack', () => {
       expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBe('disabled');
       expect(fn.Properties.Environment.Variables.ORDERDESK_UPGRADE_WRITES).toBe('disabled');
     }
+  });
+
+  test('a test list arms the writes for those orders only', () => {
+    const fns = Object.values(synth('dev', 's64262').findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+    for (const fn of fns) {
+      const v = fn.Properties.Environment.Variables;
+      expect(v.SHOPIFY_WRITES).toBe('enabled');
+      expect(v.ORDERDESK_UPGRADE_WRITES).toBe('enabled');
+      expect(v.WRITE_ONLY_ORDERS).toBe('S64262');
+    }
+    // The public read-only function is never armed.
+    const status = Object.values(synth('dev', 'S64262').findResources('AWS::Lambda::Function'))
+      .find((fn) => fn.Properties.FunctionName === 'sb-dev-order-status-api');
+    expect(status?.Properties.Environment.Variables.SHOPIFY_WRITES).toBeUndefined();
+  });
+
+  test('without a test list there is no WRITE_ONLY_ORDERS, and a bad list is refused', () => {
+    for (const fn of Object.values(synth().findResources('AWS::Lambda::Function'))) {
+      expect(fn.Properties.Environment?.Variables?.WRITE_ONLY_ORDERS).toBeUndefined();
+    }
+    expect(() => synth('dev', '*')).toThrow(/order names/);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {

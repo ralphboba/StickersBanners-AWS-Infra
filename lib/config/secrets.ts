@@ -57,6 +57,9 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   // Google Chat (order notifications: proof-ready / complete / failed)
   { group: 'googlechat', key: 'webhook-url', description: 'Google Chat incoming-webhook URL for order notifications' },
 
+  // Google Chat — one line per paid customer shipping change (src/shared/gchat.mjs)
+  { group: 'gchat', key: 'webhook-url', description: 'Google Chat space webhook for paid shipping changes' },
+
   // Gmail (transactional email via app password)
   { group: 'gmail', key: 'user', description: 'Gmail account address' },
   { group: 'gmail', key: 'app-password', description: 'Gmail app password' },

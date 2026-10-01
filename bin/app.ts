@@ -125,6 +125,9 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   // portal has to be repointed at our API (open question with him).
   proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
+  // `--context testOrders=S64262` arms the shipping-change writes for that
+  // order only. Omit it and every write switch stays disabled.
+  shippingChangeTestOrders: app.node.tryGetContext('testOrders') as string | undefined,
   description: `StickersBanners Lambda compute (${config.env})`,
 });
 

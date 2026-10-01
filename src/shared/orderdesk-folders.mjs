@@ -79,6 +79,12 @@ export const FOLDERS = [
   { id: '674908', name: 'NV Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_nv', facility: 'NV', window: 'restricted' },
   { id: '82463', name: 'CA Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_ca', facility: 'CA', window: 'restricted' },
 
+  // ── staff test orders ─────────────────────────────────────────────────────
+  // Kai's own folder for test orders (S64262). Nothing real is filed here and
+  // no legacy rule reads it. Treated as before production so the customer
+  // shipping change can be exercised end to end; not mirrored, not written to.
+  { id: '711436', name: 'Kai-TEST-processed', stage: 'proofing', window: 'open' },
+
   // ── end of the line ───────────────────────────────────────────────────────
   { id: '3516', name: 'Completed Orders', stage: 'completed', window: 'closed' },
 ];

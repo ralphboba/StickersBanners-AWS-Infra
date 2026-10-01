@@ -47,6 +47,24 @@ export class WebappStack extends cdk.Stack {
       autoDeleteObjects: true,
     });
 
+    // The customer page (web/my-order.html) calls /api/my-order… on its own
+    // origin, and the confirmation-email button links to /my-order. One viewer-
+    // request function serves both: /my-order -> /my-order.html, and /api/x ->
+    // /x for the API Gateway origin below (its routes have no /api prefix).
+    const paths = new cloudfront.Function(this, 'PathRewrite', {
+      comment: 'my-order page alias + strip /api for the HTTP API',
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline([
+        'function handler(event) {',
+        '  var r = event.request;',
+        "  if (r.uri === '/my-order' || r.uri === '/my-order/') r.uri = '/my-order.html';",
+        "  else if (r.uri.indexOf('/api/') === 0) r.uri = r.uri.substring(4);",
+        '  return r;',
+        '}',
+      ].join('\n')),
+    });
+    const rewrite = [{ function: paths, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }];
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: `StickersBanners staff dashboard (${config.env})`,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
@@ -54,6 +72,19 @@ export class WebappStack extends cdk.Stack {
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(siteBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        functionAssociations: rewrite,
+      },
+      additionalBehaviors: {
+        // The HTTP API, same origin as the page: no CORS, nothing cached, the
+        // query string (order + token) and body passed through untouched.
+        '/api/*': {
+          origin: new origins.HttpOrigin(cdk.Fn.select(2, cdk.Fn.split('/', apiBase))),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          functionAssociations: rewrite,
+        },
       },
       // Single-page app: unknown paths fall back to index.html.
       errorResponses: [
@@ -76,6 +107,11 @@ export class WebappStack extends cdk.Stack {
           cdnBase: cdnBase ?? '',
         }),
       ],
+    });
+
+    new cdk.CfnOutput(this, 'MyOrderUrl', {
+      value: `https://${this.distribution.distributionDomainName}/my-order`,
+      description: 'Customer "Manage my order" page (add ?o=<order>&s=<order_status_url>)',
     });
 
     new cdk.CfnOutput(this, 'DashboardUrl', {

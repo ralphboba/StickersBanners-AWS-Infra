@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib/core';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { getConfig } from '../lib/config/environments';
 import { WebappStack } from '../lib/stacks/webapp-stack';
 
@@ -43,5 +43,28 @@ describe('WebappStack', () => {
   test('deploys the site contents (BucketDeployment custom resource)', () => {
     // s3-deployment renders a Custom::CDKBucketDeployment resource.
     synth().resourceCountIs('Custom::CDKBucketDeployment', 1);
+  });
+
+  test('routes /api/* to the HTTP API, uncached, all methods (customer page, same origin)', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: {
+        CacheBehaviors: [Match.objectLike({
+          PathPattern: '/api/*',
+          AllowedMethods: Match.arrayWith(['GET', 'POST']),
+          CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad', // CachingDisabled
+        })],
+        Origins: Match.arrayWith([Match.objectLike({ DomainName: 'api.example.com' })]),
+      },
+    });
+  });
+
+  test('a viewer-request function maps /my-order to the page and strips /api', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::CloudFront::Function', 1);
+    const fns = template.findResources('AWS::CloudFront::Function');
+    const code = String(Object.values(fns)[0].Properties.FunctionCode);
+    expect(code).toContain("r.uri = '/my-order.html'");
+    expect(code).toContain('r.uri.substring(4)');
   });
 });
