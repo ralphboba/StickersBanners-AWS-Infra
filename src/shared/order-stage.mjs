@@ -120,7 +120,7 @@ const LADDER = [
 /**
  * The next service up from what the customer already has.
  * @param {string} shippingMethod  the order's current shipping_method
- * @returns {{ from: string, to: string|null, top: boolean } | null}
+ * @returns {{ from: string, to: string|null, top: boolean, options: string[] } | null}
  *          null when the method is not on the ladder at all (pickup, Saturday
  *          Overnight, anything unrecognised) — those get no speed upgrade.
  */
@@ -128,9 +128,11 @@ export function nextService(shippingMethod) {
   const m = String(shippingMethod ?? '').toLowerCase();
   if (OFF_LADDER.some((k) => m.includes(k))) return null;
   if (isPickup(m)) return null;
-  for (const rung of LADDER) {
+  for (const [i, rung] of LADDER.entries()) {
     if (rung.match.some((k) => m.includes(k))) {
-      return { from: rung.from, to: rung.to, top: rung.to === null };
+      // Every faster service, nearest first (Kai, 2026-10-01: "show them all").
+      const options = LADDER.slice(i + 1).map((r) => r.from);
+      return { from: rung.from, to: rung.to, top: rung.to === null, options };
     }
   }
   return null;
@@ -198,6 +200,7 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
       known: Boolean(folder),
       canUpgrade: false,
       upgradeTo: null,
+      upgradeOptions: [],
       canConvert: convertible,
       convertTo: convertible ? [...DELIVERY_OPTIONS] : [],
       blockedBy: convertible ? null
@@ -230,5 +233,7 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
     blockedBy,
     currentService: ladder?.from ?? (shippingMethod ?? null),
     upgradeTo: blockedBy === null ? ladder.to : null,
+    // Every faster service the customer may pick; upgradeTo is the first.
+    upgradeOptions: blockedBy === null ? [...ladder.options] : [],
   };
 }

@@ -136,3 +136,36 @@ describe('page opened again while an upgrade waits for payment', () => {
     assert.equal(body.shipping.canUpgrade, false);
   });
 });
+
+describe('every faster service', () => {
+  const GROUND_ROW = { ...ROW, shipping: { ...ROW.shipping, method: 'FedEx Ground' } };
+  const priced = { 'FedEx 3-Days': 1738, 'FedEx 2-Days': 3386, 'FedEx 1-Day': 7355 };
+  const deps = (extra = {}) => ({
+    loadRow: async () => GROUND_ROW,
+    loadShopifyOrder: async () => ({ name: 'S1', outstandingCents: 0 }),
+    quote: async ({ to }) => (priced[to] ? { ok: true, to, shippingCents: priced[to], taxCents: 0, totalCents: priced[to], fromCents: 1570, toCents: 1570 + priced[to] }
+      : { ok: false, reason: 'service_unavailable' }),
+    estimates: async () => null,
+    ...extra,
+  });
+  const get = (h) => h({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order', queryStringParameters: { o: 'S1', s: URL } });
+
+  test('a Ground order is offered 3-Days, 2-Days and 1-Day, each with its own Shopify price', async () => {
+    const body = JSON.parse((await get(makeHandler(deps()))).body);
+    assert.deepEqual(body.shipping.upgrades.map((u) => [u.to, u.total]), [['FedEx 3-Days', 17.38], ['FedEx 2-Days', 33.86], ['FedEx 1-Day', 73.55]]);
+    assert.equal(body.shipping.upgrade.to, 'FedEx 3-Days');
+  });
+
+  test('an order-level refusal stops the loop and offers nothing', async () => {
+    let calls = 0;
+    const body = JSON.parse((await get(makeHandler(deps({ quote: async () => { calls += 1; return { ok: false, reason: 'price_unverified' }; } })))).body);
+    assert.equal(body.shipping.canUpgrade, false);
+    assert.equal(calls, 1);
+  });
+
+  test('a service not sold at this subtotal is just left out', async () => {
+    delete priced['FedEx 2-Days'];
+    const body = JSON.parse((await get(makeHandler(deps()))).body);
+    assert.deepEqual(body.shipping.upgrades.map((u) => u.to), ['FedEx 3-Days', 'FedEx 1-Day']);
+  });
+});

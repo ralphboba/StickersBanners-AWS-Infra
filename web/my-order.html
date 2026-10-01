@@ -127,14 +127,7 @@
             </span>
             <span class="pr">—</span>
           </label>
-          <label class="opt">
-            <input type="radio" name="svc" id="pickUpgrade">
-            <span class="b">
-              <span class="nm" id="upName"></span>
-              <span class="sub" id="upSub"></span>
-            </span>
-            <span class="pr" id="upPrice"></span>
-          </label>
+          <div id="upOpts"></div>
         </fieldset>
 
         <div class="total">
@@ -238,45 +231,44 @@
       $('awaitingPay').href = ap.paymentUrl;
       $('awaiting').hidden = false;
     } else if (sh.canUpgrade && sh.upgrade) {
-      var up = sh.upgrade;
+      // Every faster service Shopify priced, nearest first. Only figures the
+      // customer will actually be billed (tax included) are ever shown.
+      var ups = (sh.upgrades && sh.upgrades.length ? sh.upgrades : [sh.upgrade]).filter(function (u) { return u.final; });
       set('keepName', sh.current);
-      set('upName', up.to);
-
-      // Only ever show a figure the customer will actually be billed. `total`
-      // includes the tax Shopify charges on the upgrade; until Shopify has
-      // priced it, no amount is shown and the button stays shut.
-      if (up.final) {
-        set('upSub', 'Arrives sooner — includes tax');
-        set('upPrice', '+' + money(up.total));
-        $('pickUpgrade').value = String(up.total);
-      } else {
-        set('upSub', 'Arrives sooner');
-        set('upPrice', '—');
-        $('pickUpgrade').disabled = true;
-      }
+      var box = $('upOpts');
+      ups.forEach(function (u, i) {
+        var label = document.createElement('label');
+        label.className = 'opt';
+        var input = document.createElement('input');
+        input.type = 'radio'; input.name = 'svc'; input.value = String(i + 1);
+        var b = document.createElement('span'); b.className = 'b';
+        var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = u.to;
+        var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
+        b.appendChild(nm); b.appendChild(sub);
+        var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
+        label.appendChild(input); label.appendChild(b); label.appendChild(pr);
+        box.appendChild(label);
+      });
       $('upgrade').hidden = false;
 
-      var radios = document.querySelectorAll('input[name="svc"]');
-      var update = function () {
-        if (!up.final) {
-          set('total', '—');
-          $('send').disabled = true;
-          set('send', 'Pricing unavailable right now');
-          return;
-        }
+      var chosen = function () {
         var picked = document.querySelector('input[name="svc"]:checked');
-        var v = picked ? parseFloat(picked.value) : 0;
-        set('total', money(v));
-        $('send').disabled = !(v > 0);
-        set('send', v > 0 ? 'Pay ' + money(v) + ' and upgrade' : 'Select an upgrade above');
+        var n = picked ? parseInt(picked.value, 10) : 0;
+        return n > 0 ? ups[n - 1] : null;
       };
-      Array.prototype.forEach.call(radios, function (el) { el.addEventListener('change', update); });
+      var update = function () {
+        var u = chosen();
+        set('total', money(u ? u.total : 0));
+        $('send').disabled = !u;
+        set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
+      };
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="svc"]'), function (el) { el.addEventListener('change', update); });
       update();
 
       $('upgrade').addEventListener('submit', function (e) {
         e.preventDefault();
-        var picked = document.querySelector('input[name="svc"]:checked');
-        if (!picked || !(parseFloat(picked.value) > 0)) return;
+        var u = chosen();
+        if (!u) return;
         $('send').disabled = true;
         set('send', 'Opening secure checkout…');
         // The server re-prices from Shopify and commits only if the amount is
@@ -284,7 +276,7 @@
         fetch('/api/my-order/request', {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
-          body: JSON.stringify({ o: o, s: s, service: up.to, expectedTotal: up.total }),
+          body: JSON.stringify({ o: o, s: s, service: u.to, expectedTotal: u.total }),
         })
           .then(function (r) {
             return r.text().then(function (t) {
@@ -305,12 +297,11 @@
             }
             if (res.status === 409 && res.b.error === 'price_changed') {
               // Show the new figure and let the customer decide again.
-              up.total = res.b.total;
-              set('upPrice', '+' + money(up.total));
-              picked.value = String(up.total);
-              set('total', money(up.total));
-              $('send').disabled = false;
-              set('send', 'The amount changed — pay ' + money(up.total) + ' and upgrade');
+              u.total = res.b.total;
+              var labels = $('upOpts').querySelectorAll('.pr');
+              labels[ups.indexOf(u)].textContent = '+' + money(u.total);
+              update();
+              set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
               return;
             }
             set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');

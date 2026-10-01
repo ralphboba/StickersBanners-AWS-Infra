@@ -157,22 +157,32 @@ async function status(deps, authorised, event) {
     ? await deps.loadShopifyOrder(orderName)
     : null;
 
+  // Every faster service, each priced by Shopify on its own staged edit.
+  // One at a time (the Shopify client never fans out). A refusal that is about
+  // the ORDER (price not verifiable, balance due, …) applies to every option,
+  // so the loop stops there; "service not sold at this subtotal" is per option.
+  const upgrades = [];
   if (stage.canUpgrade) {
-    const q = await deps.quote({ order: shopifyOrder, to: stage.upgradeTo, expectedFrom: currentMethod });
-    if (q.ok) {
-      upgrade = {
-        to: q.to,
-        shipping: centsToDollars(q.shippingCents),
-        tax: centsToDollars(q.taxCents),
-        total: centsToDollars(q.totalCents),
-        final: true,
-        currentPrice: centsToDollars(q.fromCents),
-        newPrice: centsToDollars(q.toCents),
-      };
-    } else {
+    for (const to of stage.upgradeOptions ?? [stage.upgradeTo]) {
+      const q = await deps.quote({ order: shopifyOrder, to, expectedFrom: currentMethod });
+      if (q.ok) {
+        upgrades.push({
+          to: q.to,
+          shipping: centsToDollars(q.shippingCents),
+          tax: centsToDollars(q.taxCents),
+          total: centsToDollars(q.totalCents),
+          final: true,
+          currentPrice: centsToDollars(q.fromCents),
+          newPrice: centsToDollars(q.toCents),
+        });
+        continue;
+      }
       logRefusal(orderName, q.reason);
-      refusal = q.reason === 'service_unavailable' ? SERVICE_UNAVAILABLE_COPY : UNPRICEABLE_COPY;
+      if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
+      refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
     }
+    upgrade = upgrades[0] ?? null;
+    if (upgrade) refusal = null;
   }
 
   // ── the delivery conversion ───────────────────────────────────────────
@@ -202,6 +212,7 @@ async function status(deps, authorised, event) {
     shipping: {
       current: stage.currentService ?? currentMethod,
       canUpgrade: Boolean(upgrade),
+      upgrades,
       canConvert: Boolean(delivery),
       reason: offering ? null
         : (refusal ?? BLOCKED_COPY[stage.blockedBy] ?? BLOCKED_COPY.unknown_folder),
@@ -313,7 +324,7 @@ async function requestChange(deps, authorised, event) {
   if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
 
   const stage = stageFor(row);
-  if (!stage.canUpgrade || stage.upgradeTo !== service) {
+  if (!stage.canUpgrade || !(stage.upgradeOptions ?? [stage.upgradeTo]).includes(service)) {
     return json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY });
   }
 

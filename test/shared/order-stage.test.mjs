@@ -9,9 +9,13 @@ import { FOLDERS } from '../../src/shared/orderdesk-folders.mjs';
 
 describe('the upgrade ladder', () => {
   test('3-Day buys 2-Day, 2-Day buys 1-Day, 1-Day buys nothing', () => {
-    assert.deepEqual(nextService('3-Day Shipping'), { from: 'FedEx 3-Days', to: 'FedEx 2-Days', top: false });
-    assert.deepEqual(nextService('2-Day Shipping'), { from: 'FedEx 2-Days', to: 'FedEx 1-Day', top: false });
-    assert.deepEqual(nextService('1-Day Shipping'), { from: 'FedEx 1-Day', to: null, top: true });
+    assert.deepEqual(nextService('3-Day Shipping'), { from: 'FedEx 3-Days', to: 'FedEx 2-Days', top: false, options: ['FedEx 2-Days', 'FedEx 1-Day'] });
+    assert.deepEqual(nextService('2-Day Shipping'), { from: 'FedEx 2-Days', to: 'FedEx 1-Day', top: false, options: ['FedEx 1-Day'] });
+    assert.deepEqual(nextService('1-Day Shipping'), { from: 'FedEx 1-Day', to: null, top: true, options: [] });
+  });
+
+  test('every faster service is offered, nearest first (Kai, 2026-10-01)', () => {
+    assert.deepEqual(nextService('FedEx Ground').options, ['FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
   });
 
   test('the spellings that actually appear on orders all match', () => {

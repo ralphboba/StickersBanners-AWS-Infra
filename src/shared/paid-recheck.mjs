@@ -25,6 +25,6 @@ export function stillAllowed(od, change) {
   });
   const ok = isPickup(od.shipping_method)
     ? stage.canConvert && stage.convertTo.includes(change.to)
-    : stage.canUpgrade && stage.upgradeTo === change.to;
+    : stage.canUpgrade && (stage.upgradeOptions ?? [stage.upgradeTo]).includes(change.to);
   return ok ? { allowed: true } : { allowed: false, reason: stage.blockedBy ?? 'no_longer_offered', label: stage.label };
 }
