@@ -22,7 +22,10 @@ import { timingSafeEqual } from 'node:crypto';
  * "notshopify.com".endsWith("shopify.com") is true and so is
  * "myshopify.com.evil.com".endsWith(...) for a carelessly chosen suffix.
  */
-const ALLOWED_DOMAINS = ['myshopify.com', 'shopify.com', 'shop.app'];
+// stickersbanners.com: the store has a custom domain, and Shopify builds the
+// order-status URL on it (https://stickersbanners.com/<shop id>/orders/<token>/…),
+// both in the email's {{ order_status_url }} and in the API's statusPageUrl.
+const ALLOWED_DOMAINS = ['myshopify.com', 'shopify.com', 'shop.app', 'stickersbanners.com'];
 
 /**
  * Pull the opaque token out of a Shopify order-status URL.
@@ -82,9 +85,10 @@ export function authorisesOrder(presentedUrl, storedUrl) {
   const presented = parseOrderStatusUrl(presentedUrl);
   const stored = parseOrderStatusUrl(storedUrl);
   if (!presented || !stored) return false;
-  if (!secretsMatch(presented.token, stored.token)) return false;
-  // When the stored URL carries a key, the presented one must carry the same.
-  // When it does not, we do not start demanding one.
-  if (stored.key !== null && !secretsMatch(presented.key, stored.key)) return false;
-  return true;
+  // The order token (32 hex characters, unguessable, one per order) is the
+  // secret. The ?key= is NOT compared: Shopify hands out more than one for the
+  // same order — the email's order_status_url carried key=shcct_… while the
+  // API's statusPageUrl for the same order carried a different hex key
+  // (S64262, 2026-10-01) — so demanding a match refused the real customer.
+  return secretsMatch(presented.token, stored.token);
 }

@@ -78,17 +78,17 @@ describe('authorisation', () => {
     assert.equal(authorisesOrder(other, URL_A), false);
   });
 
-  test('the right token with the wrong key does not', () => {
-    assert.equal(authorisesOrder(URL_A.replace('abc123', 'wrong'), URL_A), false);
+  test('the key is not compared: Shopify issues more than one per order', () => {
+    // Real S64262: the email carried key=shcct_…, the API URL a hex key.
+    assert.equal(authorisesOrder(URL_A.replace('abc123', 'shcct_OTJmdlhMbHZ2S0F3'), URL_A), true);
+    assert.equal(authorisesOrder(`https://s.myshopify.com/12345/orders/${TOKEN}`, URL_A), true);
   });
 
-  test('dropping the key does not get past a stored key', () => {
-    assert.equal(authorisesOrder(`https://s.myshopify.com/12345/orders/${TOKEN}`, URL_A), false);
-  });
-
-  test('a stored URL with no key does not start demanding one', () => {
-    const noKey = `https://s.myshopify.com/12345/orders/${TOKEN}`;
-    assert.equal(authorisesOrder(noKey, noKey), true);
+  test("the store's own domain is accepted (custom-domain order-status URLs)", () => {
+    const email = `https://stickersbanners.com/94758830375/orders/${TOKEN}/authenticate?key=shcct_x`;
+    const api = `https://stickersbanners.com/94758830375/orders/${TOKEN}/authenticate?key=818e2634`;
+    assert.equal(authorisesOrder(email, api), true);
+    assert.equal(parseOrderStatusUrl(`https://stickersbanners.com.evil.com/1/orders/${TOKEN}`), null);
   });
 
   test('nothing stored authorises nothing', () => {

@@ -68,11 +68,11 @@ node scripts/shopify-webhooks.mjs list
 ## 7. 메일 버튼 (S64262에게만 보이게)
 
 Shopify 관리자 → Settings → Notifications → Order confirmation → Edit code. `shopify-email-button.md`의
-위치에 아래를 붙인다. `{% if order_name == '#S64262' %}` 덕분에 **실제 고객 메일에는 아무것도 바뀌지
+위치에 아래를 붙인다. `{% if order_name == 'S64262' or order_name == '#S64262' %}` 덕분에 **실제 고객 메일에는 아무것도 바뀌지
 않는다.** `<MyOrderUrl>`은 4단계 값.
 
 ```liquid
-{% if order_name == '#S64262' %}
+{% if order_name == 'S64262' or order_name == '#S64262' %}
   <table cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
     <tr>
       <td align="center" style="border:1px solid {{ shop.email_accent_color }}; border-radius:4px; padding:11px 22px;">
@@ -99,5 +99,5 @@ Shopify 관리자 → Settings → Notifications → Order confirmation → Edit
 node scripts/shopify-webhooks.mjs remove
 npx cdk deploy sb-dev-webapp --context env=dev      # testOrders 없이 → 쓰기 스위치 전부 off
 ```
-템플릿의 `{% if order_name == '#S64262' %}` 블록은 지워도 되고 둬도 된다(S64262 외엔 안 보임).
+템플릿의 `{% if order_name == 'S64262' or order_name == '#S64262' %}` 블록은 지워도 되고 둬도 된다(S64262 외엔 안 보임).
 S64262 원상복구는 Claude에게 요청.
