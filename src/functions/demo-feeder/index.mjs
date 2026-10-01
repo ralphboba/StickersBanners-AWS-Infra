@@ -7,9 +7,11 @@
 //     real Zendesk email and the transfer container performs no real FTP/Drive.
 //   * it never reads or writes real OrderDesk orders (the real poller stays OFF).
 //
-// Each tick it refreshes the first slot that is missing or finished
-// (pickup_*/failed/awaiting_admin), re-seeding it and re-enqueuing to intake, so
-// the board stays populated and active without unbounded growth.
+// Each tick it refreshes ONE slot — whichever free slot (pickup_*/failed/
+// awaiting_admin/missing) was fed longest ago — re-seeding it and re-enqueuing
+// to intake, so the board stays active without unbounded growth and every
+// variant gets its turn through the image containers. See rotation.mjs for why
+// "longest ago" and not "first free".
 
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -17,17 +19,21 @@ import {
   DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
+import { chooseSlot } from './rotation.mjs';
 
 const sqs = new SQSClient({});
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+// cleanOrder leaves some keys undefined by design (folder when OrderDesk sends
+// no folder_name, proofName when a line item has no id). The document client
+// throws on those unless told to drop them — the poller has always been
+// configured this way; this one was not, and inherited the same job shape.
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const DEMO_COUNT = Number(process.env.DEMO_COUNT) || 5;
 const DEMO_ARTWORK = process.env.DEMO_ARTWORK || 'TEST001/art.png';
-
-// A slot is "busy" (leave it alone) only while still moving through the pipeline.
-const BUSY = new Set(['in_queue', 'printing', 'proofing']);
 
 // Variety so the board looks like real traffic (size, finishing, destination).
 // `fac` gives each demo order an explicit facility so the board spreads across
@@ -80,12 +86,12 @@ function buildDemoJob(slot) {
   return job;
 }
 
-async function slotStatus(orderName) {
+async function slotState(slot, orderName) {
   const res = await ddb.send(new GetCommand({
     TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' },
-    ProjectionExpression: '#s', ExpressionAttributeNames: { '#s': 'status' },
+    ProjectionExpression: '#s, fedAt', ExpressionAttributeNames: { '#s': 'status' },
   }));
-  return res.Item?.status;
+  return { slot, status: res.Item?.status, fedAt: res.Item?.fedAt };
 }
 
 async function refreshSlot(job) {
@@ -98,6 +104,9 @@ async function refreshSlot(job) {
     Item: {
       PK: `ORDER#${job.orderName}`, SK: 'META',
       GSI1PK: 'STATUS#in_queue', GSI1SK: job.createdAt, status: 'in_queue', ...job,
+      // Read back by chooseSlot next tick — this is what makes the rotation
+      // "least recently fed" rather than "first free".
+      fedAt: new Date().toISOString(),
     },
   }));
   await sqs.send(new SendMessageCommand({
@@ -109,16 +118,27 @@ async function refreshSlot(job) {
 }
 
 export async function handler() {
-  // Refresh the first slot that is free (missing or finished). One per tick keeps
-  // the ECS footprint gentle while the board stays continuously active.
-  for (let slot = 1; slot <= DEMO_COUNT; slot += 1) {
-    const job = buildDemoJob(slot);
-    const status = await slotStatus(job.orderName);
-    if (status && BUSY.has(status)) continue; // still moving — leave it
-    await refreshSlot(job);
-    console.log(JSON.stringify({ msg: 'demo order fed', orderName: job.orderName, prevStatus: status ?? 'none' }));
-    return { fed: job.orderName, prevStatus: status ?? 'none' };
+  // One slot per tick keeps the ECS footprint gentle. WHICH slot is the whole
+  // point: least recently fed, so every variant gets its turn (see rotation.mjs
+  // — feeding the first free slot meant only DEMO-1 ever ran).
+  const slots = await Promise.all(
+    Array.from({ length: DEMO_COUNT }, (_, i) => slotState(i + 1, `DEMO-${i + 1}`)),
+  );
+
+  const slot = chooseSlot(slots);
+  if (slot === null) {
+    console.log(JSON.stringify({ msg: 'demo board full — all slots busy' }));
+    return { fed: null };
   }
-  console.log(JSON.stringify({ msg: 'demo board full — all slots busy' }));
-  return { fed: null };
+
+  const job = buildDemoJob(slot);
+  const prev = slots.find((s) => s.slot === slot);
+  await refreshSlot(job);
+  console.log(JSON.stringify({
+    msg: 'demo order fed',
+    orderName: job.orderName,
+    prevStatus: prev?.status ?? 'none',
+    lastFedAt: prev?.fedAt ?? 'never',
+  }));
+  return { fed: job.orderName, prevStatus: prev?.status ?? 'none' };
 }

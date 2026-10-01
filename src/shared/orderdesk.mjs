@@ -79,15 +79,134 @@ const GROMMETS_FINISHES_SHOPIFY = new Set([
 const fourSides = () => ({ grommets: { sides: ['top', 'left', 'right', 'bottom'] } });
 
 /**
+ * The unit written inside a value, or undefined.
+ *
+ * `48 in`, `6 ft`, `24"`, `3'` — the store lets people type the unit into the
+ * box, and legacy's parseFloat throws it away, which is how `SKUAB` came in as
+ * `'48 in' x '80 in'` and was printed as 48 FEET. A unit somebody typed is the
+ * most direct statement of intent available, so it outranks both the key name
+ * and the SKU table.
+ */
+export function unitInValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  if (/(?:^|[\d\s])(?:in|inch|inches)\b/i.test(text) || /\d\s*["\u201D]/.test(text)) return 'in';
+  if (/(?:^|[\d\s])(?:ft|foot|feet)\b/i.test(text) || /\d\s*['\u2019]/.test(text)) return 'ft';
+  return undefined;
+}
+
+/**
+ * The size of a line item, as the store actually recorded it.
+ *
+ * Legacy reads WIDTH/HEIGHT and nothing else, which was right for the products
+ * that existed when it was written. The store has since added product types
+ * that put the size somewhere else entirely, and a key we do not read is not an
+ * error — it is a line item with `width: undefined` that sails through the
+ * intake gate and dies in resize on `float(None)`. Found by auditing a single
+ * day (2026-09-22): 11 line items across 9 orders, 4 of which would have
+ * reached print.
+ *
+ * The four shapes, all seen in live orders that day:
+ *
+ *   WIDTH / HEIGHT                "4" / "6"                    legacy, unit inferred
+ *   Width (Feet) / Height (Feet)  "5" / "3"                    unit stated
+ *   Width (Inches) / Height …     "4" / "4"                    unit stated
+ *   Size (WxH) Inches             `145" x 91" (10' x 8' Feet)` unit stated
+ *   Diameter (Inches)             `4" Round`                   unit stated, one number
+ *
+ * Where the key names the unit, that unit is RETURNED AS A HINT and beats the
+ * SKU-table guess downstream, because a stated unit is data and the table is
+ * inference. Where it does not — the legacy pair — nothing is hinted and the
+ * existing rules run exactly as before, so no order that parses today changes.
+ *
+ * @returns {{ rawWidth: *, rawHeight: *, unitHint?: 'in'|'ft' }}
+ */
+export function readDimensions(variationList, { shopify = true } = {}) {
+  const vl = variationList ?? {};
+
+  // Legacy first, so its behaviour is never displaced by a newer key.
+  const legacyWidth = shopify ? (vl.WIDTH ?? vl.Width) : vl.WIDTH;
+  const legacyHeight = shopify ? (vl.HEIGHT ?? vl.Height) : vl.HEIGHT;
+  if (legacyWidth !== undefined || legacyHeight !== undefined) {
+    return {
+      rawWidth: legacyWidth,
+      rawHeight: legacyHeight,
+      unitHint: unitInValue(legacyWidth) ?? unitInValue(legacyHeight),
+    };
+  }
+
+  // The store is inconsistent about case and spacing ("UPLOADED FILE" next to
+  // "Uploaded File" in the same day's orders), so match on a normalised key.
+  const byKey = new Map();
+  for (const [key, value] of Object.entries(vl)) {
+    byKey.set(String(key).toLowerCase().replace(/\s+/g, ' ').trim(), value);
+  }
+
+  /** Leading number of a value like `145" x 91" (10' x 8' Feet)` or `4" Round`. */
+  const firstNumbers = (value, count) => {
+    // Anything in parentheses is a restatement in the OTHER unit — the whole
+    // point of these keys is that the unit is in the key name, so a value that
+    // also says `(10' x 8' Feet)` must not contribute its numbers.
+    const head = String(value ?? '').split('(')[0];
+    const found = head.match(/-?\d+(?:\.\d+)?/g) ?? [];
+    return found.slice(0, count).map(Number);
+  };
+
+  for (const [suffix, unit] of [['feet', 'ft'], ['ft', 'ft'], ['inches', 'in'], ['in', 'in']]) {
+    const width = byKey.get(`width (${suffix})`);
+    const height = byKey.get(`height (${suffix})`);
+    if (width !== undefined || height !== undefined) {
+      // The key and the value can disagree, and when they do the value is the
+      // one telling the truth. Live on 2026-09-23: an 8'x8' step & repeat
+      // banner arrived as `Width (Feet): "96 in"`. 96 feet is 1152 inches and
+      // the order was held as implausibly large; 96 INCHES is exactly 8 feet,
+      // which is what the product is called. Whoever built the form reused a
+      // "(Feet)" field and typed the real unit into the box.
+      const stated = unitInValue(width) ?? unitInValue(height);
+      return { rawWidth: width, rawHeight: height, unitHint: stated ?? unit };
+    }
+
+    // One field holding both, e.g. `Size (WxH) Inches`.
+    const combined = byKey.get(`size (wxh) ${suffix}`);
+    if (combined !== undefined) {
+      const [w, h] = firstNumbers(combined, 2);
+      if (Number.isFinite(w) && Number.isFinite(h)) {
+        return { rawWidth: w, rawHeight: h, unitHint: unit };
+      }
+    }
+
+    // Round products state a diameter. The print is still a square of that
+    // side, so both dimensions take it rather than inventing a shape concept.
+    const diameter = byKey.get(`diameter (${suffix})`);
+    if (diameter !== undefined) {
+      const [d] = firstNumbers(diameter, 1);
+      if (Number.isFinite(d)) return { rawWidth: d, rawHeight: d, unitHint: unit };
+    }
+  }
+
+  return { rawWidth: undefined, rawHeight: undefined };
+}
+
+/**
  * Legacy getUnit: pick the unit and remap certain nominal sizes to inches.
  * Mutates nothing — returns the effective { width, height, unit }.
  */
-export function resolveDimensions(sku, productName, rawWidth, rawHeight, variant = SHOPIFY) {
+export function resolveDimensions(sku, productName, rawWidth, rawHeight, variant = SHOPIFY,
+                                  unitHint = undefined) {
   // Fixed-size products (e.g. tents) print at a set size regardless of the
   // order's WIDTH/HEIGHT. Return those dimensions verbatim (bleed = print size).
   // Not a legacy rule — these products postdate the legacy program.
   const fixed = fixedDimensions(sku);
   if (fixed) return { ...fixed };
+
+  // The variation key named the unit (readDimensions). Then every rule below is
+  // the wrong tool: isInchSku is a guess at the unit, and the 8x8 / 4x4 remaps
+  // exist to catch a nominal size quoted in feet that is really inches. Applied
+  // to a value the store already labelled `Width (Inches)`, they would turn a
+  // genuine 8x8 inch sticker into 92x92. Stated data wins.
+  if (unitHint) {
+    return { width: parseFloat(rawWidth), height: parseFloat(rawHeight), unit: unitHint };
+  }
 
   let width = parseFloat(rawWidth);
   let height = parseFloat(rawHeight);
@@ -267,22 +386,43 @@ function extensionFromUrl(url) {
  */
 function extensionFromShopify(url) {
   const lastSegment = (s) => decodeURIComponent(String(s).split('/').pop()).replace(/\s+/g, '');
+  const escaped = escapeHashInFilename(url);
   let fileName;
   try {
-    fileName = lastSegment(new URL(url).pathname);
+    fileName = lastSegment(new URL(escaped).pathname);
   } catch {
-    fileName = lastSegment(String(url ?? '').split('?')[0]);
+    fileName = lastSegment(String(escaped).split('?')[0]);
   }
   return fileName && fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : null;
 }
 
 /** Legacy sanitizeFileLink (Shopify path only): percent-encode the artwork link. */
+/**
+ * A literal `#` in an upload URL is part of the FILENAME, not a fragment.
+ *
+ * The store builds upload URLs from the customer's own file name without
+ * escaping it, so `Banner #6.jpg` arrives as `.../Banner #6.jpg`. Every URL
+ * parser — ours and legacy's — reads that `#` as the start of a fragment and
+ * throws the rest away: the pathname ends at `Banner `, there is no extension,
+ * and the order is called missing-file. S63815 on 2026-09-26 was 18 vinyl
+ * banners with 18 perfectly good .jpg files, all sent to manual for it.
+ *
+ * Fixing only the extension is worse than not fixing it: the order would clear
+ * the gate and then resize would request `.../Banner%20` and die on a 404. So
+ * both the extension and the download URL go through here. An S3 object URL
+ * never carries a meaningful fragment, so no information is lost.
+ */
+function escapeHashInFilename(url) {
+  return String(url ?? '').replace(/#/g, '%23');
+}
+
 function sanitizeFileLink(fileLink) {
   if (!fileLink) return fileLink;
+  const escaped = escapeHashInFilename(fileLink);
   try {
-    return new URL(fileLink).href;
+    return new URL(escaped).href;
   } catch {
-    return encodeURI(String(fileLink).trim());
+    return encodeURI(String(escaped).trim()).replace(/%2523/g, '%23');
   }
 }
 
@@ -303,7 +443,17 @@ function collectArtwork(vl, metadata, variant) {
     // hands the order to sales rather than picking one.
     const fileLink = vl?.['Uploaded File'] || vl?.['UPLOADED FILE'];
     if (!fileLink) {
-      if (vl?.['Uploaded File 1']) return { ...none, hasMultipleFiles: true };
+      // Numbered uploads mean several files, in whatever case the store wrote
+      // them. Legacy checks only `Uploaded File 1` (ShopifyDetails.mjs:216), so
+      // `UPLOADED FILE 1..N` — which the store does emit — falls through to
+      // "missing file" there and did here too. S63808, S63777 and S63752 on
+      // 2026-09-26 carried 3 to 5 files each and were all reported as having
+      // none. This is a DELIBERATE divergence from legacy, approved by Kai: the
+      // order now goes to sales as multiple-files rather than to manual as
+      // missing-file. Both reach a person; only the folder differs, and this
+      // one is the true description of the order.
+      const numbered = Object.keys(vl ?? {}).some((key) => /^uploaded file \d+$/i.test(key.trim()));
+      if (numbered) return { ...none, hasMultipleFiles: true };
       return { ...none, isMissingFile: true };
     }
     const extension = extensionFromShopify(fileLink);
@@ -365,9 +515,9 @@ export function cleanOrder(order) {
     const itemNo = index + 1;
 
     // ShopifyDetails accepts the store's alternate field spellings; QTS reads
-    // only the upper-case forms.
-    const rawWidth = shopify ? (vl.WIDTH ?? vl.Width) : vl.WIDTH;
-    const rawHeight = shopify ? (vl.HEIGHT ?? vl.Height) : vl.HEIGHT;
+    // only the upper-case forms. readDimensions also covers the newer product
+    // types that record the size under a key naming its own unit.
+    const { rawWidth, rawHeight, unitHint } = readDimensions(vl, { shopify });
     const finish = shopify
       ? (vl['FINISHING OPTIONS'] ?? vl['Finishing Options'] ?? vl['Finishing options'] ?? 'not available')
       : vl['FINISHING OPTIONS'];
@@ -377,7 +527,7 @@ export function cleanOrder(order) {
 
     // Resolve dimensions/unit (with legacy remap) BEFORE finishing, so grommet
     // counts use the effective size — exactly as the legacy order path did.
-    const { width, height, unit } = resolveDimensions(sku, it.name, rawWidth, rawHeight, variant);
+    const { width, height, unit } = resolveDimensions(sku, it.name, rawWidth, rawHeight, variant, unitHint);
 
     const art = collectArtwork(vl, it.metadata, variant);
 
@@ -398,6 +548,11 @@ export function cleanOrder(order) {
       quantity,
       width,
       height,
+      // What OrderDesk recorded, kept alongside the resolved values so a wrong
+      // size can be traced to our parse or to the source data. Carried through
+      // to the poller's dryRun report; nothing downstream reads them.
+      rawWidth,
+      rawHeight,
       unit,
       finishingRaw: finish,
       finishingObj,

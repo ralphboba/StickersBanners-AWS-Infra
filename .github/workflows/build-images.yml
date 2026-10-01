@@ -61,6 +61,6 @@ jobs:
         run: |
           set -euo pipefail
           repo="$REGISTRY/sb-$TARGET_ENV-${{ matrix.service }}"
-          docker build -t "$repo:latest" "src/services/${{ matrix.service }}"
+          docker build -f "src/services/${{ matrix.service }}/Dockerfile" -t "$repo:latest" src/services
           docker push "$repo:latest"
           echo "pushed $repo:latest"

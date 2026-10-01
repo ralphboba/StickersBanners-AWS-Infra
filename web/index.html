@@ -292,6 +292,8 @@ const HOLD_LABEL={
   'special-instructions':'manual · has instructions',
   'dc-order':'manual · DC order',
   'missing-file':'manual · missing/bad file',
+  'bad-artwork':'manual · file cannot print',
+  'size-swapped':'check · size swapped?',
 };
 function holdPill(o){
   if(!o.hold||!o.hold.reason) return '';
@@ -349,12 +351,79 @@ async function demoMove(o,dir){
   await loadCounts();
   showDetail(o.orderName); // reopen on its new folder
 }
+/** Called as each missing thumbnail removes itself; the last one explains. */
+function proofGone(){
+  const box=document.getElementById('proofs'); if(!box) return;
+  if(!box.querySelector('.proofitem')){ const n=box.querySelector('.noproof'); if(n) n.style.display='block'; }
+}
 async function showDetail(name){
   let o; try { o=await api(`/orders/${encodeURIComponent(name)}`); } catch(e){ return; }
   const f=FMAP[o.status]||{name:o.status,color:'--muted'};
   const items=(o.items||[]).map(it=>`<div style="font-size:13px;padding:4px 0;color:var(--muted)">
     <b style="color:var(--ink)">${esc(it.quantity)}× ${esc(it.name||it.sku)}</b> — ${esc(it.width)}×${esc(it.height)} ${esc(it.unit||'ft')}, ${esc((it.finishingRaw)||'')}</div>`).join('');
-  const proofUrl = CONFIG.cdnBase ? `${CONFIG.cdnBase}/${encodeURIComponent(name)}/` : null;
+  // The proof files, named exactly as proofFiles() in
+  // src/functions/proof-approval/core.mjs builds them for the customer page:
+  // `{order}/{itemNo}-1v1.tif_review.jpg` and friends on the DZI CDN.
+  //
+  // This used to link `${cdnBase}/${order}/` -- an S3 "folder", which is not an
+  // object, so S3 answered AccessDenied for EVERY order, processed or not. And
+  // it was shown whenever needsProof was true, which only means an order WILL
+  // need a proof: S64494, sitting In Queue and never processed, got the link.
+  //
+  // Each item's own thumbnail is shown and links to its full review image.
+  // Whether a proof exists is decided by the file loading, not by guessing from
+  // status -- a thumbnail that 403s simply removes itself.
+  //
+  // Below them, while the order waits in Proofing, the customer's own approval
+  // page (o.customerProofUrl, minted by order-api): the exact page the proof
+  // email links to, guides and all. Its Approve button is the customer's, so
+  // pressing it counts the same as "Send to production" -- labelled as such.
+  const proofBase = CONFIG.cdnBase ? String(CONFIG.cdnBase).replace(/\/+$/,'') : '';
+  const proofItems = (proofBase && !o.mirror) ? (o.items||[]).map((it,i)=>{
+    const itemNo = it.itemNo ?? i+1;
+    const prefix = `${proofBase}/${encodeURIComponent(name)}/${encodeURIComponent(`${itemNo}-1v1.tif`)}`;
+    return { itemNo, label: it.name||it.sku||`Item ${itemNo}`,
+             thumb: `${prefix}_thumbnail.jpg`, review: `${prefix}_review.jpg` };
+  }) : [];
+  const proofSection = !o.needsProof ? ''
+    : o.mirror
+      ? `<p class="noproof" style="margin-top:12px;font-size:13px;color:var(--muted)">No proof from this system — this order is shown for reference only and is being handled by Linh's program.</p>`
+      : !proofItems.length ? ''
+      : `<div id="proofs" style="margin-top:12px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Proof</div>
+          ${proofItems.map(p=>`<a class="proofitem" href="${esc(p.review)}" target="_blank" rel="noopener"
+               style="display:inline-block;margin:0 8px 8px 0;text-align:center;font-size:12px;color:var(--accent);text-decoration:none">
+               <img src="${esc(p.thumb)}" alt="" loading="lazy"
+                    style="display:block;max-width:140px;max-height:140px;border:1px solid var(--line);border-radius:6px;background:#fff"
+                    onerror="this.closest('.proofitem').remove();proofGone()">
+               ${esc(p.itemNo)}. open ↗</a>`).join('')}
+          <p class="noproof" style="display:none;font-size:13px;color:var(--muted)">No proof has been generated for this order yet.</p>
+          ${o.customerProofUrl?`<a href="${esc(o.customerProofUrl)}" target="_blank" rel="noopener"
+               style="display:block;margin-top:6px;padding:10px 12px;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-weight:600;font-size:13px;text-decoration:none;text-align:center">
+               Open customer proof page ↗</a>
+             <div style="margin-top:6px;font-size:12px;color:var(--muted)">The page the customer sees. Its Approve button counts as the customer's approval.</div>`:''}
+        </div>`;
+  // Resize stopped this order: the file looks the other way round from the
+  // order (customer uploaded 8x3, picked 3x8). Staff pick which is right; the
+  // order then re-runs from the top. Our job record only -- never OrderDesk.
+  const swapHold = o.status==='needs_review' && o.hold?.reason==='size-swapped' && !o.mirror;
+  const flagged = swapHold ? (o.hold.items||[]) : [];
+  const pockets = flagged.some(f=>f.hasPockets);
+  const artUrl = (no)=>{ const it=(o.items||[]).find((x,i)=>String(x.itemNo??i+1)===String(no)); return it?.artworkUrl||''; };
+  const sizeBox = swapHold ? `<div class="proofbox">
+    <div class="lab"><b>Size may be swapped.</b> The customer's file is the other way round from what they ordered. Pick which one to print — the order then runs again from the start.</div>
+    ${flagged.map(f=>`<div style="font-size:13px;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
+      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}<br>
+      Ordered <b>${esc(f.ordered)}</b> · file is <b>${esc(f.file)}</b> (${esc(f.fileSize?.[0])}×${esc(f.fileSize?.[1])})
+      ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
+      <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
+      ${f.hasPockets?'<br><span style="color:var(--s-hold)">Has pole pockets / stand base — confirm the layout with the customer before swapping.</span>':''}
+    </div>`).join('')}
+    <div class="btns">
+      <button class="btn approve" id="szswap" ${pockets?'disabled title="Has pole pockets — confirm with the customer first"':''}>Swap to ${flagged.length===1?esc(flagged[0].swapped):'the file\'s way round'}</button>
+      <button class="btn reject" id="szkeep">Keep as ordered</button>
+    </div>
+    <div class="err" id="szErr"></div></div>` : '';
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
   // Demo controls: step this synthetic order forward/back through the pipeline.
@@ -379,15 +448,27 @@ async function showDetail(name){
       <dt>Created</dt><dd>${fmtDate(o.createdAt)}</dd>
     </dl>
     <div style="border-top:1px solid var(--line);padding-top:12px">${items||'<span style="color:var(--faint)">No line items</span>'}</div>
-    ${proofUrl&&o.needsProof?`<p style="margin-top:12px"><a href="${proofUrl}" target="_blank" rel="noopener" style="color:var(--accent)">Open proof viewer ↗</a></p>`:''}
+    ${proofSection}
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
       <div class="err" id="actErr"></div></div>`:''}
+    ${sizeBox}
     ${demoBox}`;
   $('drawer').classList.add('open'); $('scrim').classList.add('open');
   if(demo){
     if($('dfwd')) $('dfwd').onclick=()=>demoMove(o,+1);
     if($('dback')) $('dback').onclick=()=>demoMove(o,-1);
+  }
+  if(swapHold){
+    const decide=async(choice,label)=>{
+      if(!confirm(`${o.orderName}: ${label}?\nThe order will be processed again from the start.`)) return;
+      $('szswap').disabled=true; $('szkeep').disabled=true;
+      try{ await api(`/orders/${encodeURIComponent(o.orderName)}/size`,{method:'POST',body:JSON.stringify({choice})});
+        closeDrawer(); loadFolder(); loadCounts();
+      }catch(e){ $('szErr').textContent=e.message; $('szkeep').disabled=false; if(!pockets) $('szswap').disabled=false; }
+    };
+    $('szswap').onclick=()=>decide('swap', flagged.length===1?`print as ${flagged[0].swapped}`:'swap the flagged items');
+    $('szkeep').onclick=()=>decide('keep','print as ordered (artwork stretched)');
   }
   if(canSend){
     $('send').onclick=async()=>{ try{ $('send').disabled=true;

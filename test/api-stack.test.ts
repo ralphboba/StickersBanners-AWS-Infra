@@ -29,6 +29,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     orderChangeRequestFn: fn('OrderChangeRequest'),
     shopifyPaidFn: fn('ShopifyPaid'),
     approvalFn: fn('Approval'),
+    proofApprovalFn: fn('ProofApproval'),
     userPool,
     userPoolClient,
   });
@@ -48,11 +49,14 @@ describe('ApiStack', () => {
       'GET /my-order',
       'GET /orders',
       'GET /orders/{name}',
+      'GET /proof',
       'POST /my-order/quote',
       'POST /my-order/request',
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
+      'POST /orders/{name}/size',
+      'POST /proof/approve',
       'POST /webhook/orderdesk',
       'POST /webhook/shopify-paid',
     ]);
@@ -81,8 +85,8 @@ describe('ApiStack', () => {
     // Each checks its caller itself: the order-status token (my-order), the
     // Shopify HMAC (shopify-paid), the shared secret (orderdesk).
     expect(unauthenticated).toEqual([
-      'GET /my-order', 'POST /my-order/quote', 'POST /my-order/request',
-      'POST /webhook/orderdesk', 'POST /webhook/shopify-paid',
+      'GET /my-order', 'GET /proof', 'POST /my-order/quote', 'POST /my-order/request',
+      'POST /proof/approve', 'POST /webhook/orderdesk', 'POST /webhook/shopify-paid',
     ]);
   });
 
@@ -104,6 +108,41 @@ describe('ApiStack', () => {
     expect(byKey['POST /orders/{name}/reject'].AuthorizationType).toBe('JWT');
   });
 
+  test('the customer proof routes are public — the signed link is the credential', () => {
+    // Customers have no Cognito account and never will (Linh's portal is all
+    // they have ever seen), so a JWT here would mean nobody outside the company
+    // could approve a proof. Auth is the signed token, checked in the Lambda.
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const byKey = Object.fromEntries(
+      Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
+    );
+    expect(byKey['GET /proof'].AuthorizationType ?? 'NONE').toBe('NONE');
+    expect(byKey['POST /proof/approve'].AuthorizationType ?? 'NONE').toBe('NONE');
+  });
+
+  test('no public route can reject a proof or upload a file', () => {
+    // Linh's non-negotiables. The only reject is POST /orders/{name}/reject,
+    // which is staff-only behind Cognito; nothing accepts customer uploads.
+    const template = synth();
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
+    const publicKeys = routes
+      .filter((r) => (r.Properties.AuthorizationType ?? 'NONE') === 'NONE')
+      .map((r) => r.Properties.RouteKey);
+    expect(publicKeys.sort()).toEqual([
+      'GET /my-order',
+      'GET /proof',
+      'POST /my-order/quote',
+      'POST /my-order/request',
+      'POST /proof/approve',
+      'POST /webhook/orderdesk',
+      'POST /webhook/shopify-paid',
+    ]);
+    const allKeys = routes.map((r) => r.Properties.RouteKey);
+    expect(allKeys.filter((k) => /upload/i.test(k))).toEqual([]);
+    expect(allKeys.filter((k) => /reject/i.test(k))).toEqual(['POST /orders/{name}/reject']);
+  });
+
   test('has a JWT (Cognito) authorizer', () => {
     synth().hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
       AuthorizerType: 'JWT',
@@ -122,9 +161,10 @@ describe('ApiStack', () => {
 
   test('routes integrate with a Lambda', () => {
     const template = synth();
-    // webhook + order-api + order-status-api + order-change-request +
-    // shopify-paid + one shared approval integration (approve & reject)
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 6);
+    // webhook + order-api + staff approval (approve & reject share one)
+    // + customer proof approval (view & approve share one)
+    // + order-status-api + order-change-request + shopify-paid
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 7);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

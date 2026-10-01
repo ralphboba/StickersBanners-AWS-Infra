@@ -27,7 +27,7 @@
 //                             (the customer-paid upgrade — see write-gates.mjs)
 
 /** Legacy folderLib/tagLib live with the gate — one place for both. */
-import { ORDERDESK_FOLDERS, ORDERDESK_TAGS } from './intake-gate.mjs';
+import { folderIds, ORDERDESK_TAGS } from './intake-gate.mjs';
 import { isPickup } from './order-stage.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
 import {
@@ -58,7 +58,7 @@ export { orderDeskWritesEnabled };
 export async function updateOrderDeskDetails({
   order, orderName, tag, folder, storeId, apiKey,
 }) {
-  const folderId = ORDERDESK_FOLDERS[folder];
+  const folderId = folderIds()[folder];
   const tagValue = ORDERDESK_TAGS[tag];
   const intent = { folder, folderId, tag, tagValue };
 

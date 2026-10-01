@@ -72,6 +72,45 @@ test('resolveDimensions: SKUXBB is inch-quoted on the Shopify path only', () => 
   assert.equal(resolveDimensions('SKUXBB', 'X Banner Stand', '6', '5', QTS).unit, 'ft');
 });
 
+test('resolveDimensions: SKU-608 is inches, not feet', () => {
+  // Live order S59121. The product name contains "fabric", which opts out of
+  // the remap, so the unit comes purely from the inch-SKU lists — and this SKU
+  // was in none of them, resolving 145x91 to FEET (a 44-metre banner). The
+  // resizer scales artwork to whatever number it is handed, so the wrong unit
+  // means a print file 12x oversized, not a cosmetic label.
+  const name = "10'x8' Fabric Pop Up Display Backdrop (Banner Only)";
+  assert.deepEqual(resolveDimensions('SKU-608', name, '145', '91', SHOPIFY),
+    { width: 145, height: 91, unit: 'in' });
+  // Not a Shopify-only entry: the same product ordered through QTS is inches too.
+  assert.equal(resolveDimensions('SKU-608', name, '145', '91', QTS).unit, 'in');
+});
+
+test('resolveDimensions: the rest of the pop-up display family is inches too', () => {
+  // Found by the 2026-09-10 full-day census (350 real orders), which listed
+  // every line still resolving to an implausible number of feet. Kai confirmed
+  // all three by product name.
+  //
+  // SKU-604 is the SAME print as SKU-608 -- the backdrop sold with its stand --
+  // so it carries the identical 145x91 and must resolve identically.
+  const withStand = 'Fabric Pop Up Display Backdrop with Stand';
+  assert.deepEqual(resolveDimensions('SKU-604', withStand, '145', '91', SHOPIFY),
+    { width: 145, height: 91, unit: 'in' });
+  assert.equal(resolveDimensions('SKU-604', withStand, '145', '91', QTS).unit, 'in');
+
+  // The 8'x8' banner-only backdrop: 115x91in is its print size, the same way
+  // 145x91in is the 10'x8's.
+  const eightByEight = "8'x8' Fabric Pop Up Display Backdrop (Banner Only)";
+  assert.deepEqual(resolveDimensions('SKU-607', eightByEight, '115', '91', SHOPIFY),
+    { width: 115, height: 91, unit: 'in' });
+  assert.equal(resolveDimensions('SKU-607', eightByEight, '115', '91', QTS).unit, 'in');
+
+  // X-Banner: 30x69 is a standard panel. Note the name carries no "fabric" opt
+  // out and 30/69 miss the remap table, so again the unit rests on this list.
+  assert.deepEqual(resolveDimensions('SKUXBS', 'X-Banner', '30', '69', SHOPIFY),
+    { width: 30, height: 69, unit: 'in' });
+  assert.equal(resolveDimensions('SKUXBS', 'X-Banner', '30', '69', QTS).unit, 'in');
+});
+
 // --- finishing labels ------------------------------------------------------
 
 test('getFinishMode: live-store label spellings resolve on the Shopify path', () => {

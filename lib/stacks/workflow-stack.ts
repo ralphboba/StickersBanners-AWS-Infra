@@ -9,6 +9,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { EnvironmentConfig } from '../config/types';
@@ -104,9 +105,14 @@ export class WorkflowStack extends cdk.Stack {
         containerOverrides: [
           {
             containerDefinition: taskDef.defaultContainer!,
+            // Only the order name. The whole job used to ride along here as
+            // JOB, but ECS caps container overrides at 8192 bytes and a real
+            // 19-item order serialized to 16,004 — the task could not start and
+            // the order failed every retry. The container reads the job from
+            // its META row instead, which the poller has already written in
+            // full. See src/services/_common/jobload.py.
             environment: [
               { name: 'ORDER_NAME', value: sfn.JsonPath.stringAt('$.orderName') },
-              { name: 'JOB', value: sfn.JsonPath.jsonToString(sfn.JsonPath.entirePayload) },
             ],
           },
         ],
@@ -208,8 +214,33 @@ export class WorkflowStack extends cdk.Stack {
       )
       .otherwise(route);
 
+    // Resize can stop an order for a person: a file that cannot print
+    // (bad-artwork) or one that looks the other way round from the order
+    // (size-swapped). It records the hold on META and exits 0, and this reads
+    // it back. It used to exit 1, which retried and then MarkFailed overwrote
+    // needs_review with "failed" -- the reason was lost and staff saw a failure.
+    const checkHeld = new tasks.DynamoGetItem(this, 'CheckHeld', {
+      table: jobsTable,
+      key: {
+        PK: tasks.DynamoAttributeValue.fromString(orderPk),
+        SK: tasks.DynamoAttributeValue.fromString('META'),
+      },
+      consistentRead: true,
+      expressionAttributeNames: { '#s': 'status' },
+      projectionExpression: [new tasks.DynamoProjectionExpression().withAttribute('#s')],
+      resultSelector: { 'status.$': '$.Item.status.S' },
+      resultPath: '$.afterResize',
+    });
+    checkHeld.addCatch(markFailed, catchProps);
+    const heldForReview = new sfn.Succeed(this, 'HeldForReview', {
+      comment: 'Stopped before printing; waiting in Needs Review for a person.',
+    });
+    const afterResize = new sfn.Choice(this, 'IsHeld')
+      .when(sfn.Condition.stringEquals('$.afterResize.status', 'needs_review'), heldForReview)
+      .otherwise(finish.next(needsProof));
+
     // Pipeline picks the order up from "In Queue" -> "Printing" while it runs.
-    const definition = markPrinting.next(resize).next(finish).next(needsProof);
+    const definition = markPrinting.next(resize).next(checkHeld).next(afterResize);
 
     this.stateMachine = new sfn.StateMachine(this, 'Pipeline', {
       stateMachineName: `${config.prefix}-pipeline`,
@@ -228,6 +259,30 @@ export class WorkflowStack extends cdk.Stack {
         includeExecutionData: true,
       },
     });
+
+    // EcsRunTask grants ecs:RunTask on the task definition's EXACT revision, and
+    // every image rebuild or container-env change makes a new revision. That is
+    // a silent trap: the state machine picks up the new revision immediately,
+    // the IAM policy keeps pointing at the old one, and every execution then
+    // fails at the first ECS step with AccessDeniedException.
+    //
+    // Worse, `cdk diff` cannot see it. The policy resource is a
+    // `Fn::GetStackOutput` placeholder that the CLI substitutes at deploy time,
+    // so the unresolved templates compare equal and the stack reports "no
+    // changes" — a redeploy, even with --force, does nothing.
+    //
+    // That is exactly what happened when PRODUCTION_TRANSFER was added: every
+    // pipeline run failed at Resize until this was fixed. Granting the family
+    // (all revisions) removes the whole class.
+    this.stateMachine.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'RunAnyRevisionOfOurTaskDefinitions',
+        actions: ['ecs:RunTask'],
+        resources: Object.keys(taskDefinitions).map(
+          (key) => `arn:aws:ecs:${this.region}:${this.account}:task-definition/${config.prefix}-${key}:*`,
+        ),
+      }),
+    );
 
     // --- trigger: intake.fifo -> starter Lambda -> StartExecution ---
     this.starter = new lambda.Function(this, 'PipelineStarter', {

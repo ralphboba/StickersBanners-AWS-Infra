@@ -5,7 +5,7 @@ I. Facility transfer — ported from legacy ftpWorker.py /stp:
   - GA/NJ/TX/NV -> FTP upload of the finished folder to /{facility}/{orderId}
   - CA          -> Google Drive (service account, CA_DRIVE_ID parent)
   - before transfer: optional proof rename (renameDict) + invoice proof jpgs
-    uploaded to FTP /proof
+    uploaded to FTP /Proof
 
 Plumbing changes only: files come from the finished S3 bucket instead of the
 local disk; FTP/Drive credentials come from SSM Parameter Store
@@ -20,11 +20,22 @@ import sys
 import tempfile
 
 import boto3
+
+from jobload import load_job
 import ftputil
 
+from guards import (is_demo_order, is_transferable, remote_path, transfer_destination,
+                    transfers_enabled)
 from drive_helper import upload_print_folder
 
-FACILITIES = ["GA", "NJ", "TX", "NV", "CA"]
+
+# The invoice-proof folder on the facility FTP. Capital P: that is the folder
+# Linh's program has been filling for years — 382,374 files when it was listed
+# on 2026-09-12. An all-lowercase spelling was a transcription slip; on a
+# case-sensitive server it would have created a second folder nobody watches,
+# and the proof would have silently never reached production.
+PROOF_DIR = "/Proof"
+
 
 s3 = boto3.client("s3")
 ssm = boto3.client("ssm")
@@ -49,7 +60,7 @@ def download_finished(order_name, dest_dir):
     for page in paginator.paginate(Bucket=FINISHED_BUCKET, Prefix=f"{order_name}/"):
         for obj in page.get("Contents", []):
             fname = obj["Key"].split("/", 1)[1]
-            if not fname:
+            if not is_transferable(fname):
                 continue
             s3.download_file(FINISHED_BUCKET, obj["Key"], os.path.join(local_dir, fname))
             count += 1
@@ -90,12 +101,21 @@ def upload_folder_ftp(local_dir, remote_dir, host, user, passwd):
 
 
 def upload_invoice_images(local_dir, image_names, host, user, passwd):
-    """Legacy upload_invoice_image: proof jpgs -> FTP /proof."""
+    """Legacy upload_invoice_image: proof jpgs -> FTP /Proof."""
     with ftputil.FTPHost(host, user, passwd) as ftp_host:
+        # The real /Proof has existed for years (hundreds of thousands of files),
+        # so the legacy code never had to create it and neither did we -- until
+        # FTP_BASE_PATH pointed the same run at a fresh tree, where nothing
+        # exists yet and every proof upload failed on the missing directory.
+        # upload_folder_ftp already guards itself this way; this is the half that
+        # was missing.
+        proof_dir = remote_path(PROOF_DIR)
+        if not ftp_host.path.exists(proof_dir):
+            ftp_host.makedirs(proof_dir)
         for image in image_names:
             local = os.path.join(local_dir, f"{image}.jpg")
             if os.path.exists(local):
-                ftp_host.upload(local, ftp_host.path.join("/proof", f"{image}.jpg"))
+                ftp_host.upload(local, remote_path(PROOF_DIR, f"{image}.jpg"))
 
 
 def record_step(order_name, state, detail=""):
@@ -109,14 +129,9 @@ def record_step(order_name, state, detail=""):
     })
 
 
-def is_demo_order(name):
-    """Synthetic demo/test orders (DEMO-*, ZZ-*) never touch real FTP/Drive."""
-    return isinstance(name, str) and name.upper().startswith(("DEMO-", "ZZ-"))
-
-
 def main():
     order_name = os.environ["ORDER_NAME"]
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     facility = (job.get("routing") or {}).get("facility")
 
     # Safety net: demo orders show the full flow on the dashboard (status ->
@@ -128,16 +143,47 @@ def main():
                           "detail": detail, "demo": True}))
         return
 
-    if facility not in FACILITIES:
-        raise ValueError(f"Invalid production facility: {facility}")
-
     rename_dict = job.get("renameDict") or {}
+
+    # Where these files go, and whether they may go at all, is decided in one
+    # place for every transport -- see guards.transfer_destination. Resolved
+    # before anything is downloaded, so a held order costs nothing.
+    dest = transfer_destination(facility, order_name)
+
+    # A transport the review path cannot divert. Held rather than sent to the
+    # real destination -- somebody chose the review path, and the point of that
+    # choice is that no facility sees a file until a person promotes it.
+    if dest["kind"] == "hold":
+        detail = (f"WOULD HAVE TRANSFERRED to {facility} "
+                  f"({len(rename_dict)} invoice image(s)) -- {dest['reason']}")
+        record_step(order_name, "done", detail=detail)
+        print(json.dumps({"orderName": order_name, "facility": facility,
+                          "detail": detail, "held": True}))
+        return
+
+    # The prototype path. Everything upstream -- intake, resize, finish, proof
+    # -- has already run on the real order and the finished TIFFs are sitting in
+    # the finished bucket; this is only the step that puts them in front of the
+    # production team. Held while Linh's program is still the one running,
+    # because it is processing these same orders: an unheld transfer means two
+    # copies of every print file in the facility's folder, and the second one is
+    # only "extra" until somebody prints it.
+    #
+    # Arming it is a go-live action needing Kai's explicit approval
+    # (see CLAUDE.md "Safety" and docs/go-live.md).
+    if not transfers_enabled():
+        detail = (f"WOULD HAVE TRANSFERRED to {facility} "
+                  f"({len(rename_dict)} invoice image(s)) -- PRODUCTION_TRANSFER disabled")
+        record_step(order_name, "done", detail=detail)
+        print(json.dumps({"orderName": order_name, "facility": facility,
+                          "detail": detail, "held": True}))
+        return
 
     with tempfile.TemporaryDirectory() as scratch:
         local_dir = download_finished(order_name, scratch)
         rename_results = rename_proof(local_dir, rename_dict)
 
-        if facility == "CA":
+        if dest["kind"] == "drive":
             sa_json = get_secret("google", "service-account-json")
             ca_drive_id = get_secret("google", "ca-drive-id")
             sa_path = os.path.join(scratch, "service_account.json")
@@ -155,8 +201,8 @@ def main():
             passwd = get_secret("ftp", "password")
             invoice_images = list(rename_dict.values())
             upload_invoice_images(local_dir, invoice_images, host, user, passwd)
-            upload_folder_ftp(local_dir, f"/{facility}/{order_name}", host, user, passwd)
-            detail = f"FTP /{facility}/{order_name}"
+            upload_folder_ftp(local_dir, dest["path"], host, user, passwd)
+            detail = f"FTP {dest['path']}"
 
     record_step(order_name, "done", detail=detail)
     print(json.dumps({"orderName": order_name, "facility": facility,

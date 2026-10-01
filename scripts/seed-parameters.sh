@@ -53,6 +53,12 @@ put "$PREFIX/zendesk/api-token"      "${ZENDESK_API_TOKEN:-}"
 put "$PREFIX/zendesk/assignee-id"    "${ZENDESK_ASSIGNEE_ID:-}"
 put "$PREFIX/zendesk/field-id"       "${ZENDESK_FIELD_ID:-}"
 
+# Customer proof approval links. Seeding BOTH of these switches the proof-ready
+# email from Linh's portal to our own approval page; leaving either empty keeps
+# the legacy portal. See docs/customer-approval.md before seeding them.
+put "$PREFIX/approval/link-secret"   "${APPROVAL_LINK_SECRET:-}"
+put "$PREFIX/approval/portal-base"   "${APPROVAL_PORTAL_BASE:-}"
+
 put "$PREFIX/ftp/host"               "${FTP_HOST:-}"
 put "$PREFIX/ftp/user"               "${FTP_USER:-}"
 put "$PREFIX/ftp/password"           "${FTP_PASSWORD:-}"

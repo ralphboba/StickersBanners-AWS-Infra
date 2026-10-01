@@ -4,7 +4,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends libvips && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY requirements.txt .
+COPY proof/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+COPY _common/ .
+COPY proof/ .
 CMD ["python", "main.py"]

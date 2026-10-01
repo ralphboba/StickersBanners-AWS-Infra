@@ -1,5 +1,9 @@
 *.js
 !jest.config.js
+# Vendored browser libraries are source, not build output: the proof page
+# serves them from our own bucket so a public CDN outage cannot blank a
+# customer's proof, and so the viewer can be rendered and checked locally.
+!web/vendor/**/*.js
 *.d.ts
 node_modules
 
@@ -21,3 +25,8 @@ __pycache__/
 
 # Local end-to-end test secrets (scripts/local-e2e.mjs) — NEVER commit
 scripts/local-e2e.env
+
+# Machine-local Claude Code settings. The committed .claude/settings.json holds
+# the permission rules (a project decision); this one holds per-machine setup
+# and must never be committed — the repo is public.
+.claude/settings.local.json

@@ -5,6 +5,8 @@ import { getConfig } from '../lib/config/environments';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
+import { ArtworkCdnStack } from '../lib/stacks/artwork-cdn-stack';
+import { trialConfig, describeTrial } from '../lib/config/trial';
 import { IamStack } from '../lib/stacks/iam-stack';
 import { StorageStack } from '../lib/stacks/storage-stack';
 import { DatabaseStack } from '../lib/stacks/database-stack';
@@ -57,6 +59,27 @@ const billingStack = new BillingStack(app, 'sb-billing', {
   monthlyLimitUsd: Number(app.node.tryGetContext('monthlyLimitUsd') ?? 5),
   description: 'StickersBanners AWS cost guardrail (account-level)',
 });
+
+// Account-level CDN for the customer artwork bucket. That bucket is NOT ours:
+// it was created by hand in eu-north-1 in Nov 2025 and is read by the legacy
+// system as well as this one, so this stack only puts CloudFront in front of it
+// and never owns, moves or locks it. See the stack doc for the measurements.
+const artworkCdnStack = new ArtworkCdnStack(app, 'sb-artwork-cdn', {
+  env,
+  bucketName: 'sticker-banner-large-file-uploads',
+  bucketRegion: 'eu-north-1',
+  description: 'StickersBanners customer artwork CDN (account-level)',
+});
+
+// Say out loud, before anything is built, which live switches this deploy will
+// arm. describeTrial existed since the trial work and had never been called --
+// so the five hours on 2026-09-13 armed three switches that reach real
+// customers and real facilities, and printed nothing at all. The whole point of
+// the function is that the last thing on screen before you approve is the list
+// of things about to touch the outside world.
+for (const line of describeTrial(trialConfig(app))) {
+  console.warn(`  !! ${line}`);
+}
 
 const networkStack = new NetworkStack(app, `${config.prefix}-network`, {
   env,
@@ -121,8 +144,13 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   intakeQueue: queueStack.queues['intake'],
   notifyQueue: queueStack.queues['notify'],
   proofCdnBase: `https://${cdnStack.distribution.distributionDomainName}`,
-  // Linh's portal. Still served by his program today; when this takes over the
-  // portal has to be repointed at our API (open question with him).
+  // Fallback only. Linh's portal is still what customers see today, and it
+  // posts approvals to HIS program — so if it goes away, orders stall at the
+  // proof gate. Our own approval page (web/proof.html, served by the webapp
+  // distribution) takes over the moment the SSM parameters `approval/portal-base`
+  // and `approval/link-secret` are seeded; until then the mail keeps pointing
+  // here. That switchover is SSM, not CDK, precisely because the webapp
+  // distribution depends on this API and could not be passed in without a cycle.
   proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
   // `--context testOrders=S64262` arms the shipping-change writes for that
@@ -159,6 +187,7 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   orderChangeRequestFn: computeStack.orderChangeRequest,
   shopifyPaidFn: computeStack.shopifyPaid,
   approvalFn: computeStack.approval,
+  proofApprovalFn: computeStack.proofApproval,
   userPool: authStack.userPool,
   userPoolClient: authStack.userPoolClient,
   description: `StickersBanners HTTP API (${config.env})`,

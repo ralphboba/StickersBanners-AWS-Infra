@@ -20,10 +20,13 @@ import sys
 import tempfile
 
 import boto3
+
+from jobload import load_job
 from PIL import Image
 
-from finishing_config import build_finishing_obj
+from finishing_config import build_finishing_obj, final_tif_name
 from grommets import GrommetsAdder
+from guides import compute_guides, guides_key
 from pole_pockets import PolePocketsAdder
 
 Image.MAX_IMAGE_PIXELS = None
@@ -77,10 +80,26 @@ def set_stage(order_name, stage):
         pass  # cosmetic only — never fail the job over the stage label
 
 
+def upload_guides(order_name, item_no, src, finishing_obj):
+    """Sidecar for the proof page, kept out of the print folder (guides_key).
+
+    Uses its own adder instances, so the print file's are never touched.
+    Never fails the job — the page works without it.
+    """
+    try:
+        with Image.open(src) as img:
+            width, height = img.size
+        guides = compute_guides(width, height, finishing_obj)
+        s3.put_object(Bucket=FINISHED_BUCKET, Key=guides_key(order_name, item_no),
+                      Body=json.dumps(guides).encode(), ContentType="application/json")
+    except Exception as exc:
+        print(f"finish: guides skipped for {order_name}/{item_no}: {exc}", file=sys.stderr)
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "finishing")
-    job = json.loads(os.environ["JOB"])
+    job = load_job(order_name)
     items = job.get("items", [])
     grommet = GrommetsAdder()
     pockets = PolePocketsAdder()
@@ -103,6 +122,7 @@ def main():
             create_proof_file(src, proof)
             proof_key = f"{order_name}/{item_no}.jpg"
             s3.upload_file(proof, FINISHED_BUCKET, proof_key)
+            upload_guides(order_name, item_no, src, finishing_obj)
 
             # 2. no finishing -> copy
             if has_no_finishing(finishing_obj):
@@ -131,11 +151,7 @@ def main():
                 )
 
             # 5. final naming: "{orderId}-{itemNo} {descSuf}[ qty N].tif"
-            desc = finishing_obj.get("descSuf", "")
-            qty = int(finishing_obj.get("quantity", 1))
-            if qty > 1:
-                desc = f"{desc} qty {qty}".strip()
-            final_name = f"{order_name}-{item_no} {desc}".rstrip() + ".tif"
+            final_name = final_tif_name(order_name, item_no, finishing_obj)
             final_key = f"{order_name}/{final_name}"
             s3.upload_file(work, FINISHED_BUCKET, final_key)
             produced.append(final_key)

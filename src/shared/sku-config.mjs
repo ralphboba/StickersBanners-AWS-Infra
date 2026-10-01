@@ -36,6 +36,37 @@ export const INCH_SKU_PREFIXES = [
   'SKUFPUD', // Fabric Pop Up Display (all sizes: SKUFPUD08X10, SKUFPUD10X10, …)
 ];
 
+/**
+ * NOT from legacy — kept separate so the lists above stay an honest record of
+ * what Linh's source contained.
+ *
+ * Mostly the fabric pop-up display family, catalogued under the numeric SKU
+ * scheme instead of the SKUFPUD prefix, so the prefix rule misses them. Caught
+ * on live order S59121: OrderDesk records 145x91 and the product name contains
+ * "fabric", which skips resolveDimensions' remap — so without this the order
+ * resolves to 145x91 FEET (a 44-metre banner).
+ *
+ * The rest of the family surfaced in the 2026-09-10 full-day census of 350 real
+ * orders, which listed every line still resolving to an implausible number of
+ * feet. Each entry below is a SKU Kai confirmed by name; nothing is here on a
+ * guess, because a wrong unit is not cosmetic — the resizer scales artwork to
+ * the number it is given, so feet-instead-of-inches produces a print file 12x
+ * oversized.
+ *
+ * Still unresolved, and deliberately NOT fixed here because no SKU list can
+ * express them:
+ *   - SKUAB  raw values arrive as '48 in' x '80 in' — the unit is inside the
+ *            value and the parser discards it, so it reads as 48 feet.
+ *   - SKUVB  one order carried 144x18; SKUVB is genuinely in feet normally, so
+ *            this needs a magnitude rule, not a SKU entry.
+ */
+export const INCH_SKUS_EXTRA = [
+  'SKU-608', // 10'x8' Fabric Pop Up Display Backdrop (Banner Only) — 145x91
+  'SKU-604', // Fabric Pop Up Display Backdrop with Stand — 145x91, same print as SKU-608
+  'SKU-607', // 8'x8' Fabric Pop Up Display Backdrop (Banner Only) — 115x91
+  'SKUXBS',  // X-Banner — 30x69, a standard X-banner panel
+];
+
 
 // --- 1b. Fixed-size products (print dimensions don't come from the order) ---
 // Some products are a fixed physical size — the customer doesn't pick W/H, so
@@ -52,10 +83,94 @@ export const FIXED_DIMENSIONS = {
   SKU10ET: { width: 119, height: 84.28, unit: 'in' },
   // 10ft Tent Full Walls — safe zone 111x76 in; bleed (print) 115x80 in.
   SKU10TFW: { width: 115, height: 80, unit: 'in' },
+  // Yard signs are NOT here on purpose, and this is the note that stops them
+  // being added again. They are 24x18 in -- the Shopify product says so and has
+  // no size option, which is why the order carries no dimensions -- so a fixed
+  // size entry looks obviously right and was briefly added on 2026-09-24.
+  //
+  // It was wrong. Kai: yard signs, flag banners, event tents and canvas wraps
+  // are orders we take and hand to B2SIGN; we do not print them. Giving them a
+  // size makes them clear the intake gate and flow into resize, finish and a
+  // transfer to one of our own facilities -- print files for a job somebody
+  // else is producing. Held is the correct outcome for these, not printed.
+  //
+  // (The tents in this table are a related question: real orders carry `ET10`,
+  //  not SKU10ET/SKU10TFW, so those two entries match nothing live and ET10
+  //  falls to the missing-file gate. Left alone pending Kai's decision.)
 };
 
 export function fixedDimensions(sku) {
   return FIXED_DIMENSIONS[String(sku ?? '')] || null;
+}
+
+
+// --- 1c. B2Sign products (we take the order, B2Sign makes it) --------------
+// Kai, 2026-09-24: "우리가 오더를 받고 b2sign으로 넘겨주는 시스템이야... 수동이야.
+// 지금 대니가 다 manual processing 하고있어." Yard signs, flag banners, event
+// tents and canvas wraps are drop-shipped: Danny hands them to B2Sign by hand.
+// No print file of ours should ever be produced for one, and none should ever
+// reach a facility.
+//
+// They were already being held, but by accident and under three different
+// reasons -- no-size for yard signs (no size option exists), missing-file for
+// tents, special-instructions for a flag. That works until it doesn't, and it
+// makes Danny's queue impossible to count. This list makes the reason explicit.
+//
+// Identified from the live Shopify catalogue (2026-09-24). In the store these
+// all carry the `flags` tag and an add-on product whose description reads
+// "Prices are SB retail (B2Sign cost / 0.6)"; our own printed products carry
+// `actual` instead. Tags do not reach OrderDesk, so the order data gives us
+// only the SKU and the product name -- hence both are matched here.
+export const B2SIGN_SKUS = [
+  // Yard signs — 24x18 in, four variants, H-stake and single/double sided.
+  'YSHSS', 'YSHDS', 'YSSOSS', 'YSSODS',
+  // Event tents and their printed walls.
+  'ET10', 'ET15', 'TFW10', 'TFW15', 'THW10', 'THW15',
+  // Legacy spellings kept because FIXED_DIMENSIONS still names them; no live
+  // order has ever carried either (real tent orders arrive as ET10).
+  'SKU10ET', 'SKU10TFW',
+];
+
+// Add-on lines that ride along with the products above (sandbags, carry bags,
+// extra walls, h-stakes). Deliberately specific rather than a bare `ADDON-`:
+// the store may well use that prefix for something we DO print.
+export const B2SIGN_SKU_PREFIXES = [
+  'ADDON-CARRY', 'ADDON-SAND', 'ADDON-FW',  // 10ft Event Tent Options
+  'T15-',                                    // 15ft Event Tent Options
+  'YS-',                                     // Yard Sign Options
+];
+
+// Feather flags have NO SKU AT ALL on any variant, so the product name is the
+// only handle we have on them. Canvas wraps have no product in the catalogue
+// today; the pattern is here so the first one to appear is held rather than
+// printed.
+//
+// Every pattern is anchored to a phrase that cannot collide with a printed
+// product. In particular NOT a bare /canvas/ or /fabric/: "Fabric Step and
+// Repeat Banner" (SKUFSR*, SKUCFSR) is one of our highest-volume printed
+// products and its description mentions canvas-like material.
+export const B2SIGN_NAME_PATTERNS = [
+  /feather\s+\w*\s*flag/i,      // Feather Angled / Convex / Econo Feather Flag
+  /\byard\s+sign\b/i,
+  /\bevent\s+tent\b/i,
+  /\btent\s+(full|half)\s+walls?\b/i,
+  /\bcanvas\s+wrap/i,
+];
+
+/**
+ * Is this line item made by B2Sign rather than by us?
+ *
+ * Matched on SKU first (exact, then prefix), then on the product name, because
+ * feather flags carry no SKU and nothing else identifies them.
+ */
+export function isB2SignItem(sku, productName) {
+  const code = String(sku ?? '').trim().toUpperCase();
+  if (code) {
+    if (B2SIGN_SKUS.includes(code)) return true;
+    if (B2SIGN_SKU_PREFIXES.some((prefix) => code.startsWith(prefix))) return true;
+  }
+  const name = String(productName ?? '');
+  return B2SIGN_NAME_PATTERNS.some((pattern) => pattern.test(name));
 }
 
 
@@ -71,8 +186,12 @@ export const NO_FINISH_SKUS = ['SKUAB', 'SKUST', 'SKU10ET', 'SKU10TFW']; // SKU1
 //
 // Derived from the store's SKU catalogue (SB_SKU.xlsx), which Kai confirmed is
 // current. Every entry is a product whose name makes it unambiguous — "Adjustable
-// Banner Stand", "Red Carpet", "Telescopic Pole Replacement". NOT yet confirmed
-// against Linh's `dict:hardwareSku` itself; he hasn't sent it.
+// Banner Stand", "Red Carpet", "Telescopic Pole Replacement".
+//
+// This IS the authority, not a stand-in for one: Linh on `dict:hardwareSku` --
+// "hardware sku just comes from the excel sheet for hardware" -- and that sheet
+// is the one this list came from. An earlier note here called it unconfirmed and
+// was wrong.
 //
 // Deliberately excluded because the catalogue name is ambiguous: SKUHS
 // ("H-Stake") and ANTIF ("Antimicrobial Copper Film"). Leaving them out is the
@@ -136,6 +255,7 @@ export function isKnownSku(sku) {
 export function isInchSku(sku, { shopify = false } = {}) {
   const s = String(sku ?? '');
   if (INCH_SKUS.includes(s)) return true;
+  if (INCH_SKUS_EXTRA.includes(s)) return true;
   if (shopify && INCH_SKUS_SHOPIFY_ONLY.includes(s)) return true;
   return INCH_SKU_PREFIXES.some((p) => s.startsWith(p));
 }

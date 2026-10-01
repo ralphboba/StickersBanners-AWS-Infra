@@ -8,7 +8,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { EnvironmentConfig } from '../config/types';
-import { secretsArnPattern } from '../config/secrets';
+import { secretsArnPattern, secretsPrefix } from '../config/secrets';
+import { trialConfig } from '../config/trial';
 
 export interface ComputeStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
@@ -59,12 +60,16 @@ export class ComputeStack extends cdk.Stack {
   public readonly shippingChangeExpiry: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
+  public readonly proofApproval: lambda.Function;
   public readonly demoFeeder: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
     super(scope, id, props);
 
     const { config, jobsTable, intakeQueue, notifyQueue } = props;
+    // Held by default — see lib/config/trial.ts for why arming is a deploy-time
+    // flag rather than an edit to the literals below.
+    const trial = trialConfig(this);
 
     const base = {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -95,7 +100,10 @@ export class ComputeStack extends cdk.Stack {
         // still decides and the dashboard still shows what it would do, but no
         // real order is moved. Flipping this to "enabled" is a go-live action
         // and needs explicit approval — see CLAUDE.md "Safety".
-        ORDERDESK_WRITES: 'disabled',
+        ORDERDESK_WRITES: trial.orderDeskWrites,
+        // Redirects the gate's folder ids for a bounded trial. Empty means
+        // Linh's real folders, which is what an ordinary deploy produces.
+        ORDERDESK_FOLDER_IDS: trial.orderDeskFolderIds,
       },
       description: 'Poll the OrderDesk QTS folder, clean jobs, enqueue intake',
     });
@@ -115,6 +123,13 @@ export class ComputeStack extends cdk.Stack {
         // dzi CloudFront base for the customer proof link (optional).
         PROOF_CDN_BASE: props.proofCdnBase ?? '',
         PROOF_PORTAL_BASE: props.proofPortalBase ?? '',
+        // Arms the only code that contacts a real customer (shared/zendesk.mjs).
+        // Held at "disabled" so real orders can run through the WHOLE pipeline —
+        // intake, resize, finish, proof — with the composed ticket logged and
+        // nobody's inbox touched. Flipping this to "enabled" is a go-live action
+        // and needs explicit approval — see CLAUDE.md "Safety".
+        ZENDESK_SENDS: trial.zendeskSends,
+        PROOF_EMAIL_REDIRECT: trial.proofEmailRedirect,
       },
     });
     // SqsEventSource also grants Receive/Delete on the queue.
@@ -127,13 +142,38 @@ export class ComputeStack extends cdk.Stack {
     this.orderApi = new lambda.Function(this, 'OrderApi', {
       ...base,
       functionName: `${config.prefix}-order-api`,
-      code: lambda.Code.fromAsset(path.join(SRC, 'order-api')),
-      environment: { JOBS_TABLE: jobsTable.tableName },
-      description: 'Order/job status lookups + demo-only status moves',
+      // Bundles src root for shared/approval-link + shared/secrets.
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-api/index.handler',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+        // Re-runs an order after staff answer a size-swapped hold.
+        INTAKE_QUEUE_URL: intakeQueue.queueUrl,
+      },
+      description: 'Order/job status lookups, demo-only moves, size-swap decisions',
     });
     // Read for lookups; write is used ONLY by the demo-only /move route, which is
     // hard-guarded in the handler to DEMO-*/ZZ-* orders.
     jobsTable.grantReadWriteData(this.orderApi);
+    // Only the size-decision route sends: it puts a held order back on intake.
+    intakeQueue.grantSendMessages(this.orderApi);
+    // Mints the customer approval link for the dashboard. Only the approval
+    // group — this function has no business reading OrderDesk/FTP/Zendesk keys.
+    this.orderApi.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'ReadApprovalSettings',
+      actions: ['ssm:GetParametersByPath', 'ssm:GetParameter'],
+      resources: [
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${secretsPrefix(config.env)}/approval`,
+        `arn:aws:ssm:${this.region}:${this.account}:parameter${secretsPrefix(config.env)}/approval/*`,
+      ],
+    }));
+    this.orderApi.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'DecryptViaSsm',
+      actions: ['kms:Decrypt'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
+    }));
 
     // --- order-status-api: the customer's view of their own order ---
     // Public (no Cognito): the customer is not logged in, and the link in their
@@ -240,6 +280,35 @@ export class ComputeStack extends cdk.Stack {
         sid: 'ResumeWorkflow',
         actions: ['states:SendTaskSuccess', 'states:SendTaskFailure'],
         resources: ['*'],
+      }),
+    );
+
+    // --- proof-approval: the CUSTOMER-facing half of the proof gate ---------
+    // Public (no Cognito): customers have never had a login, so the signed link
+    // in the proof email is the credential. Approve only — no reject route and
+    // no upload path exist here, per Linh (CLAUDE.md non-negotiables).
+    this.proofApproval = new lambda.Function(this, 'ProofApproval', {
+      ...base,
+      functionName: `${config.prefix}-proof-approval`,
+      // Bundles src/shared for approval-link + secrets.
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/proof-approval/index.handler',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        PROOF_CDN_BASE: props.proofCdnBase ?? '',
+        SB_ENV: config.env,
+      },
+      description: 'Customer proof approval via signed link -> resume the pipeline',
+    });
+    jobsTable.grantReadWriteData(this.proofApproval);
+    this.grantSecretsRead(this.proofApproval, config);
+    // Approve resumes the paused execution. SendTaskFailure is deliberately NOT
+    // granted: even a bug here cannot reject a customer's order.
+    this.proofApproval.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ResumeWorkflowOnCustomerApproval',
+        actions: ['states:SendTaskSuccess'],
+        resources: ['*'], // task tokens are not resource-scopable
       }),
     );
 

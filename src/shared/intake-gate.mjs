@@ -6,6 +6,12 @@
 // out of the automatic flow: the bot re-tags it and moves it to a staff folder
 // in OrderDesk, then skips it. Only orders that clear all five are processed.
 //
+// Four more checks are ours: a product B2Sign makes rather than us, an item
+// whose size is implausibly large (MAX_SIDE_INCHES), an order with no printable
+// item at all, and an item whose size is missing entirely. They run AFTER
+// Linh's five so they can never change which of his reasons an order reports,
+// and like his they only divert the order to a person.
+//
 // The legacy order is significant and preserved here — an order that trips more
 // than one check is reported under the first one legacy would have hit:
 //
@@ -19,6 +25,8 @@
 // This module only decides. Acting on the decision (the OrderDesk folder move)
 // lives in orderdesk-write.mjs and is disabled by default — see that file.
 
+import { isB2SignItem } from './sku-config.mjs';
+
 /**
  * Legacy folderLib (src/utils/helpers/updateOrder.mjs), now derived from the
  * folder registry so the ids exist in exactly one place. Same keys, same values
@@ -30,6 +38,48 @@
 import { ORDERDESK_FOLDERS } from './orderdesk-folders.mjs';
 
 export { ORDERDESK_FOLDERS };
+
+/**
+ * Temporary redirection of the folders above, as JSON in ORDERDESK_FOLDER_IDS.
+ *
+ * A trial run has to park orders somewhere other than the live staff folders —
+ * Linh's condition for switching his scanner off was that he could still tell
+ * which orders had been touched. The redirection is a deployed setting rather
+ * than an edit to the table above, because that table is the record of his real
+ * folder ids and has to survive the trial intact: ending the trial is removing
+ * the variable, not remembering five numbers correctly under time pressure.
+ *
+ * Unparsable JSON is ignored with a loud log rather than throwing — a typo here
+ * must not take the poller down, and the fallback (the real folders) is the
+ * behaviour we already have.
+ *
+ * @returns {Record<string,string>} folder key -> id, overrides applied
+ */
+export function folderIds(env = process.env) {
+  const raw = String(env.ORDERDESK_FOLDER_IDS ?? '').trim();
+  if (!raw) return { ...ORDERDESK_FOLDERS };
+  try {
+    const parsed = JSON.parse(raw);
+    const overrides = {};
+    for (const [key, id] of Object.entries(parsed)) {
+      if (!(key in ORDERDESK_FOLDERS)) {
+        console.warn(JSON.stringify({ msg: 'unknown folder key in ORDERDESK_FOLDER_IDS', key }));
+        continue;
+      }
+      if (!/^\d+$/.test(String(id))) {
+        console.warn(JSON.stringify({ msg: 'folder id is not numeric, ignored', key, id }));
+        continue;
+      }
+      overrides[key] = String(id);
+    }
+    return { ...ORDERDESK_FOLDERS, ...overrides };
+  } catch (err) {
+    console.error(JSON.stringify({
+      msg: 'ORDERDESK_FOLDER_IDS is not valid JSON — using the real folders', error: String(err),
+    }));
+    return { ...ORDERDESK_FOLDERS };
+  }
+}
 
 /** Legacy tagLib (same file): colour name -> OrderDesk tag value. */
 export const ORDERDESK_TAGS = {
@@ -43,8 +93,10 @@ export const ORDERDESK_TAGS = {
 };
 
 /**
- * The five checks, in legacy order. `flag` is the key on job.flags computed by
- * cleanOrder; `reason` is ours, for the dashboard and the logs.
+ * The checks, in legacy order: Linh's five first, then ours. `flag` is the key
+ * on job.flags computed by cleanOrder; `test` is a predicate for the checks
+ * that read the job rather than a precomputed flag; `reason` is ours, for the
+ * dashboard and the logs.
  */
 export const GATES = [
   {
@@ -83,7 +135,130 @@ export const GATES = [
     folder: 'manual',
     explain: 'Artwork missing, or its file type is not one the workers accept',
   },
+  // OURS, not legacy's — and deliberately LAST, so an order that also trips one
+  // of Linh's five still reports his reason and lands where his bot would send
+  // it. This only ever HOLDS an order for a human; it never alters a print.
+  // See MAX_SIDE_INCHES below for why the threshold is where it is.
+  // Ours, and FIRST of ours: B2Sign work is not a fault in the order, it is a
+  // different production route. Danny hands these to B2Sign by hand. They were
+  // already being held, but under whichever symptom happened to fire -- no-size
+  // for yard signs, missing-file for tents, special-instructions for a flag --
+  // which made his queue impossible to count and, one catalogue change away,
+  // impossible to trust. Reported before our three fault checks so a yard sign
+  // says "b2sign", not "no-size".
+  //
+  // Still after Linh's five: an order of his that trips one of them keeps his
+  // reason and goes where his bot would send it. So a B2Sign item inside an
+  // order with special instructions reports the instructions -- which is why
+  // the daily census counts B2Sign orders separately from gate reasons, and
+  // does not rely on this gate alone to find them.
+  {
+    test: (job) => (job?.items ?? []).some((item) => isB2SignItem(item?.sku, item?.name)),
+    reason: 'b2sign',
+    tag: 'White',
+    folder: 'manual',
+    explain: 'Made by B2Sign, not by us — hand off manually, never print or transfer',
+  },
+  {
+    test: (job) => Boolean(oversizedItem(job)),
+    reason: 'oversize',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'An item is implausibly large — almost always inches read as feet',
+  },
+  // Also ours, and also last: an order can clear every check above and still
+  // have nothing to print. Legacy drops hardware line items before the workers
+  // ever see them (checkHardwareSku -> null, QTSOrderDetails.mjs:23) and so do
+  // we, so an order for a stand and nothing else arrives here with items: [].
+  //
+  // Nothing downstream copes with that. Resize produces [], finish produces [],
+  // and the transfer step dies on "No finished files found" after four
+  // attempts — that is S61855 on 2026-09-19, an 8'x8' telescopic stand with no
+  // banner. Legacy has the identical blind spot; the only difference is that
+  // its empty job ends quietly instead of failing loudly.
+  //
+  // Somebody has to ship the hardware either way, so the order belongs in front
+  // of that person rather than in the failure pile. Measured at 1 order in 559
+  // (0.18%), so this cannot become noise staff learn to ignore.
+  {
+    test: (job) => (job?.items ?? []).length === 0,
+    reason: 'nothing-to-print',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'No printable item — hardware-only order, nothing for the workers to make',
+  },
+  // Also ours. An item with no usable size is the same failure as no item at
+  // all, one step later: resize calls float() on it and dies, four times.
+  //
+  // Most of these are a key we did not read, and readDimensions now covers the
+  // four shapes the store actually uses. What is left is products that record
+  // no size ANYWHERE — yard signs, feather flags — because the size lives in
+  // the SKU and we have no table for it. Three of them cleared every other
+  // check on 2026-09-22 and would have gone to print with width: undefined.
+  //
+  // Holding them is the honest answer until Linh says where those sizes come
+  // from. Guessing a size for a print is worse than asking.
+  {
+    test: (job) => (job?.items ?? []).some((item) => !isUsableSize(item)),
+    reason: 'no-size',
+    tag: 'Red',
+    folder: 'manual',
+    explain: 'An item has no usable width/height — the size is not in the order',
+  },
 ];
+
+/** A printable item can only be made if both sides are a positive number. */
+function isUsableSize(item) {
+  const width = Number(item?.width);
+  const height = Number(item?.height);
+  return Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+}
+
+/**
+ * Largest side, in inches, an item may have before a human has to look at it.
+ *
+ * NOT a legacy number — legacy has no size check at all, and neither did we
+ * until the transfer was about to be armed for real. Every dimension bug found
+ * so far has the same shape: a value quoted in inches is read as feet, so the
+ * size comes out twelve times too big. Measured across 397 real line items, the
+ * largest legitimate side was 228 in (a 19ft banner) and the next values up were
+ * 1380 in — SKU-603 and SKU-607 recorded as "115x91 ft", which are 115x91
+ * INCHES. The two populations are six times apart, so one threshold separates
+ * them with room to spare: p90 of real items is 96 in, p99 is 216 in.
+ *
+ * 600 in is Linh's number, given on 2026-09-18: "there's technically no maximum
+ * print size, but the biggest we delegated for the bot to proof is 50ft. The
+ * bigger ones are handled via email manually." 50 ft is 600 in, and this gate
+ * does exactly what he describes -- it hands the order to a person rather than
+ * rejecting it.
+ *
+ * It was 300 before, chosen from the data alone, which would have held real
+ * orders between 25 and 50 feet. The measured populations are still far apart
+ * either way: the largest legitimate side seen was 228 in and the bad values
+ * were 1380 in.
+ *
+ * It still catches the two parse cases that are unresolved: SKUAB arriving as
+ * '48 in' x '80 in' (read as feet: 576 x 960) and SKUVB 144x18 (1728 x 216).
+ * Note SKUAB is now caught by its HEIGHT alone -- 576 in sits under the line,
+ * so a squarer order of the same shape would slip through. That one depends on
+ * the SKU table being right, not on this gate.
+ */
+export const MAX_SIDE_INCHES = 600;
+
+/** The first item whose finished size is implausible, or null. */
+export function oversizedItem(job) {
+  for (const item of job?.items ?? []) {
+    const scale = item?.unit === 'ft' ? 12 : 1;
+    const width = Number(item?.width) * scale;
+    const height = Number(item?.height) * scale;
+    // NaN compares false, so an unparsable size falls through to the workers
+    // exactly as it does today — this check is about magnitude, nothing else.
+    if (width > MAX_SIDE_INCHES || height > MAX_SIDE_INCHES) {
+      return { item, widthIn: width, heightIn: height };
+    }
+  }
+  return null;
+}
 
 /**
  * Decide whether an order may be auto-processed.
@@ -96,12 +271,12 @@ export const GATES = [
 export function intakeGate(job) {
   const flags = job?.flags ?? {};
   for (const gate of GATES) {
-    if (flags[gate.flag]) {
+    if (gate.test ? gate.test(job) : flags[gate.flag]) {
       return {
         reason: gate.reason,
         tag: gate.tag,
         folder: gate.folder,
-        folderId: ORDERDESK_FOLDERS[gate.folder],
+        folderId: folderIds()[gate.folder],
         tagValue: ORDERDESK_TAGS[gate.tag],
         explain: gate.explain,
       };

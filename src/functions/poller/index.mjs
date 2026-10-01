@@ -323,12 +323,61 @@ export async function handler(event = {}) {
   // writing nothing and enqueuing nothing. Read-only — cannot affect real orders.
   const dryRun = event?.dryRun === true;
   const limit = Number(event?.limit) || 100;
-  const folderId = event?.folderId || QTS_FOLDER_ID;
+  // `folderId: null` means EVERY folder. Only `undefined` falls back to QTS, so
+  // an explicit null is how a census asks for orders that have already been
+  // filed away.
+  const folderId = event?.folderId === null ? null : (event?.folderId || QTS_FOLDER_ID);
 
-  const url = `${ORDERDESK_API}/orders?folder_id=${folderId}&limit=${limit}`;
-  const res = await orderDeskFetch(url, { headers: orderDeskHeaders(storeId, apiKey) });
-  if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const { orders = [] } = await res.json();
+  // A single dryRun poll only sees what is sitting in the folder at that moment.
+  // Linh's program drains it continuously, so sampling every 30 minutes missed
+  // roughly 60% of a day's orders — the count it produced was a sample, not a
+  // total. `since`/`until` (YYYY-MM-DD) plus `all: true` walk the date range
+  // with offset paging instead, so a whole day can be audited at once.
+  const { since, until } = event ?? {};
+  const paginate = event?.all === true;
+
+  /** The next calendar day, YYYY-MM-DD. OrderDesk's end date is exclusive. */
+  const dayAfter = (ymd) => {
+    const d = new Date(`${ymd}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return ymd; // not a date we understand: send as-is
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const pageUrl = (offset) => {
+    const q = new URLSearchParams();
+    if (folderId) q.set('folder_id', String(folderId));
+    q.set('limit', String(limit));
+    if (offset) q.set('offset', String(offset));
+    if (since || until) {
+      // Two things about OrderDesk's date filter, both found the hard way
+      // (2026-09-23) because each fails by returning ZERO rather than an error:
+      //
+      //   1. `date_type=date_added` makes the filter match nothing at all.
+      //      Omitting it, or sending any other value, filters on the added date
+      //      as intended -- 2026-09-22 returns 399 orders with date_type left
+      //      off and 0 with it set. So it is not sent.
+      //   2. `search_end_date` is EXCLUSIVE. start=end=2026-09-22 returns 0;
+      //      start=2026-09-22 end=2026-09-23 returns that day's 399.
+      //
+      // `until` is inclusive from the caller's side -- a daily audit asks for
+      // one date and means that whole day -- so the extra day is added here.
+      if (since) q.set('search_start_date', since);
+      if (until) q.set('search_end_date', dayAfter(until));
+    }
+    return `${ORDERDESK_API}/orders?${q}`;
+  };
+
+  const orders = [];
+  for (let offset = 0; ; offset += limit) {
+    const res = await orderDeskFetch(pageUrl(offset), { headers: orderDeskHeaders(storeId, apiKey) });
+    if (!res.ok) throw new Error(`OrderDesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const page = (await res.json()).orders ?? [];
+    orders.push(...page);
+    // Stop on a short page, when paging was not asked for, or at a hard ceiling
+    // so a bad date range cannot walk the entire store.
+    if (!paginate || page.length < limit || orders.length >= 2000) break;
+  }
 
   if (dryRun) {
     const inspected = orders.map((order) => {
@@ -337,20 +386,59 @@ export async function handler(event = {}) {
       return {
         orderName: job.orderName,
         folder: job.folder,
+        // Where the order ACTUALLY sits in OrderDesk right now. folder_name is
+        // absent from the list response (job.folder is always null), but the id
+        // is there — and it is the only way to compare our verdict against what
+        // Linh's program actually did with the same order.
+        folderIdNow: order.folder_id === undefined ? null : String(order.folder_id),
+        // OrderDesk's own clock (UTC). For an order Linh's program moved out of
+        // QTS and nothing touched since, dateUpdated is when it moved -- the
+        // only record of how long HIS pipeline takes, to compare against ours.
+        dateAdded: order.date_added ?? null,
+        dateUpdated: order.date_updated ?? null,
         shipping: job.shipping,
         routing: job.routing,
         variant: job.variant,
         flags: job.flags,
+        // The proof gate's verdict. Reported because its direction is easy to
+        // get backwards (legacy opts OUT on "no proof"), and a silent flip
+        // would either skip every proof or email every customer.
+        needsProof: job.needsProof,
+        // The single field needsProof is derived from. Reported because the
+        // rule is opt-out ("no proof" turns it off) and an ABSENT field also
+        // reads as no-proof — so "did the customer really decline, or is the
+        // field just missing?" cannot be answered from the verdict alone.
+        proofField: order?.checkout_data?.[job.variant === 'shopify' ? 'Note' : 'Proof Option'] ?? null,
+        // Proof-JPG rename map. Was silently always {} once, which meant the
+        // /proof upload never happened — so it is reported, not assumed.
+        renameDict: job.renameDict,
         // What the intake gate would do with this order (nothing is moved).
         gate: gate ? { reason: gate.reason, folder: gate.folder, tag: gate.tag } : null,
         items: job.items.map((it) => ({
+          itemNo: it.itemNo,
           sku: it.sku,
           name: it.name,
+          // hardware line items are dropped before printing, so which side of
+          // that filter an item landed on has to be visible here.
+          hardware: it.hardware,
           width: it.width,
           height: it.height,
           unit: it.unit,
+          // What OrderDesk actually recorded, before resolveDimensions. Without
+          // it a wrong size cannot be blamed on our parse or on the source data.
+          rawWidth: it.rawWidth,
+          rawHeight: it.rawHeight,
           finishingRaw: it.finishingRaw,
           finishingObj: it.finishingObj,
+          // The customer's file. Reported because the census cannot check the
+          // artwork without it, and the two failures on 2026-09-19 that the
+          // order record could not have predicted were both IN the file
+          // (artwork_probe.py). Only the first url and the resolved extension:
+          // an order with more than one file is held by the gate before it can
+          // ever reach the probe, and 399 orders of full url lists is payload
+          // for nobody.
+          artworkUrl: it.artworkUrl,
+          artworkExt: it.artworkExt,
         })),
       };
     });
@@ -361,6 +449,8 @@ export async function handler(event = {}) {
   let skipped = 0;
   let held = 0;
   const holdReasons = {};
+  /** Orders we queued but failed to take out of the QTS folder — see below. */
+  const claimFailed = [];
   for (const order of orders) {
     const job = cleanOrder(order);
     if (!job.orderName) continue;
@@ -401,6 +491,39 @@ export async function handler(event = {}) {
     try {
       await enqueue(job);
       enqueued += 1;
+      // Take the order OUT of the QTS folder now that we own it.
+      //
+      // Without this an order we processed stays in Linh's unprocessed queue,
+      // which has two consequences: nobody can tell which orders this system
+      // handled, and the moment his scanner resumes it processes every one of
+      // them again — a second proof email to the customer and a second copy of
+      // every print file in the facility folder.
+      //
+      // Only the gated orders were being moved before, because that is all
+      // legacy's updateOrderdeskDetails was called for in the batch loop; the
+      // queued ones left the folder by a different route in his program. This
+      // is the equivalent move for ours. Held by ORDERDESK_WRITES like every
+      // other write, so with the switch off it only logs what it would do.
+      const claimed = await updateOrderDeskDetails({
+        order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey,
+      });
+      // A failed claim is the one error here that is worse than it looks. The
+      // order is already queued, so it gets processed and the customer gets a
+      // proof — but it is still sitting in Linh's queue, so when his scanner
+      // resumes he processes it too: a second email and a second copy of every
+      // print file. OrderDesk rate-limits (the mirror alone makes ~10 calls a
+      // minute), so this is not hypothetical.
+      //
+      // Counted into the poll summary rather than only logged, so a run that
+      // lost claims says so in the line a person actually reads, and the order
+      // names are there to re-claim by hand.
+      if (claimed.error) {
+        claimFailed.push(job.orderName);
+        console.error(JSON.stringify({
+          msg: 'CLAIM FAILED — order stays in the QTS folder and will be reprocessed',
+          orderName: job.orderName, error: claimed.error,
+        }));
+      }
     } catch (err) {
       if (err?.name === 'ConditionalCheckFailedException') {
         skipped += 1; // lost the race, another invocation took it
@@ -414,6 +537,9 @@ export async function handler(event = {}) {
     polled: orders.length, enqueued, skipped, held, holdReasons,
     // All three switches, so a log line says exactly what was armed at the time.
     ...writeGateStatus(),
+    // Empty on every healthy run. Non-empty means those orders were processed
+    // by us AND left in Linh's queue for him to process again.
+    claimFailed,
   };
   console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
   return summary;

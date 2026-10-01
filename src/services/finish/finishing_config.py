@@ -50,3 +50,18 @@ def build_finishing_obj(item):
     if "grommets" not in obj and any(t.lower().startswith("grommet") for t in tokens):
         obj["grommets"] = {"sides": ["top", "left", "right", "bottom"]}
     return obj
+
+
+def final_tif_name(order_name, item_no, finishing_obj):
+    """Legacy final name: "{orderId}-{itemNo} {descSuf}[ qty N].tif".
+
+    The separating space is NOT trimmed when there is no suffix. Linh's files on
+    the facility FTP are named "S59902-1-1 .tif" — space, then the extension —
+    and production has been receiving them that way for years, so matching it is
+    the requirement. An earlier rstrip() here produced "S59902-1-1.tif".
+    """
+    desc = finishing_obj.get("descSuf", "")
+    qty = int(finishing_obj.get("quantity", 1))
+    if qty > 1:
+        desc = f"{desc} qty {qty}".strip()
+    return f"{order_name}-{item_no} {desc}.tif"

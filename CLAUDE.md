@@ -17,9 +17,12 @@ authority: **Linh** (legacy author).
   captured — derive from real orders in the facility folders).
 - **Customers approve, but never reject and never upload.** Linh: "i said i
   didn't see the point in disapproving, not not letting them approve … right now
-  they'd still need to approve via the portal." Approval happens on
-  `proof.stickersbanners.com`; revisions come back by email. Do NOT add a reject
-  button or a customer upload path.
+  they'd still need to approve via the portal." Revisions come back by email.
+  Do NOT add a reject button or a customer upload path.
+  Today approval happens on Linh's `proof.stickersbanners.com`, which posts to
+  HIS program — so we also have our own path for when it is switched off:
+  `web/proof.html` + public `GET /proof` / `POST /proof/approve`, authenticated
+  by a signed link. See **`docs/customer-approval.md`**.
 - **Pipeline ends at the production folder** (`pickup_*`); production owns
   "completed". Don't build a completed transition.
 - **Zendesk** proof-ready email is the only external notification (Google Chat off).
@@ -41,9 +44,32 @@ authority: **Linh** (legacy author).
   - `ORDERDESK_UPGRADE_WRITES` — the customer shipping upgrade's `shipping_method`
     PUT. Runs only *after* the customer has paid.
   - `SHOPIFY_WRITES` — invoicing / order editing. **This one moves real money.**
+- **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
+  real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
+  and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed
+  approval link, and no credentials are even read — so real orders can run
+  through the WHOLE pipeline (intake → resize → finish → proof) with nobody's
+  inbox touched. Arming it is a go-live action needing Kai's explicit approval.
+- **`PRODUCTION_TRANSFER` stays `disabled`.** It arms the only code that puts
+  print files in front of the production team (`src/services/ftp/main.py` — real
+  FTP to the facilities, real Google Drive for CA). Held, the transfer step logs
+  "WOULD HAVE TRANSFERRED" and records itself done, so a real order can run the
+  whole pipeline and stop at the facility's door. This one matters most while
+  Linh's program is live: it is processing the same orders, so an unheld
+  transfer means two copies of every print file, and the second is only "extra"
+  until somebody prints it. `DEMO-*`/`ZZ-*` never transfer regardless.
+  ⚠️ The guard lives in a CONTAINER, not a Lambda — it only exists in ECR after
+  `build-images.yml` runs, which is restricted to the working branch. Verify the
+  running image has it before trusting the switch.
 - Demo sandbox: synthetic `DEMO-*` orders + display-only mirror of real orders.
   `DEMO-*`/`ZZ-*` orders never send real email or transfer (hard guard).
+- **The customer approval path is off until `approval/link-secret` +
+  `approval/portal-base` are seeded in SSM.** Both set = the proof email points
+  at our page and approvals reach us; either missing = it keeps pointing at
+  Linh's portal, exactly as today. Two parameters, no deploy, reversible in
+  seconds — but it's still a go-live action (`docs/customer-approval.md`).
 - Rotate all pasted keys (OrderDesk/FTP/Zendesk) before real go-live.
+- Go-live is staged, one switch at a time — **`docs/go-live.md`** is the runbook.
 
 ## Working agreement
 - Branch: `claude/stickerbanners-aws-cdk-fw49s2`. Commit + push when work is done.

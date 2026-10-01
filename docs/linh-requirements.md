@@ -88,6 +88,48 @@ Asked after diffing this port against his source. Quoted, then what we did.
   live" → pickup keywords, the 3–6pm ET express cutoff, the 3-day→2-day upgrade
   and see-thru→NV are all implemented.
 
+## Confirmed by Kai from the first live dry-run (2026-09)
+
+Both found by running 12 real QTS orders through the current code with every
+write switch off (`docs/go-live.md` stage 1).
+
+- **Vegas prints some orders regardless of destination.** Kai: "가끔씩 어떤
+  오더들은 그냥 베가스에서 프린팅 하는 경우가 있어." → the express rule is
+  correct as ported: inside the 3-6pm ET window, 1-day/2-day/overnight go to NV
+  whatever the shipping state. Live order S59129 ships to **Virginia** and was
+  routed to **NV** for exactly this reason. Note the same order placed at 2pm
+  routes to GA instead — the window, not the address, decides. Not a bug; do
+  not "fix" it.
+- **`SKU-608` is quoted in inches.** Kai: "SKU-608은 145x91ft 가 아니라 inch야."
+  → added to `INCH_SKUS_EXTRA` in `sku-config.mjs`. Its product name contains
+  "fabric", which opts out of `resolveDimensions`' remap, so the unit came only
+  from the inch-SKU lists — and it was in none of them. Live order S59121 was
+  resolving to 145x91 **feet**. The resizer scales to whatever number it gets,
+  so this would have produced a print file 12x oversized.
+- **`SKU-604`, `SKU-607`, `SKUXBS` are quoted in inches too.** Kai: "응 셋 다
+  인치야." → added to `INCH_SKUS_EXTRA` alongside `SKU-608`. Found by the
+  2026-09-10 full-day census of 350 real orders, which listed every line still
+  resolving to an implausible number of feet, then confirmed by product name:
+
+  | SKU | Product | Raw | Was |
+  |---|---|---|---|
+  | `SKU-604` | Fabric Pop Up Display Backdrop **with Stand** | 145x91 | 145 ft |
+  | `SKU-607` | **8'x8'** Fabric Pop Up Display Backdrop (Banner Only) | 115x91 | 115 ft |
+  | `SKUXBS` | X-Banner | 30x69 | 30 ft |
+
+  `SKU-604` is the same print as `SKU-608` — the backdrop sold with its stand —
+  which is why it carries the identical 145x91.
+
+  Two cases in the same census are **still wrong** and cannot be fixed with a
+  SKU list:
+  - `SKUAB` (Adhesive Banners / Window Decals) arrived as `'48 in'` x `'80 in'`.
+    The unit is inside the value and the parser discards it, so it reads as 48
+    feet. Needs a parse fix, not a list entry.
+  - `SKUVB` (Custom Vinyl Banners) carried `144 x 18` on one order. SKUVB is
+    genuinely quoted in feet normally, so this needs a magnitude rule ("too
+    large to be feet"), which no SKU list can express. Worth asking Linh how
+    his program handles it before inventing one.
+
 ### Not answered yet
 
 1. The hardware SKU list. Ours is derived from the store's SKU catalogue
@@ -108,3 +150,81 @@ Asked after diffing this port against his source. Quoted, then what we did.
 3. Hardware SKU list (legacy filtered hardware-only line items via a Redis dict;
    Linh: "hardware sku just comes from the excel sheet for hardware").
 4. "Grommet with Bravo Tab (TOP only)" — grommets on all 4 sides or top only?
+
+---
+
+## 2026-09-18 — Linh's answers, and what changed
+
+Five questions went to Linh with his own sample print files. His replies, and
+what each one did to the code.
+
+### Multiple finishing options — no code change
+
+> "When they have multiple finishing option, cx have to requested it in the
+> special instructions and then the sales rep just update it on the portal."
+
+So an order never arrives carrying two finishing options. The customer types the
+second one into special instructions, which trips `hasInstructions` and sends
+the order to **Manual Preprocess** for a rep to set on the portal. Handling one
+option at a time is correct, and this is part of why special-instructions is the
+largest hold category — 8 of 13 holds during the 2026-09-13 window.
+
+### Inch-quoted SKUs — already had all eight
+
+> "Here are all the sku that is treated as in[ch] product: SKUPB, SKUXB,
+> SKU-543, SKU-545, SKU-DXB-B, SKU-DXB, SKUDXBB, SKUDXBBB"
+
+All eight were already in `INCH_SKUS`. His list is the legacy INTSKU constant, so
+it is a subset of ours, not a replacement: `INCH_SKUS_EXTRA` and the `SKUFPUD`
+prefix carry the ones found since from real orders. **`SKU-603` and
+`SKU08X08FPUD` are still not accounted for by either list** and remain held by
+the size gate.
+
+### Maximum print size — 300 in was our number, 600 is his
+
+> "There's technically no maximum print size but the bigger we delegated for the
+> bot to proof is 50ft I believe. The bigger ones are handled via email
+> manually."
+
+`MAX_SIDE_INCHES` 300 → **600**. The old value was inferred from our own data
+(largest legitimate side seen: 228 in) and would have held every real order
+between 25 and 50 feet. The populations are still far apart — the bad values are
+1380 in — so the gate keeps catching the parse bugs it was built for.
+
+### California — the NV/CA zip split is retired
+
+> "That shipping state is correct. Except check NVCA is no longer needed since CA
+> only does CA pick up orders now so orders ship to CA address will be printed
+> in NV."
+
+The state lists are confirmed. The zip dictionaries are not needed any more:
+they existed only to split California between two facilities.
+
+- `CA` joins `NV_STATES`. Every CA shipping address prints in NV.
+- A **CA pickup** still goes to CA — pickup is decided before any state list.
+- `checkNvCa` and the `NV_ZIPS` / `CA_ZIPS` lookups are gone from `routeOrder`.
+  `zipRouting.mjs` stays in the tree as the record of what they held; nothing
+  reads it.
+- **AK and HI** are the only states on no list and stay UNROUTED, held for a
+  person. Linh said where CA orders go, not where those go.
+
+Worth noting for the 2026-09-13 window: S59977 went to the real CA Google Drive
+by mistake. Under this rule it would have routed to NV and never touched Drive.
+
+### Legacy site orders — approach confirmed, mapping still unknown
+
+> "Orders from the old site have different JSON format so you might have to mess
+> around with it. I had to write a super class and then assign the attributes
+> accordingly. The functions are pretty much the same."
+
+Normalise the old shape into the same job object and reuse everything
+downstream. No field mapping was given, so it has to come from real examples —
+`203492170` from the window is one (no S-number, no postal code, artwork behind
+a `file_redirect.aspx` URL).
+
+### Still open
+
+- **PPBO** — no reference sample. It shares the height branch with PPTO, which
+  now matches Linh's file to the pixel, so the risk is low.
+- **The fold stroke** — his PPTO/PPTB samples carry no black line at the pocket
+  boundary, while this code and the legacy repo both draw one. Asked, unanswered.

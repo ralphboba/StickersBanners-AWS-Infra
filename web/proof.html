@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Approve your proof — StickersBanners</title>
+<!--
+  OpenSeadragon reads the Deep Zoom pyramid the proof service already writes.
+  Served from our own bucket, next to this page, rather than from a public CDN:
+  a customer approving a print order must not be blocked by somebody else's
+  outage, and the version cannot change under us. It is also the only way the
+  viewer can be rendered and looked at before it ships -- the first version of
+  this feature went out blank because the library could not be fetched in the
+  environment it was built in, so nobody ever saw it draw.
+
+  The page still never depends on it. If the script does not arrive, every proof
+  falls back to the flat review image, which is what this page showed before the
+  viewer existed.
+-->
+<script src="vendor/openseadragon/openseadragon.min.js" defer></script>
+<!--
+  Customer proof approval page.
+
+  This is the page the proof-ready email links to once `approval/portal-base` and
+  `approval/link-secret` are seeded in SSM. It replaces the part of
+  proof.stickersbanners.com that posts approvals to Linh's program, so approvals
+  reach OUR pipeline when his program is switched off.
+
+  What is deliberately NOT here, per Linh (CLAUDE.md non-negotiables):
+    - no reject / disapprove button. "i said i didn't see the point in
+      disapproving." Changes are requested by emailing sales@.
+    - no file upload. Customers abused it with 5-6 re-proof files.
+
+  The whole page is driven by the `?t=` token from the email: it never asks for
+  an order number, because the token is the only thing that names an order.
+-->
+<style>
+  :root{
+    --ink:#16181d; --muted:#5b6270; --line:#e3e6ec; --bg:#f6f7f9;
+    --brand:#0f62fe; --ok:#0a7c42; --warn:#a4400b; --stage:#cdd1d8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:16px 20px}
+  header b{font-size:16px;letter-spacing:.2px}
+  main{max-width:900px;margin:0 auto;padding:24px 20px 64px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
+  .proof{margin-bottom:16px}
+  .proof img{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:6px;background:#fff}
+  .proof .cap{color:var(--muted);font-size:13px;margin:8px 2px 0}
+  /* Deep-zoom viewer. Fixed height so the page does not jump as tiles load,
+     and tall enough that 1:1 on a print file shows a useful amount of it. */
+  /* Grey, not white: a white banner on a white stage has no visible edge, and
+     the edge is exactly what the customer needs to see. */
+  .viewer{position:relative;height:min(70vh,560px);border:1px solid var(--line);
+          border-radius:6px;background:var(--stage);overflow:hidden}
+  /* OpenSeadragon overwrites this element's `position` with `relative` when it
+     takes it over, which throws away `inset:0` and collapses the box to zero
+     height -- its own container is height:100% of that, so the canvas comes
+     out 816x1 and draws nothing. An explicit size survives the takeover. */
+  .viewer .osd{position:absolute;inset:0;width:100%;height:100%}
+  .zoombar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 0}
+  .zoombar button{padding:7px 12px;font-size:13px;background:#eef1f6;color:var(--ink)}
+  .zoombar button:hover{background:#e2e7ef}
+  .zoombar button.primary{background:var(--brand);color:#fff}
+  .zoombar .pct{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;
+                margin-left:auto;padding-left:8px}
+  .zoombar .pct b{color:var(--ink);font-weight:600}
+  .opener{position:absolute;inset:0;width:100%;height:100%;border-radius:0;
+          background:transparent;display:flex;align-items:flex-end;justify-content:center;
+          padding:0 0 16px;cursor:zoom-in}
+  .opener span{background:rgba(22,24,29,.82);color:#fff;font-size:13px;font-weight:600;
+               padding:9px 16px;border-radius:999px}
+  /* Flat (no zoom) proof with guides: same grey stage, room for the dimensions. */
+  .flatframe{background:var(--stage);border:1px solid var(--line);border-radius:6px;
+             padding:40px 20px 20px 44px}
+  .flatstage{position:relative;width:100%}
+  .flatstage img{position:absolute;display:block}
+  .guidesvg{overflow:visible;pointer-events:none}
+  .guidesvg text{font-family:inherit;font-weight:600}
+  .flatstage .guidesvg{position:absolute;inset:0;width:100%;height:100%}
+  .legend{margin:10px 2px 0;font-size:13px;color:var(--muted)}
+  .legend .size{color:var(--ink);font-size:14px;margin:0 0 6px}
+  .legend ul{list-style:none;margin:0;padding:0}
+  .legend li{display:flex;gap:10px;align-items:flex-start;margin:4px 0}
+  .legend i{flex:none;display:inline-block;width:18px;height:14px;margin-top:3px}
+  .legend .sw-edge{border:2px solid var(--ink);background:#fff}
+  .legend .sw-grommet{width:14px;border-radius:50%;background:#9aa0a8;border:1.5px solid var(--ink);
+                      box-shadow:inset 0 0 0 3px #9aa0a8,inset 0 0 0 7px var(--stage)}
+  .legend .sw-strip{border:1px dashed var(--ink);
+                    background:repeating-linear-gradient(135deg,#fff 0 3px,#b7bcc4 3px 4px)}
+  .legend .sw-cut{background:rgba(214,40,40,.45);border:1px solid #b42318}
+  .legend label{display:inline-flex;gap:6px;align-items:center;margin-top:6px;color:var(--ink);cursor:pointer}
+  .legend .warn{color:#b42318}
+  .wysiwyg{border:1px solid #bcd0f7;background:#f1f6ff;border-radius:8px;padding:12px 14px;margin-bottom:16px}
+  .wysiwyg b{display:block;margin-bottom:2px}
+  .tip{background:#fffbe9;border:1px solid #f0e3b0;border-radius:8px;padding:12px 14px;margin-bottom:20px}
+  button{font:inherit;font-weight:600;border:0;border-radius:8px;padding:13px 22px;cursor:pointer}
+  .approve{background:var(--brand);color:#fff;width:100%;font-size:16px}
+  .approve:disabled{background:#9db6e8;cursor:default}
+  .note{color:var(--muted);font-size:13px;margin-top:12px}
+  .state{padding:20px;border-radius:10px;border:1px solid var(--line);background:#fff}
+  .state.good{border-color:#bfe3cd;background:#f2fbf5;color:var(--ok)}
+  .state.bad{border-color:#f0d5c2;background:#fdf6f1;color:var(--warn)}
+  .state b{display:block;margin-bottom:4px;font-size:16px}
+  a{color:var(--brand)}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+<header><b>StickersBanners</b></header>
+<main>
+  <div id="loading" class="state">Loading your proof…</div>
+
+  <div id="problem" class="state bad" hidden>
+    <b id="problemTitle">We could not open this proof</b>
+    <span id="problemText"></span>
+  </div>
+
+  <div id="view" hidden>
+    <h1>Proof for order <span id="orderName"></span></h1>
+    <p class="sub">Please review every page carefully before approving.</p>
+
+    <!-- Two tips, and only one is ever shown. Describing zoom controls on a
+         page that has none is the bug this viewer was added to fix; if the
+         viewer does not load, the instructions must not survive it. -->
+    <div class="tip" id="tipZoom" hidden>
+      Drag to move around the proof, scroll or pinch to zoom. Press
+      <b>100%</b> to see it at the exact size it will print &mdash; one print
+      pixel per screen pixel, the same view as Photoshop at 100%. That is the
+      setting to use for checking whether artwork is sharp enough.
+      Colours on screen are a guide only and will not match the printed piece
+      exactly.
+    </div>
+    <div class="tip" id="tipFlat" hidden>
+      Please check the spelling, artwork and dimensions carefully.
+      For a closer look, view this on a desktop or larger screen.
+      Colours on screen are a guide only and will not match the printed piece
+      exactly.
+    </div>
+
+    <div id="proofs"></div>
+
+    <div class="card">
+      <div id="approveBox">
+        <div class="wysiwyg">
+          <b>What you see is what we print.</b>
+          Your artwork is printed exactly as it appears in this proof &mdash; the
+          same size, proportions and layout, edge to edge. We do not stretch,
+          move or fix anything after you approve, so please check it carefully.
+          The outline, grommet and pocket markings are guides on this page only.
+        </div>
+        <button id="approve" class="approve">Approve this proof</button>
+        <p class="note">
+          Approving sends the order straight to production, and all proofs on
+          this order are approved together.<br />
+          Need a change (artwork, size, product)? Please don't approve — email
+          <a href="mailto:sales@stickersbanners.com">sales@stickersbanners.com</a>
+          or reply to your proof email and we'll send a revised proof.
+        </p>
+      </div>
+      <div id="approved" class="state good" hidden>
+        <b>Thank you — your proof is approved.</b>
+        This order is now on its way to production. You do not need to do anything else.
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const CONFIG = { apiBase: '' };
+// The token from the email. Everything on this page hangs off it.
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+
+function problem(title, text) {
+  $('loading').hidden = true;
+  $('view').hidden = true;
+  $('problemTitle').textContent = title;
+  $('problemText').textContent = text;
+  $('problem').hidden = false;
+}
+
+/** Finishing guides for each proof, or null. Never blocks the proof itself. */
+async function loadGuides(proofs) {
+  return Promise.all((proofs || []).map(async (p) => {
+    if (!p.guides) return null;
+    try {
+      const r = await fetch(p.guides);
+      if (!r.ok) return null;
+      const g = await r.json();
+      return g && g.face && g.face.w > 0 && g.face.h > 0 ? g : null;
+    } catch { return null; }
+  }));
+}
+
+function renderProofs(proofs, guides) {
+  guides = guides || [];
+  const box = $('proofs');
+  box.innerHTML = '';
+  if (!proofs || !proofs.length) {
+    // The images live on a separate CDN; if that isn't wired the customer can
+    // still approve from the proof they were emailed, so this is a note and
+    // not a failure.
+    box.innerHTML = '<div class="card">Your proof was sent with your email. '
+      + 'Please review it there, then approve below.</div>';
+    return;
+  }
+  // Zoom is offered only when the library arrived and the pyramid exists.
+  const zoomable = Boolean(window.OpenSeadragon) && proofs.some((p) => p.dzi);
+  const tipZoom = $('tipZoom');
+  const tipFlat = $('tipFlat');
+  if (tipZoom) tipZoom.hidden = !zoomable;
+  if (tipFlat) tipFlat.hidden = zoomable;
+
+  const pending = [];
+
+  proofs.forEach((p, i) => {
+    const fig = document.createElement('div');
+    fig.className = 'proof card';
+
+    const cap = document.createElement('p');
+    cap.className = 'cap';
+    cap.textContent = p.name ? (p.itemNo + '. ' + p.name) : ('Item ' + p.itemNo);
+
+    // Deep zoom when the library and the tiles are both there; otherwise the
+    // flat review image, which is what this page showed before zoom existed.
+    const g = guides[i] || null;
+    let overlay = null;
+    if (window.OpenSeadragon && p.dzi) {
+      const wrap = deepZoom(p, i === 0, g);
+      if (i === 0) pending.push(wrap);
+      fig.appendChild(wrap);
+      overlay = wrap;
+    } else if (g) {
+      overlay = flatFrame(p, g, fig, box);
+      fig.appendChild(overlay);
+    } else {
+      fig.appendChild(flatImage(p, fig, box));
+    }
+    fig.appendChild(cap);
+    if (g) fig.appendChild(legend(g, overlay));
+    box.appendChild(fig);
+  });
+
+  // Everything is in the document now, so the containers have a real size.
+  for (const wrap of pending) {
+    if (typeof wrap.openWhenReady === 'function') wrap.openWhenReady();
+  }
+}
+
+/** The pre-zoom proof: a plain picture of the artwork. */
+function flatImage(p, fig, box) {
+  const img = document.createElement('img');
+  img.src = p.review;
+  img.alt = 'Proof ' + p.itemNo;
+  img.loading = 'lazy';
+  // A missing derivative must not leave a broken-image icon on a page whose
+  // whole job is showing artwork.
+  img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
+  return img;
+}
+
+/**
+ * How much of a print pixel you are actually seeing, where 1 means one image
+ * pixel per physical screen pixel -- Photoshop's 100%.
+ *
+ * Derived from measurements rather than from the viewer's own zoom semantics:
+ * the image spans the full viewport width at zoom 1, so its drawn CSS width is
+ * containerWidth x zoom, and a device pixel is 1/devicePixelRatio of a CSS
+ * pixel. On a retina screen the two differ by 2x, which is the whole reason
+ * "100%" has to be computed rather than assumed.
+ */
+function pixelRatio(viewer) {
+  const item = viewer.world.getItemAt(0);
+  if (!item) return 0;
+  const cssWide = viewer.container.clientWidth * viewer.viewport.getZoom(true);
+  return (cssWide * (window.devicePixelRatio || 1)) / item.source.dimensions.x;
+}
+
+/** The zoom that puts one image pixel on one screen pixel. */
+function oneToOneZoom(viewer) {
+  const item = viewer.world.getItemAt(0);
+  const dpr = window.devicePixelRatio || 1;
+  return item.source.dimensions.x / (dpr * viewer.container.clientWidth);
+}
+
+function deepZoom(p, openNow, g) {
+  const wrap = document.createElement('div');
+
+  const stage = document.createElement('div');
+  stage.className = 'viewer';
+  wrap.appendChild(stage);
+
+  const bar = document.createElement('div');
+  bar.className = 'zoombar';
+  wrap.appendChild(bar);
+  bar.hidden = true;
+
+  let viewer = null;
+
+  function start() {
+    if (viewer) return;
+    stage.innerHTML = '';
+    const host = document.createElement('div');
+    host.className = 'osd';
+    stage.appendChild(host);
+
+    viewer = OpenSeadragon({
+      element: host,
+      tileSources: p.dzi,
+      prefixUrl: '',        // no button sprites: this page draws its own controls
+      showNavigationControl: false,
+      gestureSettingsMouse: { clickToZoom: false, scrollToZoom: true },
+      // Past 1:1 the customer is inspecting real pixels, so show them as they
+      // are. Smoothing here would make a low-resolution upload look better on
+      // screen than it will on vinyl, which is the one lie this page must not
+      // tell.
+      imageSmoothingEnabled: false,
+      // The default cap stops short of 1:1 on a retina screen, which is the
+      // exact zoom this feature exists to reach.
+      maxZoomPixelRatio: 8,
+      visibilityRatio: 1,
+      constrainDuringPan: true,
+    });
+
+    host.__viewer = viewer; // lets scripts/proof-render-check.mjs measure it
+    viewer.addHandler('open', () => {
+      if (g) addGuideOverlay(viewer, g, wrap);
+      bar.hidden = false;
+      readout();
+    });
+    // `zoom` fires when the spring is aimed at a new value, not when it gets
+    // there, and readout() asks for the CURRENT zoom -- so on its own it always
+    // printed the previous number. Clicking 100% left "13%" on screen while the
+    // picture behind it really was at 1:1, which is the one number on this page
+    // a customer is meant to trust. `animation` tracks the spring and
+    // `animation-finish` lands the final value.
+    viewer.addHandler('zoom', readout);
+    viewer.addHandler('animation', readout);
+    viewer.addHandler('animation-finish', readout);
+    viewer.addHandler('resize', readout);
+    viewer.addHandler('open-failed', () => {
+      // Tiles missing or unreadable: fall back rather than show an empty box.
+      viewer.destroy();
+      viewer = null;
+      bar.hidden = true;
+      stage.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = p.review;
+      img.alt = 'Proof ' + p.itemNo;
+      img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+      stage.appendChild(img);
+    });
+  }
+
+  const pct = document.createElement('span');
+  pct.className = 'pct';
+
+  function readout() {
+    if (!viewer) return;
+    const r = pixelRatio(viewer);
+    if (!r) return;
+    pct.innerHTML = 'Actual print size: <b>' + Math.round(r * 100) + '%</b>';
+  }
+
+  function btn(label, title, onClick, primary) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    if (primary) b.className = 'primary';
+    b.addEventListener('click', onClick);
+    bar.appendChild(b);
+    return b;
+  }
+
+  function zoomBy(factor) {
+    if (!viewer) return;
+    viewer.viewport.zoomBy(factor);
+    viewer.viewport.applyConstraints();
+  }
+
+  btn('\u2212', 'Zoom out', () => zoomBy(0.7));
+  btn('+', 'Zoom in', () => zoomBy(1.4));
+  btn('Fit', 'Fit the whole proof on screen', () => viewer && viewer.viewport.goHome());
+  btn('100%', 'One print pixel per screen pixel, the same as Photoshop at 100%',
+      () => {
+        if (!viewer) return;
+        viewer.viewport.zoomTo(oneToOneZoom(viewer));
+        viewer.viewport.applyConstraints();
+      }, true);
+  bar.appendChild(pct);
+
+  // start() must not run until `wrap` is in the document. OpenSeadragon sizes
+  // its viewport from the container the moment it is constructed, and this
+  // element is still detached here -- deepZoom() returns it and the caller
+  // appends it afterwards. Initialising on a 0x0 container gave a viewer that
+  // loaded the descriptor, knew the image size, reported a zoom percentage, and
+  // drew nothing at all.
+  wrap.openWhenReady = start;
+
+  if (!openNow) {
+    // Several items on one order would mean several tile pyramids loading at
+    // once, which is slow on a phone. Only the first opens by itself.
+    const thumb = document.createElement('img');
+    thumb.src = p.review;
+    thumb.alt = 'Proof ' + p.itemNo;
+    thumb.loading = 'lazy';
+    thumb.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
+    stage.appendChild(thumb);
+
+    const opener = document.createElement('button');
+    opener.type = 'button';
+    opener.className = 'opener';
+    opener.innerHTML = '<span>Tap to zoom and check detail</span>';
+    opener.addEventListener('click', start);
+    stage.appendChild(opener);
+  }
+
+  return wrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * Finishing guides
+ *
+ * Drawn from {order}/{item}-1v1.tif.guides.json, which the finish service
+ * writes from the same code that builds the print file (finish/guides.py).
+ * Every coordinate is a print pixel at 72 per inch, face origin top-left, so
+ * the overlay is exact at any zoom: the outline IS the edge of the piece, and
+ * a pole pocket is drawn at its real 4.5 in, outside the artwork, because
+ * that is where the finisher adds it.
+ * ------------------------------------------------------------------------- */
+const SVGNS = 'http://www.w3.org/2000/svg';
+const INK = '#16181d';
+
+function inchText(px) {
+  const n = Math.round((px / 72) * 100) / 100;
+  return n + ' in';
+}
+
+function sizeText(w, h) {
+  const wi = Math.round((w / 72) * 100) / 100;
+  const hi = Math.round((h / 72) * 100) / 100;
+  let t = wi + ' × ' + hi + ' in';
+  if (wi % 12 === 0 && hi % 12 === 0) t += ' (' + wi / 12 + ' × ' + hi / 12 + ' ft)';
+  return t;
+}
+
+/** Face size plus how far the finishing reaches past each edge, in px. */
+function guideFrame(g) {
+  const f = { W: g.face.w, H: g.face.h, top: 0, bottom: 0, left: 0, right: 0 };
+  for (const st of g.strips || []) f[st.side] += st.depth;
+  f.x = -f.left;
+  f.y = -f.top;
+  f.w = f.W + f.left + f.right;
+  f.h = f.H + f.top + f.bottom;
+  return f;
+}
+
+function svgEl(tag, attrs, parent) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+/**
+ * The guide drawing, in print pixels. Returns the <svg> and setScale(s), where
+ * s is screen CSS px per print px: line widths, marker sizes and text are
+ * re-sized from it so they stay readable at every zoom while their POSITIONS
+ * stay exact.
+ */
+function guideSvg(g) {
+  const f = guideFrame(g);
+  const svg = svgEl('svg', {
+    class: 'guidesvg',
+    viewBox: f.x + ' ' + f.y + ' ' + f.w + ' ' + f.h,
+    preserveAspectRatio: 'none',
+    'aria-hidden': 'true',
+  });
+  const sized = [];   // [element, attribute, screen px]
+  const size = (e, attr, px) => { sized.push([e, attr, px]); return e; };
+  const labels = [];  // [text element, room in print px, length in chars]
+
+  const defs = svgEl('defs', {}, svg);
+  const hatch = svgEl('pattern', { id: 'hatch' + Math.random().toString(36).slice(2),
+    patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+  size(hatch, 'width', 7); size(hatch, 'height', 7);
+  svgEl('rect', { x: -1e6, y: -1e6, width: 2e6, height: 2e6, fill: '#fff' }, hatch);
+  size(svgEl('line', { x1: 0, y1: -1e6, x2: 0, y2: 1e6, stroke: '#b7bcc4' }, hatch), 'stroke-width', 1.5);
+
+  // Strips added outside the face: pole pockets, retractable stand base.
+  const edge = { top: [0, 0, f.W, 0], bottom: [0, f.H, f.W, f.H],
+                 left: [0, 0, 0, f.H], right: [f.W, 0, f.W, f.H] };
+  for (const st of g.strips || []) {
+    const d = st.depth;
+    const r = { top: [0, -d, f.W, d], bottom: [0, f.H, f.W, d],
+                left: [-d, 0, d, f.H], right: [f.W, 0, d, f.H] }[st.side];
+    if (!r) continue;
+    const band = svgEl('rect', { x: r[0], y: r[1], width: r[2], height: r[3],
+      fill: 'url(#' + hatch.id + ')', stroke: INK }, svg);
+    size(band, 'stroke-width', 1);
+    const e = edge[st.side];
+    const fold = svgEl('line', { x1: e[0], y1: e[1], x2: e[2], y2: e[3], stroke: INK }, svg);
+    size(fold, 'stroke-width', 1.5);
+    size(fold, 'stroke-dasharray', '6 4');
+    const text = (st.kind === 'stand-base' ? 'INTO STAND BASE' : 'POLE POCKET')
+      + ' · ' + inchText(d) + ' · not visible';
+    const vertical = st.side === 'left' || st.side === 'right';
+    const cx = r[0] + r[2] / 2;
+    const cy = r[1] + r[3] / 2;
+    const t = svgEl('text', { x: cx, y: cy, fill: INK, 'text-anchor': 'middle',
+      'dominant-baseline': 'central',
+      transform: vertical ? 'rotate(-90 ' + cx + ' ' + cy + ')' : '' }, svg);
+    t.textContent = text;
+    size(t, 'font-size', 11);
+    labels.push([t, d, vertical ? f.H : f.W, text.length]);
+  }
+
+  // RET only: artwork taller than the stand is cut from the bottom.
+  if (g.cropped && g.cropped.px > 0) {
+    const c = g.cropped.px;
+    svgEl('rect', { x: 0, y: f.H - c, width: f.W, height: c, fill: 'rgba(214,40,40,.45)' }, svg);
+    const t = svgEl('text', { x: f.W / 2, y: f.H - c / 2, fill: '#7a1010',
+      'text-anchor': 'middle', 'dominant-baseline': 'central' }, svg);
+    t.textContent = 'CUT OFF · ' + inchText(c) + ' · not printed';
+    size(t, 'font-size', 11);
+    labels.push([t, c, f.W, t.textContent.length]);
+  }
+
+  // The edge of the printed piece.
+  const outline = svgEl('rect', { x: 0, y: 0, width: f.W, height: f.H, fill: 'none', stroke: INK }, svg);
+  size(outline, 'stroke-width', 2);
+
+  // Grommets: drawn at their real size (about 1/2 in across), never smaller
+  // than a visible dot.
+  const grommets = [];
+  for (const [x, y] of g.grommets || []) {
+    const ring = svgEl('circle', { cx: x, cy: y, fill: '#9aa0a8', stroke: INK }, svg);
+    const hole = svgEl('circle', { cx: x, cy: y, stroke: INK }, svg);
+    hole.style.fill = 'var(--stage)'; // a hole: the stage shows through
+    size(ring, 'stroke-width', 1.2);
+    size(hole, 'stroke-width', 0.8);
+    grommets.push([ring, hole]);
+  }
+
+  // Dimensions of the face, above and to the left of everything else.
+  const dimW = svgEl('g', {}, svg);
+  const dimH = svgEl('g', {}, svg);
+  const wText = svgEl('text', { fill: INK, 'text-anchor': 'middle' }, svg);
+  const hText = svgEl('text', { fill: INK, 'text-anchor': 'middle' }, svg);
+  wText.textContent = inchText(f.W);
+  hText.textContent = inchText(f.H);
+
+  function setScale(s) {
+    if (!(s > 0)) return;
+    const u = 1 / s; // print px per screen px
+    for (const [e, attr, px] of sized) {
+      e.setAttribute(attr, typeof px === 'string'
+        ? px.split(' ').map((n) => n * u).join(' ') : px * u);
+    }
+    // A label is shown only when it fits inside its band.
+    for (const [t, room, len, chars] of labels) {
+      t.style.display = room * s >= 15 && chars * 6.6 <= len * s ? '' : 'none';
+    }
+    const R = Math.max(18, 5 * u);
+    for (const [ring, hole] of grommets) {
+      ring.setAttribute('r', R);
+      hole.setAttribute('r', R * 0.5);
+    }
+    const gap = 14 * u;
+    const tick = 5 * u;
+    const yW = f.y - gap;
+    const xH = f.x - gap;
+    dimW.innerHTML = '';
+    dimH.innerHTML = '';
+    for (const [x1, y1, x2, y2] of [[0, yW, f.W, yW], [0, yW - tick, 0, yW + tick], [f.W, yW - tick, f.W, yW + tick]]) {
+      svgEl('line', { x1, y1, x2, y2, stroke: INK, 'stroke-width': u }, dimW);
+    }
+    for (const [x1, y1, x2, y2] of [[xH, 0, xH, f.H], [xH - tick, 0, xH + tick, 0], [xH - tick, f.H, xH + tick, f.H]]) {
+      svgEl('line', { x1, y1, x2, y2, stroke: INK, 'stroke-width': u }, dimH);
+    }
+    wText.setAttribute('font-size', 12 * u);
+    wText.setAttribute('x', f.W / 2);
+    wText.setAttribute('y', yW - 5 * u);
+    hText.setAttribute('font-size', 12 * u);
+    const hy = f.H / 2;
+    const hx = xH - 5 * u;
+    hText.setAttribute('x', hx);
+    hText.setAttribute('y', hy);
+    hText.setAttribute('transform', 'rotate(-90 ' + hx + ' ' + hy + ')');
+  }
+
+  return { svg, frame: f, setScale };
+}
+
+/** Attach the guides to an open OpenSeadragon viewer. */
+function addGuideOverlay(viewer, g, wrap) {
+  const d = guideSvg(g);
+  const f = d.frame;
+  const W = f.W; // viewport units: the image is 1 wide
+  viewer.addOverlay({
+    element: d.svg,
+    location: new OpenSeadragon.Rect(f.x / W, f.y / W, f.w / W, f.h / W),
+  });
+  // Fit shows the whole finished piece -- pockets included -- with room around
+  // it for the outline and dimensions, not just the artwork edge to edge.
+  // _setContentBounds is what OpenSeadragon itself calls with the image
+  // bounds; the build is vendored, so it cannot change under us.
+  const pad = 0.12 * Math.max(f.w, f.h);
+  if (typeof viewer.viewport._setContentBounds === 'function') {
+    viewer.viewport._setContentBounds(new OpenSeadragon.Rect(
+      (f.x - pad) / W, (f.y - pad) / W, (f.w + 2 * pad) / W, (f.h + 2 * pad) / W),
+      viewer.world.getContentFactor());
+    viewer.viewport.goHome(true);
+  }
+  const rescale = () => d.setScale(viewer.container.clientWidth * viewer.viewport.getZoom(true) / W);
+  viewer.addHandler('update-viewport', rescale);
+  rescale();
+  wrap.guideSvgs = [d.svg];
+}
+
+/** No zoom viewer: the review image on the grey stage, with the same guides. */
+function flatFrame(p, g, fig, box) {
+  const d = guideSvg(g);
+  const f = d.frame;
+  const frame = document.createElement('div');
+  frame.className = 'flatframe';
+  const stage = document.createElement('div');
+  stage.className = 'flatstage';
+  stage.style.aspectRatio = f.w + ' / ' + f.h;
+  // The strips are white on the print file; show them that way under the hatch.
+  const img = document.createElement('img');
+  img.src = p.review;
+  img.alt = 'Proof ' + p.itemNo;
+  img.loading = 'lazy';
+  img.style.left = (-f.x / f.w * 100) + '%';
+  img.style.top = (-f.y / f.h * 100) + '%';
+  img.style.width = (f.W / f.w * 100) + '%';
+  img.style.height = (f.H / f.h * 100) + '%';
+  img.onerror = () => { fig.remove(); if (!box.children.length) renderProofs([]); };
+  stage.appendChild(img);
+  stage.appendChild(d.svg);
+  frame.appendChild(stage);
+  const rescale = () => d.setScale(stage.clientWidth / f.w);
+  if (window.ResizeObserver) new ResizeObserver(rescale).observe(stage);
+  else window.addEventListener('resize', rescale);
+  requestAnimationFrame(rescale);
+  frame.guideSvgs = [d.svg];
+  return frame;
+}
+
+/** Plain-language key under the proof, plus a switch to hide the guides. */
+function legend(g, host) {
+  const f = guideFrame(g);
+  const el = document.createElement('div');
+  el.className = 'legend';
+  const rows = [];
+  rows.push(['sw-edge', 'Black outline — the edge of your printed piece. '
+    + 'Everything inside it is printed exactly as shown.']);
+  const n = (g.grommets || []).length;
+  if (n) {
+    rows.push(['sw-grommet', n + ' grommet' + (n === 1 ? '' : 's')
+      + ' — metal rings punched through the material about 0.75 in from the edge. '
+      + 'Keep text and logos clear of them.']);
+  }
+  const pockets = (g.strips || []).filter((s) => s.kind === 'pole-pocket');
+  if (pockets.length) {
+    rows.push(['sw-strip', 'Pole pocket (' + pockets.map((s) => s.side).join(' and ')
+      + ', ' + inchText(pockets[0].depth) + ') — extra material added outside your '
+      + 'design and folded to the back for a pole. It does not cover your artwork.']);
+  }
+  const base = (g.strips || []).find((s) => s.kind === 'stand-base');
+  if (base) {
+    rows.push(['sw-strip', 'Stand base (' + inchText(base.depth) + ') — extra material '
+      + 'added below your design that rolls into the stand. It does not cover your artwork.']);
+  }
+  if (g.cropped && g.cropped.px > 0) {
+    rows.push(['sw-cut', '<span class="warn">Cut off — the bottom '
+      + inchText(g.cropped.px) + ' of your artwork is taller than the stand and will not '
+      + 'be printed.</span>', true]);
+  }
+  const size = document.createElement('p');
+  size.className = 'size';
+  size.innerHTML = 'Printed size: <b></b>';
+  size.querySelector('b').textContent = sizeText(f.W, f.H);
+  el.appendChild(size);
+  const ul = document.createElement('ul');
+  for (const [cls, text, html] of rows) {
+    const li = document.createElement('li');
+    const i = document.createElement('i');
+    i.className = cls;
+    const span = document.createElement('span');
+    if (html) span.innerHTML = text; else span.textContent = text;
+    li.appendChild(i);
+    li.appendChild(span);
+    ul.appendChild(li);
+  }
+  el.appendChild(ul);
+  const label = document.createElement('label');
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = true;
+  box.addEventListener('change', () => {
+    for (const s of (host && host.guideSvgs) || []) s.style.visibility = box.checked ? '' : 'hidden';
+  });
+  label.appendChild(box);
+  label.appendChild(document.createTextNode('Show guides'));
+  el.appendChild(label);
+  return el;
+}
+
+async function show(data) {
+  $('loading').hidden = true;
+  $('view').hidden = false;
+  $('orderName').textContent = data.orderName || '';
+  renderProofs(data.proofs, await loadGuides(data.proofs));
+  if (data.status === 'approved') {
+    $('approveBox').hidden = true;
+    $('approved').hidden = false;
+  }
+}
+
+async function load() {
+  if (!TOKEN) {
+    problem('This link is incomplete',
+      'Please open your proof using the button in the email we sent you.');
+    return;
+  }
+  try {
+    const r = await fetch(CONFIG.apiBase + '/proof?t=' + encodeURIComponent(TOKEN),
+      { cache: 'no-store' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      problem('We could not open this proof',
+        data.error || 'Please email sales@stickersbanners.com and we will help.');
+      return;
+    }
+    show(data);
+  } catch {
+    problem('We could not reach our server',
+      'Please try again in a moment, or email sales@stickersbanners.com.');
+  }
+}
+
+$('approve').addEventListener('click', async () => {
+  const btn = $('approve');
+  btn.disabled = true;
+  btn.textContent = 'Approving…';
+  try {
+    const r = await fetch(CONFIG.apiBase + '/proof/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      problem('We could not record your approval',
+        data.error || 'Please email sales@stickersbanners.com and we will approve it for you.');
+      return;
+    }
+    $('approveBox').hidden = true;
+    $('approved').hidden = false;
+  } catch {
+    btn.disabled = false;
+    btn.textContent = 'Approve this proof';
+    problem('We could not reach our server',
+      'Please try again in a moment, or email sales@stickersbanners.com.');
+  }
+});
+
+(async () => {
+  // Same deploy-time config.json the dashboard uses (webapp-stack).
+  try {
+    const r = await fetch('config.json', { cache: 'no-store' });
+    if (r.ok) Object.assign(CONFIG, await r.json());
+  } catch { /* fall through to the not-configured message below */ }
+  if (!CONFIG.apiBase) {
+    problem('This page is not configured',
+      'Please email sales@stickersbanners.com and we will approve your proof for you.');
+    return;
+  }
+  load();
+})();
+</script>
+</body>
+</html>
