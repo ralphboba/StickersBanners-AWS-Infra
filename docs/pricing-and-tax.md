@@ -204,3 +204,20 @@ OrderDesk 참조번호가 막는다.
 **Mac + 터널 실측 (`scripts/local-e2e.mjs`)**: 배포 코드 그대로(페이지, 라우트, 결제 처리)를 노트북에서
 돌리고 Cloudflare 임시 터널로 공개 주소를 얻는다. 쓰기는 `WRITE_ONLY_ORDERS`로 테스트 주문 하나에만,
 인보이스는 `INVOICE_TO`로만 간다. 종료 시 웹훅 등록을 지운다.
+
+## 9. AWS 실배포 테스트 결과 (2026-10-01~02, S64262)
+
+`sb-dev-compute/api/webapp`을 `--context testOrders=S64262`로 배포(쓰기는 S64262만). 메일의
+**Manage my order**(S64262에게만 보이는 템플릿 블록) → 옵션 선택 → **Shopify 결제 페이지로 바로 이동**
+(`paymentCollectionDetails.additionalPaymentCollectionUrl`, 인보이스 메일 없음) → 결제 → Shopify 웹훅
+(`orders/updated`, 부분환불 이력 주문) → OrderDesk FedEx 3-Days $33.08 / $40.25 → Google Chat
+"S64262 upgraded FedEx Ground → FedEx 3-Days · +$17.38". 처음부터 끝까지 통과.
+
+- 옵션은 더 빠른 서비스 전부(Ground → 3-Days $17.38 / 2-Days $33.86 / 1-Day $73.55), 각각 Shopify 계산.
+- 첫 실클릭에서 고친 것: 주문상태 URL이 `stickersbanners.com` 도메인이고, 메일의 `key`(shcct_…)와 API의
+  `key`가 달라서 토큰만 비교하도록 변경.
+- 환불 대기(잔액 음수)가 있으면 견적을 내지 않는다(확인됨, 환불 후 정상).
+- ShipStation: 배송방식 변경으로 생기는 문제 없음(Kai 확인).
+- 미결제: OrderDesk와 Chat은 결제 전엔 절대 안 움직인다. Shopify 주문만 새 서비스+잔액으로 남는다 —
+  48시간 자동 되돌리기(`sb-dev-shipping-change-expiry`)는 꺼진 상태로 둠.
+- 남은 일(Kai 대기): 전 고객용 메일 버튼과 정식 도메인, `testOrders` 없이 정식 배포(실제 돈, 승인 필요).
