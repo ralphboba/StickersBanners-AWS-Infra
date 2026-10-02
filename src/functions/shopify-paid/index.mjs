@@ -5,7 +5,8 @@
 //   { ref, orderDeskId, from, to, shippingCents, taxCents, deliverTo?, status }
 //
 // Secrets (SSM, never logged): /sb/<env>/shopify/client-secret (signs the webhook),
-// /sb/<env>/orderdesk/{store-id,api-key}, /sb/<env>/gchat/webhook-url.
+// /sb/<env>/orderdesk/{store-id,api-key}, /sb/<env>/gchat/webhook-url, and the
+// facility spaces /sb/<env>/gchat/webhook-url-{GA,NJ,TX} (optional).
 // Not yet deployed: the CDK route and the Shopify webhook subscription are the
 // remaining steps (docs/pricing-and-tax.md).
 
@@ -16,7 +17,8 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { applyShippingUpgrade } from '../../shared/orderdesk-write.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { stillAllowed } from '../../shared/paid-recheck.mjs';
-import { sendChat } from '../../shared/gchat.mjs';
+import { notifyChat } from '../../shared/gchat.mjs';
+import { facilityOf } from '../../shared/orderdesk-folders.mjs';
 import { centsToDollars } from '../../shared/money.mjs';
 import { makePaidHandler } from './core.mjs';
 
@@ -50,7 +52,9 @@ export const handler = makePaidHandler({
     const [storeId, apiKey] = await Promise.all([getSecret('orderdesk', 'store-id'), getSecret('orderdesk', 'api-key')]);
     const res = await orderDeskFetch(`${ORDERDESK_API}/orders/${change.orderDeskId}`, { headers: orderDeskHeaders(storeId, apiKey) });
     if (!res.ok) throw new Error(`OrderDesk GET ${res.status}`);   // 500 -> Shopify retries
-    return stillAllowed((await res.json())?.order, change);
+    const od = (await res.json())?.order;
+    // The facility from the folder the order is in NOW picks the Chat space.
+    return { ...stillAllowed(od, change), facility: od ? facilityOf(od.folder_id) : null };
   },
   applyOrderDesk: async (change) => {
     const [storeId, apiKey] = await Promise.all([getSecret('orderdesk', 'store-id'), getSecret('orderdesk', 'api-key')]);
@@ -60,5 +64,9 @@ export const handler = makePaidHandler({
       invoiceRef: change.ref, deliverTo: change.deliverTo, storeId, apiKey,
     });
   },
-  notify: async (orderName, text) => sendChat({ webhookUrl: await getSecret('gchat', 'webhook-url'), orderName, text }),
+  notify: async (orderName, text, where = {}) => {
+    const r = await notifyChat({ getUrl: (k) => getSecret('gchat', k), orderName, text, facility: where.facility });
+    console.log(JSON.stringify({ msg: 'chat', orderName, sent: r.sent, skipped: r.skipped, facility: r.facility }));
+    return r;
+  },
 });

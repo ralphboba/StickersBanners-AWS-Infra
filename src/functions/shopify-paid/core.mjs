@@ -64,7 +64,10 @@ const reply = (statusCode, body) => ({ statusCode, body: JSON.stringify(body) })
  *           markAttention: (orderName: string, ref: string, reason: string) => Promise<void>,
  *           stillAllowed: (change: object) => Promise<{ allowed: boolean, reason?: string, label?: string }>,
  *           applyOrderDesk: (change: object) => Promise<object>,
- *           notify: (orderName: string, text: string) => Promise<object> }} deps
+ *           notify: (orderName: string, text: string, where?: { facility?: string|null }) => Promise<object> }} deps
+ *
+ * stillAllowed may also return `facility` (GA/NJ/TX/...) from the order's
+ * current Order Desk folder; notify uses it to pick the facility's Chat space.
  */
 export function makePaidHandler(deps) {
   return async function handler(event = {}) {
@@ -92,12 +95,13 @@ export function makePaidHandler(deps) {
     // is no longer allowed, write nothing and tell the team — the customer has
     // paid for something we cannot do, and that needs a person and a refund.
     const late = await deps.stillAllowed(change);
+    const where = { facility: late.facility ?? null };
     if (!late.allowed) {
       await deps.markAttention(orderName, change.ref, late.reason);
       await deps.notify(orderName, `${orderName} PAID for ${change.from} → ${change.to} `
         + `(+$${centsToDollars((change.shippingCents ?? 0) + (change.taxCents ?? 0)).toFixed(2)}) but the order is now `
         + `${late.label ?? 'past the point of change'} — NOT applied. Refund or handle by hand.`
-        + (change.test ? ' (TEST)' : ''));
+        + (change.test ? ' (TEST)' : ''), where);
       return reply(200, { written: false, reason: 'too_late', detail: late.reason });
     }
 
@@ -120,7 +124,7 @@ export function makePaidHandler(deps) {
         orderName, from: result.from ?? change.from, to: change.to,
         amount: centsToDollars(change.shippingCents), tax: centsToDollars(change.taxCents ?? 0),
         converted: Boolean(result.converted), test: Boolean(change.test),
-      }));
+      }), where);
     }
     return reply(200, { written: Boolean(result.applied), duplicate: result.skipped === 'duplicate', chat: chat.sent });
   };

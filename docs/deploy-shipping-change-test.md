@@ -42,6 +42,18 @@ open -e scripts/parameters.dev.env
 scripts/seed-parameters.sh dev
 ```
 
+시설별 채팅방(선택): 모든 변경은 기존 방으로 가고, 결제 시점에 주문이 **지금 들어 있는 OrderDesk
+폴더**가 GA/NJ/TX 소속이면(생산 폴더, Awaiting Shipment, Awaiting Pickup) 그 시설 방에도 같은 줄이
+간다. 값이 없는 방은 조용히 건너뛴다(OrderDesk 반영과 기존 방 알림에는 영향 없음).
+
+```bash
+for F in GA NJ TX; do
+  read -rs "V?$F webhook URL: "; echo
+  aws ssm put-parameter --name /sb/dev/gchat/webhook-url-$F --type SecureString --value "$V" --overwrite >/dev/null && echo "$F saved"
+  unset V
+done
+```
+
 ## 4. 배포
 
 ```bash

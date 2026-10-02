@@ -14,7 +14,7 @@ const CHANGE = { orderName: 'S64262', ref: 'CHG-1', orderDeskId: '49', from: 'Fe
   shippingCents: 1738, taxCents: 104, status: 'pending' };
 
 function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground' }, allowed = { allowed: true } } = {}) {
-  const log = { applied: [], done: [], chat: [], attention: [] };
+  const log = { applied: [], done: [], chat: [], attention: [], where: [] };
   const handler = makePaidHandler({
     webhookSecret: async () => SECRET,
     loadPending: async (name) => (change && name === change.orderName ? change : null),
@@ -22,7 +22,7 @@ function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground
     markAttention: async (name, ref, why) => { log.attention.push([name, ref, why]); },
     stillAllowed: async () => allowed,
     applyOrderDesk: async (c) => { log.applied.push(c.ref); return apply; },
-    notify: async (name, text) => { log.chat.push(text); return { sent: true }; },
+    notify: async (name, text, where) => { log.chat.push(text); log.where.push(where); return { sent: true }; },
   });
   return { handler, log };
 }
@@ -123,5 +123,17 @@ describe('when is an order paid?', () => {
     const r = await handler(event({ name: '#S64262', financial_status: 'paid', total_outstanding: '0.00' }, { topic: 'orders/create' }));
     assert.deepEqual(body(r), { ignored: 'topic' });
     assert.deepEqual(log.applied, []);
+  });
+
+  test('the facility from the current folder reaches notify (success and too-late)', async () => {
+    let h = harness({ allowed: { allowed: true, facility: 'GA' } });
+    await h.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(h.log.where, [{ facility: 'GA' }]);
+    h = harness({ allowed: { allowed: false, reason: 'shipping', label: 'Completed', facility: 'TX' } });
+    await h.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(h.log.where, [{ facility: 'TX' }]);
+    h = harness();
+    await h.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(h.log.where, [{ facility: null }]);
   });
 });

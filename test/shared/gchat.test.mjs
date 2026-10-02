@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { upgradeMessage, isChatWebhook, sendChat } from '../../src/shared/gchat.mjs';
+import { upgradeMessage, isChatWebhook, sendChat, notifyChat, facilitySpaceKey } from '../../src/shared/gchat.mjs';
 
 const HOOK = 'https://chat.googleapis.com/v1/spaces/AAAA/messages?key=k&token=t';
 
@@ -39,5 +39,57 @@ describe('sendChat', () => {
       assert.equal((await sendChat({ webhookUrl: bad, orderName: 'S1', text: 'x', fetchImpl })).skipped, 'not_a_chat_webhook');
     }
     assert.equal(called, false);
+  });
+});
+
+describe('notifyChat: main space + facility space', () => {
+  const MAIN = 'https://chat.googleapis.com/v1/spaces/MAIN/messages?key=k&token=t';
+  const GA = 'https://chat.googleapis.com/v1/spaces/GA/messages?key=k&token=t';
+  const urls = { 'webhook-url': MAIN, 'webhook-url-GA': GA };
+  const getUrl = async (k) => { if (!urls[k]) throw new Error('ParameterNotFound'); return urls[k]; };
+  const recorder = (fail = new Set()) => {
+    const hit = [];
+    return { hit, fetchImpl: async (url, init) => { hit.push([url, JSON.parse(init.body).text]); if (fail.has(url)) throw new Error('down'); return { ok: true, status: 200 }; } };
+  };
+
+  test('only GA/NJ/TX have a space', () => {
+    assert.equal(facilitySpaceKey('GA'), 'webhook-url-GA');
+    assert.equal(facilitySpaceKey('nj'), 'webhook-url-NJ');
+    assert.equal(facilitySpaceKey('TX'), 'webhook-url-TX');
+    for (const f of ['NV', 'CA', null, undefined, '']) assert.equal(facilitySpaceKey(f), null);
+  });
+  test('GA order: same line to main and GA', async () => {
+    const { hit, fetchImpl } = recorder();
+    const r = await notifyChat({ getUrl, orderName: 'S1', text: 'line', facility: 'GA', fetchImpl });
+    assert.deepEqual(hit.sort(), [[GA, 'line'], [MAIN, 'line']]);
+    assert.equal(r.sent, true);
+    assert.equal(r.facility.name, 'GA');
+    assert.equal(r.facility.sent, true);
+  });
+  test('NV / unknown folder: main only', async () => {
+    for (const facility of ['NV', null]) {
+      const { hit, fetchImpl } = recorder();
+      const r = await notifyChat({ getUrl, orderName: 'S1', text: 'line', facility, fetchImpl });
+      assert.deepEqual(hit, [[MAIN, 'line']]);
+      assert.equal(r.facility, undefined);
+    }
+  });
+  test('facility space not set up: main still sent, no throw', async () => {
+    const { hit, fetchImpl } = recorder();
+    const r = await notifyChat({ getUrl, orderName: 'S1', text: 'line', facility: 'TX', fetchImpl });
+    assert.deepEqual(hit, [[MAIN, 'line']]);
+    assert.equal(r.sent, true);
+    assert.equal(r.facility.skipped, 'no_webhook');
+  });
+  test('facility space down: main unaffected', async () => {
+    const { fetchImpl } = recorder(new Set([GA]));
+    const r = await notifyChat({ getUrl, orderName: 'S1', text: 'line', facility: 'GA', fetchImpl });
+    assert.equal(r.sent, true);
+    assert.equal(r.facility.skipped, 'network_error');
+  });
+  test('synthetic orders send nowhere', async () => {
+    const { hit, fetchImpl } = recorder();
+    await notifyChat({ getUrl, orderName: 'DEMO-1', text: 'line', facility: 'GA', fetchImpl });
+    assert.deepEqual(hit, []);
   });
 });

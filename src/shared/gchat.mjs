@@ -14,6 +14,12 @@
 //
 // The webhook URL carries its own key and token, so it is a secret: it comes
 // from the caller (SSM in Lambda, an env var in a session) and is never logged.
+//
+// Facility spaces (Kai, 2026-10-02): every notice goes to the main space; an
+// order whose CURRENT Order Desk folder belongs to GA, NJ or TX also goes to
+// that facility's space (/sb/<env>/gchat/webhook-url-GA|NJ|TX). A facility
+// space that is not set up, or fails, never affects the main notice or the
+// Order Desk write.
 
 import { isSyntheticOrder } from './write-gates.mjs';
 import { toCents, centsToAmount } from './money.mjs';
@@ -56,4 +62,30 @@ export async function sendChat({ webhookUrl, orderName, text, fetchImpl }) {
     body: JSON.stringify({ text }),
   });
   return res.ok ? { sent: true, status: res.status } : { sent: false, skipped: 'http_error', status: res.status };
+}
+
+/** Facilities that have their own Chat space. */
+export const FACILITY_SPACES = Object.freeze(['GA', 'NJ', 'TX']);
+
+/** SSM key (under gchat/) of the facility's space, or null. */
+export function facilitySpaceKey(facility) {
+  const f = String(facility ?? '').toUpperCase();
+  return FACILITY_SPACES.includes(f) ? `webhook-url-${f}` : null;
+}
+
+/**
+ * Main space always; the facility's space too when it has one.
+ * getUrl(key) returns the webhook URL for gchat/<key> (throws or returns
+ * empty when it is not set).
+ * @returns {Promise<{ sent: boolean, skipped?: string, status?: number, facility?: object }>}
+ */
+export async function notifyChat({ getUrl, orderName, text, facility, fetchImpl }) {
+  const send = async (key) => {
+    let webhookUrl;
+    try { webhookUrl = await getUrl(key); } catch { return { sent: false, skipped: 'no_webhook' }; }
+    try { return await sendChat({ webhookUrl, orderName, text, fetchImpl }); } catch { return { sent: false, skipped: 'network_error' }; }
+  };
+  const spaceKey = facilitySpaceKey(facility);
+  const [main, extra] = await Promise.all([send('webhook-url'), spaceKey ? send(spaceKey) : null]);
+  return extra ? { ...main, facility: { name: String(facility).toUpperCase(), ...extra } } : main;
 }

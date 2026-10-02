@@ -66,6 +66,10 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
 
   // Google Chat — one line per paid customer shipping change (src/shared/gchat.mjs)
   { group: 'gchat', key: 'webhook-url', description: 'Google Chat space webhook for paid shipping changes' },
+  // Facility spaces: also notified when the order's current Order Desk folder is theirs (optional)
+  { group: 'gchat', key: 'webhook-url-GA', description: 'Google Chat GA facility space (paid shipping changes on GA orders)' },
+  { group: 'gchat', key: 'webhook-url-NJ', description: 'Google Chat NJ facility space (paid shipping changes on NJ orders)' },
+  { group: 'gchat', key: 'webhook-url-TX', description: 'Google Chat TX facility space (paid shipping changes on TX orders)' },
 
   // Gmail (transactional email via app password)
   { group: 'gmail', key: 'user', description: 'Gmail account address' },
