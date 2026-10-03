@@ -135,3 +135,21 @@ export function isModifiable(folderId) {
 export function facilityOf(folderId) {
   return folderById(folderId)?.facility ?? null;
 }
+
+/**
+ * Which facility's Chat space hears about this order? Kai (2026-10-02): "TX가
+ * 들어간 모든 폴더는 TX로", same for GA and NJ. A folder in the list above
+ * answers by its facility; any other folder (one added in Order Desk later)
+ * answers by its name, when Order Desk sends it: GA, NJ or TX as a separate
+ * word. Only routes a notice — never decides what may change.
+ *
+ * @param {string|number} folderId
+ * @param {string} [folderName]  Order Desk's folder_name, if the response has it
+ * @returns {'GA'|'NJ'|'TX'|string|null}
+ */
+export function chatFacilityOf(folderId, folderName) {
+  const known = facilityOf(folderId);
+  if (known) return known;
+  const m = String(folderName ?? '').toUpperCase().match(/(?:^|[^A-Z])(GA|NJ|TX)(?=[^A-Z]|$)/);
+  return m ? m[1] : null;
+}
