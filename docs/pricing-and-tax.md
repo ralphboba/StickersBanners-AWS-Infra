@@ -220,4 +220,9 @@ OrderDesk 참조번호가 막는다.
 - ShipStation: 배송방식 변경으로 생기는 문제 없음(Kai 확인).
 - 미결제: OrderDesk와 Chat은 결제 전엔 절대 안 움직인다. Shopify 주문만 새 서비스+잔액으로 남는다 —
   48시간 자동 되돌리기(`sb-dev-shipping-change-expiry`)는 꺼진 상태로 둠.
+- 시설별 채팅방(2026-10-03): 모든 변경은 기존 방, 결제 시점에 주문이 들어 있는 OrderDesk 폴더가
+  GA/NJ/TX 소속이면 그 시설 방에도 같은 줄(`chatFacilityOf`, `notifyChat`). 등록 안 된 새 폴더는 이름에
+  GA/NJ/TX가 단어로 들어가면 그 시설. SSM `gchat/webhook-url-{GA,NJ,TX}`. 28개 폴더 전부 시뮬레이션
+  통과(`test/shared/chat-routing.test.mjs`), `scripts/chat-route-check.mjs --send`로 4개 방 모두 HTTP 200
+  수신 확인(Kai). 실결제로 시설 방까지 간 건은 아직 없음 — S64262를 실제 시설 폴더에 넣어야 해서 안 함.
 - 남은 일(Kai 대기): 전 고객용 메일 버튼과 정식 도메인, `testOrders` 없이 정식 배포(실제 돈, 승인 필요).
