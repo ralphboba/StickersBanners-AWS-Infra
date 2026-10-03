@@ -385,7 +385,13 @@ function extensionFromUrl(url) {
  * dimension, or finishing decision.
  */
 function extensionFromShopify(url) {
-  const lastSegment = (s) => decodeURIComponent(String(s).split('/').pop()).replace(/\s+/g, '');
+  // A stray `%` (a file called "50% off.png") is not valid percent-encoding,
+  // and decodeURIComponent THROWS on it -- from inside cleanOrder, so one such
+  // order took down the whole call that read it: the dryRun census failed on
+  // 2026-10-02 and kept failing every minute on 10-03, and the same line runs
+  // in the intake poll. The raw segment still ends in the real extension.
+  const decode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+  const lastSegment = (s) => decode(String(s).split('/').pop()).replace(/\s+/g, '');
   const escaped = escapeHashInFilename(url);
   let fileName;
   try {

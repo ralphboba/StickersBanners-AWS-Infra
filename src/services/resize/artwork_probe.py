@@ -36,7 +36,7 @@ import time
 import boto3
 from PIL import Image
 
-from artwork import artwork_extension
+from artwork import artwork_extension, corrected_extension
 from converter import (PDF_MAX_RENDER_PIXELS, PDF_RENDER_DPI, check_pdf_pages,
                        get_dimensions, pdf_render_dpi)
 from fetch import download
@@ -150,6 +150,10 @@ def probe_item(item, scratch, max_bytes):
                 "detail": f"{type(err).__name__}: {str(err)[:300]}"}
     out["bytes"] = size
     out["fetchSeconds"] = round(time.time() - started, 1)
+    # The bytes, not the name (artwork.corrected_extension) -- as resize does.
+    real = corrected_extension(ext, local)
+    if real != ext:
+        out["namedAs"], out["ext"], ext = ext, real, real
 
     width_px, height_px = get_dimensions(item.get("width"), item.get("height"),
                                          item.get("unit"))

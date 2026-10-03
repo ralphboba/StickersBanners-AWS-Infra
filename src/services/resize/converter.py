@@ -179,17 +179,63 @@ def pixmap_to_image(pix):
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples_mv)
 
 
-def _convert_pdf(file_path, width_px, height_px, output_path):
+# Memory is not a function of pixels alone. S65160 (2026-10-01), a 31.5x80 in
+# roll-up full of transparency, peaked at 8.76 GB at 160 Mpx -- 55 bytes a pixel,
+# twice the worst file the 160 Mpx line was measured on. No fixed budget is
+# safe for every file, so the render runs in a child process with a memory
+# ceiling: if MuPDF runs out there, the child fails cleanly and the page is
+# rendered again at half the density, down to the floor the output needs. A
+# file that fits renders once at the same dpi as before -- same bytes.
+#
+# The ceiling is an address-space limit (RLIMIT_AS) in the child, so the
+# failure is an allocation error the parent can see, not the kernel killing the
+# whole task. It is a fraction of the task's own cgroup limit.
+PDF_CHILD_MEMORY_FRACTION = 0.8
+PDF_MEMORY_FAILURE = 75  # child exit code: ran out of memory, try lower dpi
+
+
+def _container_memory_bytes():
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = open(path).read().strip()
+        except OSError:
+            continue
+        if raw.isdigit() and int(raw) < 1 << 50:  # "max" / huge = unlimited
+            return int(raw)
+    return None
+
+
+def pdf_child_memory_limit(env=None):
+    """Bytes the render child may use, or None for no limit."""
+    env = os.environ if env is None else env
+    explicit = env.get("PDF_CHILD_MEMORY_MB")
+    if explicit:
+        return int(explicit) * 1024 * 1024
+    total = _container_memory_bytes()
+    return int(total * PDF_CHILD_MEMORY_FRACTION) if total else None
+
+
+def _render_pdf_child(file_path, width_px, height_px, output_path, dpi, limit):
+    """Child process body: render at `dpi` and save, or exit 75 on memory."""
+    import resource
+    if limit:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    try:
+        _render_pdf(file_path, width_px, height_px, output_path, dpi)
+    except MemoryError:
+        os._exit(PDF_MEMORY_FAILURE)
+    except Exception as exc:
+        if "memory" in str(exc).lower() or "alloc" in str(exc).lower():
+            os._exit(PDF_MEMORY_FAILURE)
+        print(f"resize: render failed: {type(exc).__name__}: {exc}", flush=True)
+        os._exit(1)
+    os._exit(0)
+
+
+def _render_pdf(file_path, width_px, height_px, output_path, dpi):
     doc = fitz.open(file_path)
     page = doc[0]
     page.set_cropbox(page.trimbox)  # legacy: crop to trimbox
-    dpi = pdf_render_dpi(page.rect, width_px, height_px)
-    if dpi != PDF_RENDER_DPI:
-        print(f"resize: {os.path.basename(file_path)} page is "
-              f"{page.rect.width / 72:.1f}x{page.rect.height / 72:.1f} in — "
-              f"rendering at {dpi} dpi instead of {PDF_RENDER_DPI} to stay "
-              f"inside {PDF_MAX_RENDER_PIXELS} pixels "
-              f"(output is {width_px}x{height_px})")
     pix = page.get_pixmap(dpi=dpi)
     image = pixmap_to_image(pix)
     # PIL has its own copy now. Let the pixmap and the document go before the
@@ -197,6 +243,41 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
     del pix, page
     doc.close()
     return _rescale_and_save(image, width_px, height_px, output_path, force_rgba=True)
+
+
+def _convert_pdf(file_path, width_px, height_px, output_path):
+    import multiprocessing
+    doc = fitz.open(file_path)
+    page = doc[0]
+    page.set_cropbox(page.trimbox)  # legacy: crop to trimbox
+    rect = fitz.Rect(page.rect)  # a copy: the document closes below
+    dpi = pdf_render_dpi(rect, width_px, height_px)
+    floor = max(width_px / (rect.width / 72.0), height_px / (rect.height / 72.0)) if rect.width and rect.height else 0
+    doc.close()
+    if dpi != PDF_RENDER_DPI:
+        print(f"resize: {os.path.basename(file_path)} page is "
+              f"{rect.width / 72:.1f}x{rect.height / 72:.1f} in — "
+              f"rendering at {dpi} dpi instead of {PDF_RENDER_DPI} to stay "
+              f"inside {PDF_MAX_RENDER_PIXELS} pixels "
+              f"(output is {width_px}x{height_px})")
+    limit = pdf_child_memory_limit()
+    ctx = multiprocessing.get_context("fork")
+    while True:
+        child = ctx.Process(target=_render_pdf_child,
+                            args=(file_path, width_px, height_px, output_path, dpi, limit))
+        child.start()
+        child.join()
+        if child.exitcode == 0:
+            return True
+        out_of_memory = child.exitcode in (PDF_MEMORY_FAILURE, -9)
+        lower = int(dpi / 2)
+        if not out_of_memory or lower < floor:
+            raise RuntimeError(
+                f"PDF render failed at {dpi} dpi (exit {child.exitcode})"
+                + ("; already at the output's own density" if out_of_memory else ""))
+        print(f"resize: {os.path.basename(file_path)} ran out of memory at {dpi} dpi; "
+              f"rendering again at {lower} dpi")
+        dpi = lower
 
 
 def _convert_postscript(file_path, width_px, height_px, output_path):
@@ -227,8 +308,20 @@ def _convert_ai(file_path, width_px, height_px, output_path):
 
 
 def _convert_psd(file_path, width_px, height_px, output_path):
-    psd = PSDImage.open(file_path)
-    return _rescale_and_save(psd.composite(), width_px, height_px, output_path, force_rgba=True)
+    try:
+        composite = PSDImage.open(file_path).composite()
+    except Exception as exc:
+        # psd-tools 1.10.8 cannot parse some newer Photoshop records: S65512
+        # (2026-10-02) carried a version-8 linked layer and failed with
+        # "Invalid version 8". Every PSD also stores the flattened image
+        # Photoshop shows, and that is what psd-tools' composite() returns
+        # anyway when the file has one -- so read it directly with PIL. Files
+        # psd-tools CAN open keep the exact path they have always taken.
+        print(f"resize: psd-tools could not open {os.path.basename(file_path)} "
+              f"({type(exc).__name__}: {exc}); using its stored composite image")
+        composite = Image.open(file_path)
+        composite.load()
+    return _rescale_and_save(composite, width_px, height_px, output_path, force_rgba=True)
 
 
 def check_pdf_pages(file_path) -> int:

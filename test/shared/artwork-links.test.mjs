@@ -95,3 +95,13 @@ test('a key that merely contains "uploaded file" and a number is not a match', (
   assert.equal(job.flags.hasMultipleFiles, false);
   assert.equal(job.flags.isMissingFile, true);
 });
+
+// --- a stray % in the customer's file name --------------------------------
+
+test('a % that is not percent-encoding does not throw out of cleanOrder', () => {
+  // 2026-10-02: one such link made decodeURIComponent throw inside cleanOrder,
+  // and the whole call that read the order failed with "URI malformed".
+  const job = shopifyOrder({ 'UPLOADED FILE': `${BASE}/Sale 50% off banner.png` });
+  assert.equal(job.items[0].artworkExt, 'png');
+  assert.equal(job.flags.isMissingFile, false);
+});

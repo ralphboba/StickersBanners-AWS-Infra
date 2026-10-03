@@ -22,7 +22,7 @@ import boto3
 from jobload import load_job
 
 from converter import check_pdf_pages, get_dimensions, infer_unit, process_image
-from artwork import artwork_extension
+from artwork import artwork_extension, corrected_extension
 from fetch import download
 from orientation import orientation_mismatch, source_size
 
@@ -77,6 +77,15 @@ def fetch_artwork(item, dest_dir, name):
 
     if not os.path.exists(local) or os.path.getsize(local) == 0:
         raise RuntimeError(f"Cannot verify downloaded file for {name}")
+    # Trust the bytes over the name (artwork.corrected_extension). The local
+    # file is renamed so every later step -- page check, converter, orientation
+    # -- sees the format it really is.
+    real = corrected_extension(ext, local)
+    if real != ext:
+        fixed = os.path.join(dest_dir, f"{name}.{real}")
+        os.replace(local, fixed)
+        print(f"resize: {name} is named .{ext} but is a {real} file; processing it as {real}")
+        local, ext = fixed, real
     if ext == "pdf":  # legacy: single-page PDFs only
         pages = check_pdf_pages(local)
         if pages != 1:
