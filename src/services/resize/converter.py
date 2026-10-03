@@ -16,6 +16,7 @@ by explicit file arguments; no Redis; no FastAPI.
 """
 
 import io
+import math
 import os
 import subprocess
 import tempfile
@@ -270,8 +271,12 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
         if child.exitcode == 0:
             return True
         out_of_memory = child.exitcode in (PDF_MEMORY_FAILURE, -9)
-        lower = int(dpi / 2)
-        if not out_of_memory or lower < floor:
+        # Halve, but never below the output's own density -- and do try AT that
+        # density before giving up. S65160 item 2 (96x96 in page for a 92 in
+        # print) failed at 131 dpi, and half of that (65) is under its 69 dpi
+        # floor, so it stopped one step short of the render that fits.
+        lower = max(int(dpi / 2), math.ceil(floor))
+        if not out_of_memory or lower >= dpi:
             raise RuntimeError(
                 f"PDF render failed at {dpi} dpi (exit {child.exitcode})"
                 + ("; already at the output's own density" if out_of_memory else ""))
