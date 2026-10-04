@@ -1,0 +1,28 @@
+{% comment %} SB — Manage my order (dashed box). S64262 only until go-live; remove the if/endif pair to show it to everyone. {% endcomment %}
+{% if order_name == 'S64262' or order_name == '#S64262' %}
+<table class="row" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; margin-top:24px; border-collapse:separate;">
+  <tr>
+    <td style="border:1px dashed {{ shop.email_accent_color }}; border-radius:4px; padding:18px 22px 22px 22px;">
+      <p style="margin:0 0 12px 0; font-size:16px; line-height:24px; color:#555555;">Until your order moves to shipping, you can still:</p>
+      <table cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;">
+        <tr>
+          <td valign="top" style="width:22px; font-size:10px; line-height:24px; color:{{ shop.email_accent_color }};">&#9679;</td>
+          <td style="padding:0 0 6px 0; font-size:16px; line-height:24px; color:#333333;">{% if delivery_method == 'pick-up' %}Have it delivered instead of picking it up{% else %}Upgrade your shipping speed{% endif %}</td>
+        </tr>
+        <tr>
+          <td valign="top" style="width:22px; font-size:10px; line-height:24px; color:{{ shop.email_accent_color }};">&#9679;</td>
+          <td style="font-size:16px; line-height:24px; color:#333333;">Add another product to your order</td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+        <tr>
+          <td align="center" style="border:1px solid {{ shop.email_accent_color }}; border-radius:4px;">
+            <a href="https://d1z2r5w66e9a93.cloudfront.net/my-order?o={{ order_name | remove: '#' | url_encode }}&amp;s={{ order_status_url | url_encode }}"
+               style="display:block; padding:14px 20px; font-size:18px; font-weight:700; line-height:24px; text-decoration:none; color:{{ shop.email_accent_color }};">Manage my order</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+{% endif %}

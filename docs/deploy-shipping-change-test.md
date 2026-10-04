@@ -79,6 +79,10 @@ node scripts/shopify-webhooks.mjs list
 
 ## 7. 메일 버튼 (S64262에게만 보이게)
 
+> 현재 버전(2026-10-04, 목업과 같은 점선 박스): **`docs/shopify-email-button-snippet.liquid`** 를 통째로
+> 붙인다. 위치는 버튼 블록(View your order / Track order with shop / or Visit our store)이 끝나는
+> `{% endif %}` 다음 줄, `</td>` 앞 (`shopify-email-button.md` "붙일 위치"). 아래 블록은 이전 버전.
+
 Shopify 관리자 → Settings → Notifications → Order confirmation → Edit code. `shopify-email-button.md`의
 위치에 아래를 붙인다. `{% if order_name == 'S64262' or order_name == '#S64262' %}` 덕분에 **실제 고객 메일에는 아무것도 바뀌지
 않는다.** `<MyOrderUrl>`은 4단계 값.
