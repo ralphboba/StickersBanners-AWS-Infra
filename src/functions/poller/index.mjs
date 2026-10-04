@@ -12,16 +12,18 @@ import {
   DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand, ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { getSecret } from '../../shared/secrets.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { cleanOrder } from '../../shared/orderdesk.mjs';
 import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
+import { writeGateStatus } from '../../shared/write-gates.mjs';
+import { fetchOrderByName } from '../../shared/shopify-orders.mjs';
+import { MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
 import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
 } from '../../shared/job-rows.mjs';
-import {
-  updateOrderDeskDetails, applyExpressUpgrade, orderDeskWritesEnabled,
-} from '../../shared/orderdesk-write.mjs';
+import { updateOrderDeskDetails, applyExpressUpgrade } from '../../shared/orderdesk-write.mjs';
 
 const sqs = new SQSClient({});
 // Real orders can carry undefined fields (missing totals/uploads); drop them.
@@ -31,24 +33,23 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
+const shopifyCreds = makeShopifyCredentials({ getSecret });
 const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
 
 // OrderDesk folder id -> dashboard status, for the display-only mirror.
 // From Linh's constants (orderStatusLib / folderLib) and confirmed against live
 // order counts. "Completed" is intentionally excluded (huge history, not useful).
-const MIRROR_FOLDERS = {
-  665685: 'in_queue',
-  651474: 'proofing',
-  661019: 'needs_review', // Missing/Corrupted File — orders that didn't process
-  653109: 'needs_review', // Pending Review
-  31358: 'awaiting_admin',
-  31301: 'pickup_ga',
-  52437: 'pickup_nj',
-  52438: 'pickup_tx',
-  674908: 'pickup_nv',    // "NV Awaiting Pickup" (correct NV folder id from /store)
-  82463: 'pickup_ca',
-};
+// Comes from the folder registry (shared/orderdesk-folders.mjs), which is also
+// where the intake gate's write targets and the customer-facing cutoff live.
+// It now covers the production and Awaiting Shipment folders as well, so the
+// board shows those stages — at the cost of twice as many OrderDesk reads per
+// mirror run (20 folders, not 10). The 429 handling in orderdesk-fetch absorbs
+// that; if it ever does not, this is the line to trim.
+const MIRROR_FOLDERS = MIRROR_STATUS_BY_ID;
 const MAX_PER_FOLDER = 400; // safety cap per folder per sync
+// Shopify order-status lookups per mirror run. One per order for its lifetime,
+// so this is only a backlog limit; the rest are picked up on later runs.
+const MAX_SHOPIFY_LOOKUPS = Number(process.env.MAX_SHOPIFY_LOOKUPS ?? 25);
 
 // Some real orders (non-banner products) have no WIDTH/HEIGHT -> NaN fields,
 // which DynamoDB rejects. Drop NaN (and undefined) deeply for display-only rows.
@@ -180,10 +181,19 @@ export async function handler(event = {}) {
   // Cost-efficient: reads current state and only WRITES orders that are new or
   // whose folder/status changed; deletes those that left.
   if (event?.mirror === true) {
+    // Optional: the mirror works without Shopify, just without the link that
+    // lets a customer open their own order.
+    let shopify = null;
+    try {
+      shopify = await shopifyCreds();
+    } catch {
+      console.warn(JSON.stringify({ msg: 'Shopify credentials absent; skipping order-status links' }));
+    }
+
     // 1. current real orders across folders -> desired status. Orders the system
     //    can't fully handle are pulled aside into "needs_review": an unknown SKU
     //    (product not set up) or an intake order we can't route to a facility.
-    const current = new Map(); // orderName -> { job, status }
+    const current = new Map(); // orderName -> { job, status, folderId }
     for (const [fid, folderStatus] of Object.entries(MIRROR_FOLDERS)) {
       const page = await fetchFolder(storeId, apiKey, fid, MAX_PER_FOLDER);
       for (const order of page) {
@@ -209,36 +219,67 @@ export async function handler(event = {}) {
         // GA/NJ/TX routing rules are incomplete, so every intake order is
         // unrouted; flagging all of them would make the folder meaningless.)
         const status = (job.hasUnknownSku || gate) ? 'needs_review' : folderStatus;
-        current.set(job.orderName, { job, status });
+        current.set(job.orderName, { job, status, folderId: fid });
       }
     }
 
     // 2. what we already have mirrored
-    const existing = new Map(); // orderName -> status
+    const existing = new Map(); // orderName -> { status, orderStatusUrl }
     let ESK;
     do {
       const scan = await ddb.send(new ScanCommand({
         TableName: JOBS_TABLE,
         FilterExpression: 'SK = :meta AND mirror = :t',
         ExpressionAttributeValues: { ':meta': 'META', ':t': true },
-        ProjectionExpression: 'orderName, #s',
+        ProjectionExpression: 'orderName, #s, orderStatusUrl',
         ExpressionAttributeNames: { '#s': 'status' },
         ExclusiveStartKey: ESK,
       }));
-      for (const it of scan.Items ?? []) existing.set(it.orderName, it.status);
+      for (const it of scan.Items ?? []) {
+        existing.set(it.orderName, { status: it.status, orderStatusUrl: it.orderStatusUrl });
+      }
       ESK = scan.LastEvaluatedKey;
     } while (ESK);
 
     // 3. write only new/changed rows
+    //
+    // The customer page's whole access check is Shopify's order-status URL, and
+    // only Shopify has it. It is fetched ONCE per order, the first time the
+    // mirror sees one without it — not every run, and never on request from the
+    // page, which is unauthenticated and could otherwise be used to make us
+    // hammer the store. MAX_SHOPIFY_LOOKUPS caps a backlog so a first run
+    // against a full board cannot turn into a burst against a Shopify bucket
+    // the OrderDesk integration — and therefore the legacy bot — depends on.
     let wrote = 0;
-    for (const [name, { job, status }] of current) {
-      if (existing.get(name) === status) continue; // unchanged -> skip (no write)
+    let shopifyLookups = 0;
+    for (const [name, { job, status, folderId }] of current) {
+      const known = existing.get(name);
+      const needsLink = !known?.orderStatusUrl;
+      if (known?.status === status && !needsLink) continue; // unchanged -> no write
+
+      let orderStatusUrl = known?.orderStatusUrl;
+      if (needsLink && shopifyLookups < MAX_SHOPIFY_LOOKUPS && shopify) {
+        shopifyLookups += 1;
+        try {
+          const found = await fetchOrderByName({ ...shopify, orderName: name });
+          orderStatusUrl = found?.statusPageUrl ?? undefined;
+        } catch (err) {
+          // Never let a Shopify problem stop the board from updating.
+          console.warn(JSON.stringify({ msg: 'Shopify lookup failed', name, err: String(err) }));
+        }
+      }
+
       await ddb.send(new PutCommand({
         TableName: JOBS_TABLE,
         Item: {
           PK: `ORDER#${name}`, SK: 'META',
           GSI1PK: `STATUS#${status}`, GSI1SK: job.createdAt,
-          status, mirror: true, ...job,
+          // folderId, not just the folder name: the customer page decides what
+          // it may offer from the folder id (order-stage.mjs), and names are
+          // edited in OrderDesk far more often than ids are.
+          status, mirror: true, folderId: String(folderId),
+          ...(orderStatusUrl ? { orderStatusUrl } : {}),
+          ...job,
         },
         // Only create/refresh a mirror row; never touch a processed order.
         ConditionExpression: 'attribute_not_exists(PK) OR mirror = :t',
@@ -494,7 +535,8 @@ export async function handler(event = {}) {
 
   const summary = {
     polled: orders.length, enqueued, skipped, held, holdReasons,
-    orderDeskWrites: orderDeskWritesEnabled() ? 'ENABLED' : 'disabled',
+    // All three switches, so a log line says exactly what was armed at the time.
+    ...writeGateStatus(),
     // Empty on every healthy run. Non-empty means those orders were processed
     // by us AND left in Linh's queue for him to process again.
     claimFailed,

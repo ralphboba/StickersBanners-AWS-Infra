@@ -23,6 +23,9 @@ scripts/parameters.*.env
 __pycache__/
 *.pyc
 
+# Local end-to-end test secrets (scripts/local-e2e.mjs) — NEVER commit
+scripts/local-e2e.env
+
 # Machine-local Claude Code settings. The committed .claude/settings.json holds
 # the permission rules (a project decision); this one holds per-machine setup
 # and must never be committed — the repo is public.

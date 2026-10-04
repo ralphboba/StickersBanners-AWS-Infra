@@ -7,6 +7,10 @@ authority: **Linh** (legacy author).
 ## Read this first
 - **`docs/linh-requirements.md`** — Linh's own answers (routing, credentials,
   behaviour) = the spec the system must match. Do not forget these.
+- **`docs/pricing-and-tax.md`** — customer charges: shipping price AND tax both
+  come from Shopify (`shopify-pricing.mjs`), never from a table in code (the PDF
+  card was wrong on 17% of real orders). No quote unless we reproduce exactly
+  what checkout charged. Money is integer cents (`money.mjs`).
 
 ## Non-negotiables Linh set
 - **Routing**: NV/CA by ZIP; **GA/NJ/TX ship by state** (state lists still to be
@@ -22,6 +26,9 @@ authority: **Linh** (legacy author).
 - **Pipeline ends at the production folder** (`pickup_*`); production owns
   "completed". Don't build a completed transition.
 - **Zendesk** proof-ready email is the only external notification (Google Chat off).
+  Exception (Kai, 2026-09-28): one Google Chat line per *paid* shipping change,
+  sent after the Order Desk write succeeds (`src/shared/gchat.mjs`). Webhook URL
+  is a secret — SSM, never committed.
 - Intake is by **polling** the OrderDesk QTS folder (no webhook).
 
 ## Safety
@@ -30,12 +37,16 @@ authority: **Linh** (legacy author).
   code as `intakePollEnabled` (dev only, prod stays off). Real orders run the
   pipeline; the three switches below keep them away from OrderDesk, customers
   and facilities. Arming any of those needs Kai's explicit go-live approval.
-- **`ORDERDESK_WRITES` stays `disabled`.** It arms the only code that writes back
-  to OrderDesk (`src/shared/orderdesk-write.mjs` — the intake gate's folder/tag
-  move, ported from Linh's `updateOrderdeskDetails`). The gate itself always runs
-  and the dashboard shows what it *would* do; the write is what's held back.
-  Arming it is a go-live action needing Kai's explicit approval. `DEMO-*`/`ZZ-*`
-  can never write regardless.
+- **Three write switches, all `disabled`** (`src/shared/write-gates.mjs`). Each is
+  an exact match on `"enabled"`; `DEMO-*`/`ZZ-*` can never write regardless of any
+  of them. Arming any one is a go-live action needing Kai's explicit approval.
+  - `ORDERDESK_WRITES` — the intake gate's folder/tag move
+    (`orderdesk-write.mjs`, ported from Linh's `updateOrderdeskDetails`). The gate
+    itself always runs and the dashboard shows what it *would* do; only the write
+    is held back. **Stays off** — routing still needs Linh's confirmation.
+  - `ORDERDESK_UPGRADE_WRITES` — the customer shipping upgrade's `shipping_method`
+    PUT. Runs only *after* the customer has paid.
+  - `SHOPIFY_WRITES` — invoicing / order editing. **This one moves real money.**
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed

@@ -25,6 +25,9 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     env: { account: '123456789012', region: config.region },
     webhookFn: fn('Webhook'),
     orderApiFn: fn('OrderApi'),
+    orderStatusApiFn: fn('OrderStatusApi'),
+    orderChangeRequestFn: fn('OrderChangeRequest'),
+    shopifyPaidFn: fn('ShopifyPaid'),
     approvalFn: fn('Approval'),
     proofApprovalFn: fn('ProofApproval'),
     userPool,
@@ -43,15 +46,19 @@ describe('ApiStack', () => {
       .map((r) => r.Properties.RouteKey)
       .sort();
     expect(keys).toEqual([
+      'GET /my-order',
       'GET /orders',
       'GET /orders/{name}',
       'GET /proof',
+      'POST /my-order/quote',
+      'POST /my-order/request',
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
       'POST /orders/{name}/size',
       'POST /proof/approve',
       'POST /webhook/orderdesk',
+      'POST /webhook/shopify-paid',
     ]);
   });
 
@@ -62,6 +69,25 @@ describe('ApiStack', () => {
       Object.values(routes).map((r) => [r.Properties.RouteKey, r.Properties]),
     );
     expect(byKey['GET /orders'].AuthorizationType).toBe('JWT');
+  });
+
+  test('the customer routes are the only public ones besides the webhook', () => {
+    // Customers have no account; the token in their emailed link is the check,
+    // and it happens inside the Lambda. Every other route stays behind Cognito,
+    // so this assertion is what would catch a staff route losing its authorizer.
+    const template = synth();
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'))
+      .map((r) => r.Properties);
+    const unauthenticated = routes
+      .filter((r) => r.AuthorizationType !== 'JWT')
+      .map((r) => r.RouteKey)
+      .sort();
+    // Each checks its caller itself: the order-status token (my-order), the
+    // Shopify HMAC (shopify-paid), the shared secret (orderdesk).
+    expect(unauthenticated).toEqual([
+      'GET /my-order', 'GET /proof', 'POST /my-order/quote', 'POST /my-order/request',
+      'POST /proof/approve', 'POST /webhook/orderdesk', 'POST /webhook/shopify-paid',
+    ]);
   });
 
   test('CORS is enabled for the dashboard', () => {
@@ -104,9 +130,13 @@ describe('ApiStack', () => {
       .filter((r) => (r.Properties.AuthorizationType ?? 'NONE') === 'NONE')
       .map((r) => r.Properties.RouteKey);
     expect(publicKeys.sort()).toEqual([
+      'GET /my-order',
       'GET /proof',
+      'POST /my-order/quote',
+      'POST /my-order/request',
       'POST /proof/approve',
       'POST /webhook/orderdesk',
+      'POST /webhook/shopify-paid',
     ]);
     const allKeys = routes.map((r) => r.Properties.RouteKey);
     expect(allKeys.filter((k) => /upload/i.test(k))).toEqual([]);
@@ -133,7 +163,8 @@ describe('ApiStack', () => {
     const template = synth();
     // webhook + order-api + staff approval (approve & reject share one)
     // + customer proof approval (view & approve share one)
-    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 4);
+    // + order-status-api + order-change-request + shopify-paid
+    template.resourceCountIs('AWS::ApiGatewayV2::Integration', 7);
     for (const i of Object.values(template.findResources('AWS::ApiGatewayV2::Integration'))) {
       expect(i.Properties.IntegrationType).toBe('AWS_PROXY');
     }

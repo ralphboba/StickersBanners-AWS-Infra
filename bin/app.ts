@@ -153,6 +153,9 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   // distribution depends on this API and could not be passed in without a cycle.
   proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
+  // `--context testOrders=S64262` arms the shipping-change writes for that
+  // order only. Omit it and every write switch stays disabled.
+  shippingChangeTestOrders: app.node.tryGetContext('testOrders') as string | undefined,
   description: `StickersBanners Lambda compute (${config.env})`,
 });
 
@@ -180,6 +183,9 @@ const apiStack = new ApiStack(app, `${config.prefix}-api`, {
   config,
   webhookFn: computeStack.webhook,
   orderApiFn: computeStack.orderApi,
+  orderStatusApiFn: computeStack.orderStatusApi,
+  orderChangeRequestFn: computeStack.orderChangeRequest,
+  shopifyPaidFn: computeStack.shopifyPaid,
   approvalFn: computeStack.approval,
   proofApprovalFn: computeStack.proofApproval,
   userPool: authStack.userPool,
@@ -232,6 +238,7 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   demoFeederFn: computeStack.demoFeeder,
   demoIntervalMinutes: 10,
   mirrorIntervalMinutes: 1, // display-only real-order sync (EventBridge floor is 1 min)
+  shippingChangeExpiryFn: computeStack.shippingChangeExpiry, // schedule ships DISABLED
 
   description: `StickersBanners schedules (${config.env})`,
 });

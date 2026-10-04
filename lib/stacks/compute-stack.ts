@@ -22,6 +22,13 @@ export interface ComputeStackProps extends cdk.StackProps {
   readonly proofPortalBase?: string;
   /** OrderDesk folder id the poller pulls ready orders from (QTS). */
   readonly qtsFolderId?: string;
+  /**
+   * Test run of the customer shipping change: arms SHOPIFY_WRITES and
+   * ORDERDESK_UPGRADE_WRITES for THESE orders only (WRITE_ONLY_ORDERS, enforced
+   * in write-gates.mjs). Comma-separated order names, e.g. "S64262". Unset =
+   * both switches off, which is the default and the only go-live-safe state.
+   */
+  readonly shippingChangeTestOrders?: string;
 }
 
 const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
@@ -47,6 +54,10 @@ export class ComputeStack extends cdk.Stack {
   public readonly poller: lambda.Function;
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
+  public readonly orderStatusApi: lambda.Function;
+  public readonly orderChangeRequest: lambda.Function;
+  public readonly shopifyPaid: lambda.Function;
+  public readonly shippingChangeExpiry: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
   public readonly proofApproval: lambda.Function;
@@ -163,6 +174,78 @@ export class ComputeStack extends cdk.Stack {
       resources: ['*'],
       conditions: { StringEquals: { 'kms:ViaService': `ssm.${this.region}.amazonaws.com` } },
     }));
+
+    // --- order-status-api: the customer's view of their own order ---
+    // Public (no Cognito): the customer is not logged in, and the link in their
+    // confirmation email is what authorises them. Bundles src root for
+    // shared/order-stage, order-token, shopify-orders and shopify-pricing.
+    this.orderStatusApi = new lambda.Function(this, 'OrderStatusApi', {
+      ...base,
+      functionName: `${config.prefix}-order-status-api`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-status-api/index.handler',
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+      },
+      description: 'Customer order status + shipping upgrade quote (read-only)',
+    });
+    // READ ONLY, deliberately. This function is reachable without authentication,
+    // so it is the one that must not be able to change anything even if a bug or
+    // a crafted request got past the token check.
+    jobsTable.grantReadData(this.orderStatusApi);
+    // Shopify credentials, for the tax-inclusive quote. The token is a
+    // dedicated read-only custom app's — never OrderDesk's integration token,
+    // whose rate-limit bucket the legacy program depends on
+    // (docs/legacy-collision-audit.md C4b).
+    this.grantSecretsRead(this.orderStatusApi, config);
+
+    // --- shipping change: the three functions that DO write ---------------
+    // Kept apart from orderStatusApi so the public read-only function stays
+    // read-only. Every Shopify write in them is behind SHOPIFY_WRITES and every
+    // Order Desk write behind ORDERDESK_UPGRADE_WRITES; both default off.
+    const testOrders = (props.shippingChangeTestOrders ?? '')
+      .split(',').map((o) => o.trim().replace(/^#/, '').toUpperCase()).filter(Boolean);
+    if (testOrders.some((o) => !/^S\d+$/.test(o))) {
+      throw new Error(`shippingChangeTestOrders must be order names like S64262, got "${props.shippingChangeTestOrders}"`);
+    }
+    const changeEnv: Record<string, string> = {
+      JOBS_TABLE: jobsTable.tableName,
+      SB_ENV: config.env,
+      // Armed only together with a non-empty test list, never on their own.
+      SHOPIFY_WRITES: testOrders.length ? 'enabled' : 'disabled',
+      ORDERDESK_UPGRADE_WRITES: testOrders.length ? 'enabled' : 'disabled',
+      ...(testOrders.length ? { WRITE_ONLY_ORDERS: testOrders.join(',') } : {}),
+    };
+    this.orderChangeRequest = new lambda.Function(this, 'OrderChangeRequest', {
+      ...base,
+      functionName: `${config.prefix}-order-change-request`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/order-change-request/index.handler',
+      environment: changeEnv,
+      description: 'Customer "send me the invoice": commit the order edit, email the balance invoice',
+    });
+    this.shopifyPaid = new lambda.Function(this, 'ShopifyPaid', {
+      ...base,
+      functionName: `${config.prefix}-shopify-paid`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shopify-paid/index.handler',
+      environment: changeEnv,
+      description: 'Shopify orders/paid: write the paid shipping change to Order Desk, tell Google Chat',
+    });
+    this.shippingChangeExpiry = new lambda.Function(this, 'ShippingChangeExpiry', {
+      ...base,
+      functionName: `${config.prefix}-shipping-change-expiry`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shipping-change-expiry/index.handler',
+      timeout: Duration.minutes(2),
+      environment: changeEnv,
+      description: 'Undo shipping changes left unpaid past their deadline',
+    });
+    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry]) {
+      jobsTable.grantReadWriteData(fn);
+      this.grantSecretsRead(fn, config);
+    }
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.

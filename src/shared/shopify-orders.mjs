@@ -1,0 +1,113 @@
+// Reading an order's access token from Shopify, and shaping addresses for it.
+// Pricing lives in shopify-pricing.mjs.
+//
+// Nothing here writes, and the transport refuses a mutation that is not
+// calculate-only, so an accidental orderUpdate cannot leave here.
+
+import { shopifyGraphQL } from './shopify-fetch.mjs';
+
+/**
+ * The order-status URL is the whole of the customer page's access control: the
+ * link in the confirmation email carries it, and we compare what arrives
+ * against what we stored (order-token.mjs). It lives only in Shopify — the
+ * OrderDesk copy of an order does not carry it — so it has to be read from here.
+ *
+ * Looked up by order NAME (S59131), which is what OrderDesk calls source_id and
+ * what our rows are keyed on.
+ */
+const ORDER_BY_NAME = `
+  query OrderStatusUrl($q: String!) {
+    orders(first: 2, query: $q) {
+      nodes {
+        id
+        name
+        statusPageUrl
+        currentSubtotalPriceSet { shopMoney { amount currencyCode } }
+      }
+    }
+  }
+`;
+
+/**
+ * Find one order by its name and return what the customer page needs.
+ *
+ * Asks for TWO and refuses if both come back. Shopify's `query:` is a search,
+ * not an exact match, so a name that is a prefix of another ("S5913" matching
+ * "S59131") could return the wrong order — and this feeds an access check.
+ * Ambiguity has to fail, not pick one.
+ *
+ * @returns {Promise<null | { id: string, name: string, statusPageUrl: string,
+ *                            subtotal: number|null }>}
+ */
+export async function fetchOrderByName({ shop, token, orderName, fetchImpl }) {
+  const name = String(orderName ?? '').trim();
+  if (!name) return null;
+
+  const payload = await shopifyGraphQL({
+    shop, token, fetchImpl,
+    query: ORDER_BY_NAME,
+    // Quoted so the whole name is one term rather than being split on the dash
+    // in names like S23766-2-M.
+    variables: { q: `name:"${name.replace(/"/g, '')}"` },
+  });
+
+  const nodes = payload?.data?.orders?.nodes ?? [];
+  const exact = nodes.filter((n) => n?.name === name || n?.name === `#${name}`);
+
+  if (exact.length !== 1) {
+    console.warn(JSON.stringify({
+      msg: exact.length === 0 ? 'Shopify: order not found' : 'Shopify: ambiguous order name',
+      orderName: name, matched: exact.length,
+    }));
+    return null;
+  }
+
+  const o = exact[0];
+  const subtotal = Number(o?.currentSubtotalPriceSet?.shopMoney?.amount);
+  return {
+    id: o.id,
+    name: o.name,
+    statusPageUrl: o.statusPageUrl ?? null,
+    subtotal: Number.isFinite(subtotal) ? subtotal : null,
+  };
+}
+
+const COUNTRY_NAMES = { 'united states': 'US', 'united states of america': 'US', usa: 'US' };
+
+/**
+ * An address in Shopify's MailingAddressInput shape, or null if it is not
+ * complete enough to tax.
+ *
+ * Accepts both spellings in this codebase: the OrderDesk row's
+ * (street / state / postalCode) and the customer form's
+ * (address1 / province / zip). Shopify wants codes — provinceCode and
+ * countryCode — and silently ignores fields it does not know, so sending
+ * `address` or `state` would not fail: it would price the tax for no address
+ * at all. That is why this returns null instead of a partial address.
+ *
+ * @returns {null | { address1: string, address2?: string, city?: string,
+ *                    provinceCode: string, zip: string, countryCode: string }}
+ */
+export function toMailingAddress(a) {
+  if (!a) return null;
+  const s = (v) => String(v ?? '').trim();
+  const address1 = s(a.address1 ?? a.street);
+  const address2 = s(a.address2 ?? a.street2);
+  const city = s(a.city);
+  const provinceCode = s(a.provinceCode ?? a.province ?? a.state).toUpperCase();
+  const zip = s(a.zip ?? a.postalCode);
+  const rawCountry = s(a.countryCode ?? a.country);
+  const countryCode = rawCountry === ''
+    ? 'US'
+    : (COUNTRY_NAMES[rawCountry.toLowerCase()] ?? rawCountry.toUpperCase());
+
+  if (!/^[A-Z]{2}$/.test(provinceCode) || !zip || !/^[A-Z]{2}$/.test(countryCode)) return null;
+  return {
+    ...(address1 ? { address1 } : {}),
+    ...(address2 ? { address2 } : {}),
+    ...(city ? { city } : {}),
+    provinceCode,
+    zip,
+    countryCode,
+  };
+}

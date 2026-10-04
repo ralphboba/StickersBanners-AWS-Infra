@@ -4,7 +4,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { getConfig } from '../lib/config/environments';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
 
-function synth(intervalMinutes?: number, config = getConfig('dev')) {
+function synth(intervalMinutes?: number, withExpiry = false, config = getConfig('dev')) {
   const app = new cdk.App();
   const env = { account: '123456789012', region: 'us-east-1' };
   const deps = new cdk.Stack(app, 'deps', { env });
@@ -18,11 +18,20 @@ function synth(intervalMinutes?: number, config = getConfig('dev')) {
     env,
     pollerFn,
     intervalMinutes,
+    ...(withExpiry ? { shippingChangeExpiryFn: pollerFn } : {}),
   });
   return Template.fromStack(stack);
 }
 
 describe('SchedulerStack', () => {
+  test('the unpaid-shipping-change expiry ships DISABLED', () => {
+    synth(undefined, true).hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-shipping-change-expiry',
+      ScheduleExpression: 'rate(1 hour)',
+      State: 'DISABLED',
+    });
+  });
+
   test('creates the real-poll and mirror schedules', () => {
     synth().resourceCountIs('AWS::Scheduler::Schedule', 2);
   });
@@ -32,7 +41,7 @@ describe('SchedulerStack', () => {
       Name: 'sb-dev-poller',
       State: 'ENABLED',
     });
-    synth(undefined, getConfig('prod')).hasResourceProperties('AWS::Scheduler::Schedule', {
+    synth(undefined, false, getConfig('prod')).hasResourceProperties('AWS::Scheduler::Schedule', {
       Name: 'sb-prod-poller',
       State: 'DISABLED',
     });
@@ -41,7 +50,7 @@ describe('SchedulerStack', () => {
   test('the real poll is off when the environment does not say', () => {
     const { intakePollEnabled, ...unset } = getConfig('dev');
     expect(intakePollEnabled).toBe(true);
-    synth(undefined, unset).hasResourceProperties('AWS::Scheduler::Schedule', {
+    synth(undefined, false, unset).hasResourceProperties('AWS::Scheduler::Schedule', {
       Name: 'sb-dev-poller',
       State: 'DISABLED',
     });

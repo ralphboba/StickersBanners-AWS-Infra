@@ -65,6 +65,18 @@ put "$PREFIX/ftp/password"           "${FTP_PASSWORD:-}"
 
 put "$PREFIX/discord/webhook-url"    "${DISCORD_WEBHOOK_URL:-}"
 
+# Shopify app "Manage My Order Button" (Dev Dashboard). The client secret is
+# traded for an access token at runtime and also verifies the app's webhooks.
+put "$PREFIX/shopify/shop-domain"    "${SHOPIFY_SHOP_DOMAIN:-}"
+put "$PREFIX/shopify/client-id"      "${SHOPIFY_CLIENT_ID:-}"
+put "$PREFIX/shopify/client-secret"  "${SHOPIFY_CLIENT_SECRET:-}"
+
+# Google Chat: one line per paid shipping change (src/shared/gchat.mjs)
+put "$PREFIX/gchat/webhook-url"      "${GCHAT_WEBHOOK_URL:-}"
+put "$PREFIX/gchat/webhook-url-GA"   "${GCHAT_WEBHOOK_URL_GA:-}"
+put "$PREFIX/gchat/webhook-url-NJ"   "${GCHAT_WEBHOOK_URL_NJ:-}"
+put "$PREFIX/gchat/webhook-url-TX"   "${GCHAT_WEBHOOK_URL_TX:-}"
+
 put "$PREFIX/gmail/user"             "${GMAIL_USER:-}"
 put "$PREFIX/gmail/app-password"     "${GMAIL_APP_PASSWORD:-}"
 

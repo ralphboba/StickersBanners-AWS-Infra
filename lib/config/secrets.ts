@@ -33,6 +33,14 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
   { group: 'orderdesk', key: 'store-id', description: 'OrderDesk store id' },
   { group: 'orderdesk', key: 'webhook-secret', description: 'Shared secret OrderDesk sends with each webhook (validated by the webhook Lambda)' },
 
+  // Shopify — our own Dev Dashboard app "Manage My Order Button" (never OrderDesk's
+  // integration token). Client credentials are traded for a ~24h access token
+  // at runtime (src/shared/shopify-auth.mjs); the client secret also verifies
+  // the app's orders/paid webhook.
+  { group: 'shopify', key: 'shop-domain', description: 'Shopify shop domain (stickersbanners.myshopify.com)' },
+  { group: 'shopify', key: 'client-id', description: 'Shopify app Client ID (Dev Dashboard)' },
+  { group: 'shopify', key: 'client-secret', description: 'Shopify app Client secret — token exchange + webhook HMAC' },
+
   // Zendesk (support ticket integration)
   { group: 'zendesk', key: 'subdomain', description: 'Zendesk subdomain (e.g. stickersbanners)' },
   { group: 'zendesk', key: 'email', description: 'Zendesk API user email' },
@@ -55,6 +63,13 @@ export const SECRET_PARAMS: readonly SecretParam[] = [
 
   // Google Chat (order notifications: proof-ready / complete / failed)
   { group: 'googlechat', key: 'webhook-url', description: 'Google Chat incoming-webhook URL for order notifications' },
+
+  // Google Chat — one line per paid customer shipping change (src/shared/gchat.mjs)
+  { group: 'gchat', key: 'webhook-url', description: 'Google Chat space webhook for paid shipping changes' },
+  // Facility spaces: also notified when the order's current Order Desk folder is theirs (optional)
+  { group: 'gchat', key: 'webhook-url-GA', description: 'Google Chat GA facility space (paid shipping changes on GA orders)' },
+  { group: 'gchat', key: 'webhook-url-NJ', description: 'Google Chat NJ facility space (paid shipping changes on NJ orders)' },
+  { group: 'gchat', key: 'webhook-url-TX', description: 'Google Chat TX facility space (paid shipping changes on TX orders)' },
 
   // Gmail (transactional email via app password)
   { group: 'gmail', key: 'user', description: 'Gmail account address' },

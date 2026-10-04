@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Your order — StickersBanners</title>
+<style>
+  :root {
+    --paper:#fff; --paper-2:#f7f7f7; --line:#e5e5e5;
+    --ink:#333; --ink-2:#666; --ink-3:#999;
+    --accent:#146B4F;        /* shop.email_accent_color */
+    --money:#1F6B3E; --warn-bg:#FDF6E9; --warn-line:#E0C08A; --warn-ink:#7A4E10;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper-2); color:var(--ink); font-family:var(--sans); font-size:16px; line-height:1.5; }
+  .wrap { max-width:520px; margin:0 auto; padding:0 16px 64px; }
+  header { padding:22px 0 16px; }
+  .brand { font-weight:800; letter-spacing:-.02em; font-size:17px; }
+  .brand span { color:var(--accent); }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:20px 18px; margin-top:14px; }
+  .eyebrow { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); }
+  h1 { font-size:26px; margin:2px 0 0; letter-spacing:-.02em; }
+
+  /* tracker */
+  ol.steps { display:flex; list-style:none; margin:20px 0 4px; padding:0; }
+  ol.steps li { flex:1; text-align:center; position:relative; font-size:11px; color:var(--ink-3); line-height:1.25; }
+  ol.steps li::before { content:""; display:block; width:11px; height:11px; border-radius:50%; background:var(--line); margin:0 auto 8px; position:relative; z-index:1; }
+  ol.steps li::after { content:""; position:absolute; top:5px; left:50%; width:100%; height:1px; background:var(--line); }
+  ol.steps li:last-child::after { display:none; }
+  ol.steps li.done::before, ol.steps li.done::after { background:var(--money); }
+  ol.steps li.now::before { background:var(--ink); box-shadow:0 0 0 4px rgba(51,51,51,.15); }
+  ol.steps li.now { color:var(--ink); font-weight:600; }
+
+  .rowline { display:flex; justify-content:space-between; gap:12px; padding:6px 0; }
+  .rowline .k { color:var(--ink-2); font-size:14px; }
+  .rowline .v { font-weight:600; font-size:14px; }
+
+  fieldset { border:0; margin:0; padding:0; }
+  legend { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); padding:0; margin-bottom:10px; }
+  .opt { display:flex; align-items:flex-start; gap:11px; border:1px solid var(--line); border-radius:8px; padding:13px; margin-bottom:9px; cursor:pointer; }
+  .opt:has(input:checked) { border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); }
+  .opt input { margin:3px 0 0; accent-color:var(--accent); flex:none; }
+  .opt .b { flex:1; min-width:0; }
+  .opt .nm { font-weight:600; font-size:15px; display:block; }
+  .opt .sub { font-size:13px; color:var(--ink-3); display:block; }
+  .opt .pr { font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .opt:focus-within { outline:2px solid var(--accent); outline-offset:2px; }
+
+  .total { display:flex; justify-content:space-between; align-items:baseline; border-top:2px solid var(--ink); margin-top:18px; padding-top:14px; }
+  .total .v { font-size:22px; font-weight:700; color:var(--money); font-variant-numeric:tabular-nums; }
+  button.cta { display:block; width:100%; background:var(--accent); color:#fff; border:0; border-radius:8px; padding:15px; font:inherit; font-weight:600; font-size:16px; cursor:pointer; margin-top:12px; }
+  button.cta[disabled] { opacity:.4; cursor:not-allowed; }
+  .fine { font-size:12.5px; color:var(--ink-3); margin:12px 0 0; }
+
+  .notice { border:1px solid var(--warn-line); background:var(--warn-bg); border-radius:8px; padding:14px; }
+  .notice b { display:block; color:var(--warn-ink); margin-bottom:4px; }
+  .notice p { margin:0; font-size:14px; color:var(--warn-ink); }
+  .ghost { display:block; text-align:center; border:1px solid var(--line); border-radius:8px; padding:13px; text-decoration:none; color:var(--ink-2); font-weight:600; font-size:14px; margin-top:14px; }
+  .muted { color:var(--ink-3); font-size:14px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px; }
+  .grid .full { grid-column:1 / -1; }
+  .field label { display:block; font-size:13px; color:var(--ink-2); margin-bottom:4px; }
+  .field input, .field select { width:100%; font:inherit; font-size:15px; padding:10px 11px; border:1px solid var(--line); border-radius:7px; background:var(--paper); color:var(--ink); }
+  .field input:focus, .field select:focus { outline:2px solid var(--accent); outline-offset:1px; border-color:transparent; }
+  button.secondary { display:block; width:100%; background:var(--paper); color:var(--ink); border:1px solid var(--ink); border-radius:8px; padding:13px; font:inherit; font-weight:600; font-size:15px; cursor:pointer; margin-top:14px; }
+  button.secondary[disabled] { opacity:.4; cursor:not-allowed; }
+  .err { color:#A33; font-size:14px; margin:10px 0 0; }
+  @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header><div class="brand">Stickers<span>Banners</span></div></header>
+
+  <div id="loading" class="card"><p class="muted" style="margin:0">Loading your order…</p></div>
+
+  <div id="failed" class="card" hidden>
+    <b>We couldn’t open this order</b>
+    <p class="muted">The link may have expired or been copied incompletely.
+      Please use the button in your order confirmation email, or
+      <a href="mailto:sales@stickersbanners.com">contact us</a>.</p>
+  </div>
+
+  <main id="view" hidden>
+    <div class="card">
+      <div class="eyebrow">Order</div>
+      <h1 id="orderName"></h1>
+      <ol class="steps" id="steps"></ol>
+    </div>
+
+    <div class="card">
+      <div class="rowline">
+        <span class="k">Current shipping</span>
+        <span class="v" id="current"></span>
+      </div>
+
+      <div id="locked" hidden style="margin-top:14px">
+        <div class="notice">
+          <b id="lockedTitle">This order can no longer be changed</b>
+          <p id="lockedWhy"></p>
+        </div>
+        <a class="ghost" href="mailto:sales@stickersbanners.com">Contact us about this order</a>
+      </div>
+
+      <div id="awaiting" hidden style="margin-top:18px">
+        <div class="total">
+          <span id="awaitingWhat"></span>
+          <span class="v" id="awaitingTotal"></span>
+        </div>
+        <a class="cta" id="awaitingPay" href="#" style="display:block;text-align:center;text-decoration:none">Pay now</a>
+        <p class="fine">Secure payment on our Shopify checkout. Your order switches to the faster
+          service once the payment goes through.</p>
+      </div>
+
+      <form id="upgrade" hidden style="margin-top:18px">
+        <fieldset>
+          <legend>Faster shipping</legend>
+          <label class="opt">
+            <input type="radio" name="svc" value="0" checked>
+            <span class="b">
+              <span class="nm" id="keepName"></span>
+              <span class="sub">Keep what you have — already paid</span>
+            </span>
+            <span class="pr">—</span>
+          </label>
+          <div id="upOpts"></div>
+        </fieldset>
+
+        <div class="total">
+          <span>Amount to pay</span>
+          <span class="v" id="total">$0.00</span>
+        </div>
+        <button class="cta" id="send" type="submit" disabled>Select an upgrade above</button>
+        <p class="fine">The amount shown is the total you'll be charged, tax included.
+          Nothing changes until you pay — if you leave the payment page, your order ships
+          on its current service.</p>
+      </form>
+
+      <!-- Pickup -> delivery. Two steps, because the tax depends on where it is
+           delivered: pick a service (card price, "plus tax"), type the address,
+           and only then is there a total the customer could be billed. -->
+      <form id="deliver" hidden style="margin-top:18px" novalidate>
+        <fieldset>
+          <legend>Have it delivered instead</legend>
+          <div id="deliverOpts"></div>
+        </fieldset>
+
+        <fieldset style="margin-top:14px">
+          <legend>Delivery address</legend>
+          <div class="grid">
+            <div class="field full"><label for="a1">Street address</label>
+              <input id="a1" autocomplete="address-line1" required></div>
+            <div class="field full"><label for="a2">Apt, suite (optional)</label>
+              <input id="a2" autocomplete="address-line2"></div>
+            <div class="field full"><label for="city">City</label>
+              <input id="city" autocomplete="address-level2" required></div>
+            <div class="field"><label for="state">State</label>
+              <select id="state" autocomplete="address-level1" required></select></div>
+            <div class="field"><label for="zip">ZIP code</label>
+              <input id="zip" autocomplete="postal-code" inputmode="numeric" required></div>
+          </div>
+          <p class="fine" style="margin-top:8px">Delivery within the contiguous US.
+            We can’t ship to PO boxes, Alaska, Hawaii, Puerto Rico or the Virgin Islands.</p>
+        </fieldset>
+
+        <button class="secondary" id="quoteBtn" type="button" disabled>Choose a service above</button>
+        <p class="err" id="quoteErr" hidden></p>
+
+        <div class="total">
+          <span>Amount to pay</span>
+          <span class="v" id="dTotal">—</span>
+        </div>
+        <p class="fine" id="dBreakdown" hidden></p>
+        <button class="cta" id="dSend" type="submit" disabled>Get your total first</button>
+        <p class="fine">Nothing changes until you pay the invoice — if you close this page,
+          your order stays a pickup order.</p>
+      </form>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var money = function (n) { return '$' + Number(n).toFixed(2); };
+
+  // Everything rendered here comes from the API as text. Assigning through
+  // textContent (never innerHTML) means an order name or service string cannot
+  // become markup, whatever it contains.
+  var set = function (id, text) { $(id).textContent = text; };
+
+  var params = new URLSearchParams(location.search);
+  var o = params.get('o');
+  var s = params.get('s');
+
+  function fail() { $('loading').hidden = true; $('failed').hidden = false; }
+
+  if (!o || !s) { fail(); return; }
+
+  fetch('/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s), {
+    headers: { accept: 'application/json' },
+  })
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then(render)
+    .catch(fail);
+
+  function render(data) {
+    set('orderName', data.orderName || '');
+
+    var steps = $('steps');
+    (data.stage.steps || []).forEach(function (label, i) {
+      var li = document.createElement('li');
+      li.textContent = label;
+      if (i < data.stage.step) li.className = 'done';
+      else if (i === data.stage.step) li.className = 'now';
+      steps.appendChild(li);
+    });
+
+    var sh = data.shipping || {};
+    set('current', sh.current || '—');
+
+    if (sh.awaitingPayment) {
+      var ap = sh.awaitingPayment;
+      set('awaitingWhat', 'Upgrade to ' + ap.to + ' — waiting for payment');
+      set('awaitingTotal', money(ap.total));
+      set('awaitingPay', 'Pay ' + money(ap.total));
+      $('awaitingPay').href = ap.paymentUrl;
+      $('awaiting').hidden = false;
+    } else if (sh.canUpgrade && sh.upgrade) {
+      // Every faster service Shopify priced, nearest first. Only figures the
+      // customer will actually be billed (tax included) are ever shown.
+      var ups = (sh.upgrades && sh.upgrades.length ? sh.upgrades : [sh.upgrade]).filter(function (u) { return u.final; });
+      set('keepName', sh.current);
+      var box = $('upOpts');
+      ups.forEach(function (u, i) {
+        var label = document.createElement('label');
+        label.className = 'opt';
+        var input = document.createElement('input');
+        input.type = 'radio'; input.name = 'svc'; input.value = String(i + 1);
+        var b = document.createElement('span'); b.className = 'b';
+        var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = u.to;
+        var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
+        b.appendChild(nm); b.appendChild(sub);
+        var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
+        label.appendChild(input); label.appendChild(b); label.appendChild(pr);
+        box.appendChild(label);
+      });
+      $('upgrade').hidden = false;
+
+      var chosen = function () {
+        var picked = document.querySelector('input[name="svc"]:checked');
+        var n = picked ? parseInt(picked.value, 10) : 0;
+        return n > 0 ? ups[n - 1] : null;
+      };
+      var update = function () {
+        var u = chosen();
+        set('total', money(u ? u.total : 0));
+        $('send').disabled = !u;
+        set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
+      };
+      Array.prototype.forEach.call(document.querySelectorAll('input[name="svc"]'), function (el) { el.addEventListener('change', update); });
+      update();
+
+      $('upgrade').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var u = chosen();
+        if (!u) return;
+        $('send').disabled = true;
+        set('send', 'Opening secure checkout…');
+        // The server re-prices from Shopify and commits only if the amount is
+        // still exactly the one shown here.
+        fetch('/api/my-order/request', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({ o: o, s: s, service: u.to, expectedTotal: u.total }),
+        })
+          .then(function (r) {
+            return r.text().then(function (t) {
+              var b = {};
+              try { b = JSON.parse(t); } catch (err) { b = {}; }
+              return { status: r.status, b: b };
+            });
+          })
+          .then(function (res) {
+            if (res.status === 200 && res.b.paymentUrl) {
+              // Shopify's own payment page, the same checkout as the original order.
+              window.location.href = res.b.paymentUrl;
+              return;
+            }
+            if (res.status === 200) {
+              set('send', 'Invoice sent — check your email');
+              return;
+            }
+            if (res.status === 409 && res.b.error === 'price_changed') {
+              // Show the new figure and let the customer decide again.
+              u.total = res.b.total;
+              var labels = $('upOpts').querySelectorAll('.pr');
+              labels[ups.indexOf(u)].textContent = '+' + money(u.total);
+              update();
+              set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
+              return;
+            }
+            set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+          })
+          .catch(function () { set('send', 'We couldn’t reach our system — please try again'); $('send').disabled = false; });
+      });
+    } else if (sh.canConvert && sh.delivery) {
+      renderDelivery(sh.delivery);
+    } else {
+      set('lockedWhy', sh.reason || '');
+      $('locked').hidden = false;
+    }
+
+    $('loading').hidden = true;
+    $('view').hidden = false;
+  }
+
+  // The states the store delivers to. The API applies the same rules to
+  // whatever is sent; this list only saves the customer a round trip.
+  var STATES = ['AL','AZ','AR','CA','CO','CT','DE','DC','FL','GA','ID','IL','IN','IA',
+    'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM',
+    'NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA',
+    'WV','WI','WY'];
+
+  var QUOTE_ERRORS = {
+    address_incomplete: 'Please fill in the street, city, state and ZIP code.',
+    not_convertible: 'This order can no longer be changed online. Please contact us.',
+    service_not_offered: 'Please choose one of the services above.',
+  };
+
+  function renderDelivery(delivery) {
+    var box = $('deliverOpts');
+    delivery.options.forEach(function (opt, i) {
+      var label = document.createElement('label');
+      label.className = 'opt';
+      var input = document.createElement('input');
+      input.type = 'radio'; input.name = 'dsvc'; input.value = opt.service;
+      var b = document.createElement('span'); b.className = 'b';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = opt.service;
+      var priced = typeof opt.shipping === 'number';
+      var sub = document.createElement('span'); sub.className = 'sub';
+      sub.textContent = priced ? 'Plus tax, if any, for your address' : 'Priced once you enter your address';
+      b.appendChild(nm); b.appendChild(sub);
+      var pr = document.createElement('span'); pr.className = 'pr';
+      // The card price, never labelled as the amount due. The total below is
+      // the only figure presented as what the customer pays.
+      pr.textContent = priced ? money(opt.shipping) : '—';
+      label.appendChild(input); label.appendChild(b); label.appendChild(pr);
+      box.appendChild(label);
+    });
+
+    var sel = $('state');
+    var blank = document.createElement('option');
+    blank.value = ''; blank.textContent = 'Select';
+    sel.appendChild(blank);
+    STATES.forEach(function (code) {
+      var el = document.createElement('option');
+      el.value = code; el.textContent = code;
+      sel.appendChild(el);
+    });
+
+    var quoted = null;   // the last total Shopify stood behind, for these inputs
+    var inFlight = 0;    // ignore answers to questions the customer has since changed
+
+    function picked() {
+      var el = document.querySelector('input[name="dsvc"]:checked');
+      return el ? el.value : '';
+    }
+    function address() {
+      return {
+        address1: $('a1').value, address2: $('a2').value, city: $('city').value,
+        province: $('state').value, zip: $('zip').value, country: 'US',
+      };
+    }
+    function complete() {
+      var a = address();
+      return picked() && a.address1.trim() && a.city.trim() && a.province && a.zip.trim();
+    }
+
+    // Any change invalidates the total: it was for a different service or place.
+    function reset() {
+      quoted = null; inFlight++;
+      set('dTotal', '—');
+      $('dBreakdown').hidden = true;
+      $('quoteErr').hidden = true;
+      $('dSend').disabled = true;
+      set('dSend', 'Get your total first');
+      $('quoteBtn').disabled = !complete();
+      set('quoteBtn', picked() ? (complete() ? 'Get my total' : 'Enter your address') : 'Choose a service above');
+    }
+    $('deliver').addEventListener('input', reset);
+    $('deliver').addEventListener('change', reset);
+    reset();
+
+    $('quoteBtn').addEventListener('click', function () {
+      if (!complete()) return;
+      var ticket = ++inFlight;
+      $('quoteBtn').disabled = true;
+      set('quoteBtn', 'Getting your total…');
+      fetch('/api/my-order/quote', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ o: o, s: s, service: picked(), address: address() }),
+      })
+        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+        .then(function (res) {
+          if (ticket !== inFlight) return;   // the inputs changed while we waited
+          $('quoteBtn').disabled = false;
+          set('quoteBtn', 'Get my total');
+          if (!res.ok) {
+            set('quoteErr', res.b.reason || QUOTE_ERRORS[res.b.error] || 'We couldn’t price that. Please try again.');
+            $('quoteErr').hidden = false;
+            return;
+          }
+          if (!res.b.final) {
+            set('quoteErr', 'We can’t calculate the tax right now. Please try again shortly.');
+            $('quoteErr').hidden = false;
+            return;
+          }
+          quoted = res.b;
+          set('dTotal', money(quoted.total));
+          set('dBreakdown', res.b.service + ' ' + money(quoted.shipping) + ' + tax ' + money(quoted.tax));
+          $('dBreakdown').hidden = false;
+          $('dSend').disabled = false;
+          set('dSend', 'Send me the invoice — ' + money(quoted.total));
+        })
+        .catch(function () {
+          if (ticket !== inFlight) return;
+          $('quoteBtn').disabled = false;
+          set('quoteBtn', 'Get my total');
+          set('quoteErr', 'We couldn’t reach our system. Please try again.');
+          $('quoteErr').hidden = false;
+        });
+    });
+
+    $('deliver').addEventListener('submit', function (e) {
+      e.preventDefault();
+      // As with the upgrade: requesting the invoice is a write, and the
+      // switches that would arm it are off. Inert rather than pretending.
+      $('dSend').disabled = true;
+      set('dSend', 'Not available yet');
+    });
+
+    $('deliver').hidden = false;
+  }
+})();
+</script>
+</body>
+</html>

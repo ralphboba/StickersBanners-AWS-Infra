@@ -15,6 +15,16 @@ export interface ApiStackProps extends cdk.StackProps {
   readonly orderApiFn: lambda.IFunction;
   /** Proof approve/reject — resumes the paused pipeline (Cognito JWT). */
   readonly approvalFn: lambda.IFunction;
+  /**
+   * Customer order status + upgrade quote. PUBLIC by design — the customer has
+   * no account, and the signed link in their confirmation email is the
+   * authorisation. Read-only, and the Lambda's own role cannot write.
+   */
+  readonly orderStatusApiFn?: lambda.IFunction;
+  /** "Send me the invoice" — public, token-checked inside the Lambda. */
+  readonly orderChangeRequestFn?: lambda.IFunction;
+  /** Shopify orders/paid webhook — public, HMAC-checked inside the Lambda. */
+  readonly shopifyPaidFn?: lambda.IFunction;
   /** Customer proof approval (public route; the signed link is the credential). */
   readonly proofApprovalFn: lambda.IFunction;
   readonly userPool: cognito.IUserPool;
@@ -55,6 +65,44 @@ export class ApiStack extends cdk.Stack {
         maxAge: cdk.Duration.hours(1),
       },
     });
+
+    // Public customer route — no Cognito. The order-status token in the query
+    // string is the access check, done inside the Lambda, and it returns the
+    // same 404 for a bad token as for an order that does not exist.
+    if (props.orderStatusApiFn) {
+      // One integration for both customer routes: the Lambda dispatches on the
+      // method, and both run the same token check before anything else.
+      const orderStatusIntegration = new HttpLambdaIntegration(
+        'OrderStatusIntegration', props.orderStatusApiFn,
+      );
+      this.httpApi.addRoutes({
+        path: '/my-order',
+        methods: [apigw.HttpMethod.GET],
+        integration: orderStatusIntegration,
+      });
+      // Pickup -> delivery: prices one service for the address the customer
+      // typed. Read only, like GET (draftOrderCalculate persists nothing).
+      this.httpApi.addRoutes({
+        path: '/my-order/quote',
+        methods: [apigw.HttpMethod.POST],
+        integration: orderStatusIntegration,
+      });
+    }
+
+    if (props.orderChangeRequestFn) {
+      this.httpApi.addRoutes({
+        path: '/my-order/request',
+        methods: [apigw.HttpMethod.POST],
+        integration: new HttpLambdaIntegration('OrderChangeRequestIntegration', props.orderChangeRequestFn),
+      });
+    }
+    if (props.shopifyPaidFn) {
+      this.httpApi.addRoutes({
+        path: '/webhook/shopify-paid',
+        methods: [apigw.HttpMethod.POST],
+        integration: new HttpLambdaIntegration('ShopifyPaidIntegration', props.shopifyPaidFn),
+      });
+    }
 
     // Public webhook route — auth handled inside the Lambda (shared secret).
     this.httpApi.addRoutes({

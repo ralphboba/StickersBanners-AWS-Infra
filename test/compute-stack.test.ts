@@ -5,7 +5,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { getConfig } from '../lib/config/environments';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev') {
+function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string) {
   const app = new cdk.App();
   const config = getConfig(envName);
   // Dependencies live in their own stack (mirrors the real app wiring).
@@ -25,6 +25,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     jobsTable,
     intakeQueue,
     notifyQueue,
+    shippingChangeTestOrders,
   });
   return Template.fromStack(stack);
 }
@@ -41,10 +42,46 @@ describe('ComputeStack', () => {
       'sb-dev-demo-feeder',
       'sb-dev-notify-consumer',
       'sb-dev-order-api',
+      'sb-dev-order-change-request',
+      'sb-dev-order-status-api',
       'sb-dev-poller',
       'sb-dev-proof-approval',
+      'sb-dev-shipping-change-expiry',
+      'sb-dev-shopify-paid',
       'sb-dev-webhook',
     ]);
+  });
+
+  test('the shipping-change functions ship with both write switches off', () => {
+    const fns = Object.values(synth().findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+    expect(fns).toHaveLength(3);
+    for (const fn of fns) {
+      expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBe('disabled');
+      expect(fn.Properties.Environment.Variables.ORDERDESK_UPGRADE_WRITES).toBe('disabled');
+    }
+  });
+
+  test('a test list arms the writes for those orders only', () => {
+    const fns = Object.values(synth('dev', 's64262').findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+    for (const fn of fns) {
+      const v = fn.Properties.Environment.Variables;
+      expect(v.SHOPIFY_WRITES).toBe('enabled');
+      expect(v.ORDERDESK_UPGRADE_WRITES).toBe('enabled');
+      expect(v.WRITE_ONLY_ORDERS).toBe('S64262');
+    }
+    // The public read-only function is never armed.
+    const status = Object.values(synth('dev', 'S64262').findResources('AWS::Lambda::Function'))
+      .find((fn) => fn.Properties.FunctionName === 'sb-dev-order-status-api');
+    expect(status?.Properties.Environment.Variables.SHOPIFY_WRITES).toBeUndefined();
+  });
+
+  test('without a test list there is no WRITE_ONLY_ORDERS, and a bad list is refused', () => {
+    for (const fn of Object.values(synth().findResources('AWS::Lambda::Function'))) {
+      expect(fn.Properties.Environment?.Variables?.WRITE_ONLY_ORDERS).toBeUndefined();
+    }
+    expect(() => synth('dev', '*')).toThrow(/order names/);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {
@@ -105,5 +142,42 @@ describe('ComputeStack', () => {
         ]),
       }),
     });
+  });
+
+  test('the public order-status function can read the table but not write it', () => {
+    // It is reachable without authentication. Even past a bug in the token
+    // check, the role itself must not allow a change to any order.
+    const template = synth();
+    const fns = template.findResources('AWS::Lambda::Function');
+    const logicalId = Object.keys(fns).find(
+      (k) => fns[k].Properties.Handler === 'functions/order-status-api/index.handler',
+    );
+    expect(logicalId).toBeDefined();
+
+    const roleRef = fns[logicalId!].Properties.Role['Fn::GetAtt'][0];
+    const policies = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((p: any) => JSON.stringify(p.Properties.Roles).includes(roleRef));
+    const actions = policies.flatMap((p: any) =>
+      p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
+        (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
+
+    expect(actions).toEqual(expect.arrayContaining(['dynamodb:GetItem']));
+    for (const forbidden of ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem']) {
+      expect(actions).not.toContain(forbidden);
+    }
+  });
+
+  test('it can read this environment\'s secrets, for the Shopify quote', () => {
+    const template = synth();
+    const fns = template.findResources('AWS::Lambda::Function');
+    const logicalId = Object.keys(fns).find(
+      (k) => fns[k].Properties.Handler === 'functions/order-status-api/index.handler',
+    );
+    const roleRef = fns[logicalId!].Properties.Role['Fn::GetAtt'][0];
+    const actions = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((p: any) => JSON.stringify(p.Properties.Roles).includes(roleRef))
+      .flatMap((p: any) => p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
+        (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
+    expect(actions).toEqual(expect.arrayContaining(['ssm:GetParameter']));
   });
 });

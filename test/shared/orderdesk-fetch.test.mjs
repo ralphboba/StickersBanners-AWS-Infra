@@ -108,3 +108,8 @@ test('orderDeskHeaders carries the store credentials and any extras', () => {
     'Content-Type': 'application/json',
   });
 });
+
+test('orderDeskHeaders leaves out missing credentials instead of sending "undefined"', () => {
+  assert.deepEqual(orderDeskHeaders(undefined, undefined, { 'Content-Type': 'application/json' }),
+    { 'Content-Type': 'application/json' });
+});
