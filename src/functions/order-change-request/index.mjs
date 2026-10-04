@@ -12,7 +12,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
-import { commitShippingChange, sendBalanceInvoice, stageShippingChange } from '../../shared/shopify-order-edit.mjs';
+import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
 
@@ -36,8 +36,9 @@ const routes = makeHandler({
   // One open change per order: a second pending record is refused by the
   // table, not just by the route's earlier check.
   savePending: async (change) => {
-    // Retiring an unpaid record (a switch) only if it is still that unpaid
-    // one: if it was paid or replaced meanwhile, the put is refused.
+    // `replaces`: overwrite only the pending record with that ref (a switch
+    // replacing the unpaid one, or this request updating its own record after
+    // the commit); if it was paid or replaced meanwhile, the put is refused.
     await ddb.send(new PutCommand({
       TableName: JOBS_TABLE,
       Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
@@ -49,13 +50,13 @@ const routes = makeHandler({
           ExpressionAttributeNames: { '#s': 'status' },
           ExpressionAttributeValues: { ':pending': 'pending' } }),
     }));
-    // Daily count (upgrade-log.mjs). Never fails the customer's request.
-    if (change.status === 'pending') {
+    // Daily count (upgrade-log.mjs), once the commit is confirmed. Never fails
+    // the customer's request.
+    if (change.status === 'pending' && change.confirmed) {
       await ddb.send(new PutCommand({ TableName: JOBS_TABLE, Item: logItem('requested', change, Date.now()) }))
         .catch((err) => console.warn(JSON.stringify({ msg: 'upgrade log failed', err: String(err) })));
     }
   },
-  stageEdit: async (args) => stageShippingChange({ ...(await creds()), ...args }),
   commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),

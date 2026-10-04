@@ -137,4 +137,13 @@ describe('when is an order paid?', () => {
     await h.handler(event({ name: '#S64262', financial_status: 'paid' }));
     assert.deepEqual(h.log.where, [{ facility: null }]);
   });
+  test('a retired or failed record is never treated as payable', async () => {
+    for (const status of ['replaced', 'failed']) {
+      const { handler, log } = harness({ change: { ...CHANGE, status } });
+      const r = await handler(event({ name: '#S64262', financial_status: 'paid' }));
+      assert.equal(JSON.parse(r.body).ignored, 'not_pending');
+      assert.deepEqual(log.applied, []);
+      assert.deepEqual(log.chat, []);
+    }
+  });
 });

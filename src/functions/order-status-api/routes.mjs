@@ -361,36 +361,32 @@ async function requestChange(deps, authorised, event) {
   }
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
 
-  let order = await deps.loadShopifyOrder(orderName);
-  // A different speed while the first choice is still unpaid: put the order
-  // back on the service the customer paid for (the same edit the expiry job
-  // and reset-test-change.mjs make), retire the unpaid record, then run the
-  // normal upgrade below from a clean, fully paid order. Already paid (the
-  // webhook not yet in) or a line changed by hand is not switchable.
+  const order = await deps.loadShopifyOrder(orderName);
+  const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
+  // A different speed while the first choice is unpaid: Shopify still carries
+  // that choice and its balance. Priced exactly as the page prices it (the
+  // order as it was before the change); the edit replaces the unpaid line in
+  // ONE commit and the balance becomes the one for the new choice. A pending
+  // record Shopify never received (no balance, original line still there) is
+  // simply superseded. Already paid (webhook not yet in) is not switchable.
+  let switching = false;
   if (existing?.status === 'pending') {
-    if (!deps.stageEdit) return json(503, { error: 'not_available' });
-    const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
-    if (!(order?.outstandingCents > 0)) return json(409, { error: 'already_paid' });
-    if (!line || line.title !== existing.to || !existing.restore?.title) {
+    if (line?.title === existing.to && order.outstandingCents > 0) switching = true;
+    else if (order?.outstandingCents > 0) {
+      // A balance for something other than the recorded choice: changed by hand.
       logRefusal(orderName, 'switch_line_mismatch');
       return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+    } else if (line?.title !== (row.shipping?.method ?? null)) {
+      return json(409, { error: 'already_paid' });
     }
-    const back = await deps.stageEdit({ orderId: order.id, removeLineId: line.id,
-      title: existing.restore.title, priceCents: existing.restore.priceCents });
-    if (!back.ok || back.outstandingCents !== 0) {
-      console.error(JSON.stringify({ msg: 'switch: restore would not clear the balance', orderName, back }));
-      return json(502, { error: 'switch_failed' });
-    }
-    const undone = await deps.commitEdit({ orderName, calculatedOrderId: back.calculatedOrderId,
-      staffNote: `Shipping change ${existing.ref} (${existing.to}, unpaid) replaced by the customer: ${existing.restore.title} restored first` });
-    if (!undone.committed) {
-      if (undone.skipped) return json(503, { error: 'not_available' });
-      return json(502, { error: 'switch_failed' });
-    }
-    await deps.savePending({ ...existing, status: 'replaced', replaces: existing.ref, replacedAt: new Date(deps.now()).toISOString() });
-    order = await deps.loadShopifyOrder(orderName);
   }
-  const q = await deps.quote({ order, to: service, expectedFrom: row.shipping?.method ?? null });
+  const pricedOn = switching ? orderBeforeChange(order, existing) : order;
+  if (!pricedOn) {
+    logRefusal(orderName, 'switch_unpriceable');
+    return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+  }
+  const q = await deps.quote({ order: pricedOn, to: service,
+    expectedFrom: switching ? existing.from : (row.shipping?.method ?? null) });
   if (!q.ok || !q.edit) {
     logRefusal(orderName, q.reason ?? 'no_edit');
     return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
@@ -402,16 +398,6 @@ async function requestChange(deps, authorised, event) {
 
   const now = deps.now();
   const ref = `CHG-${orderName}-${now}`;
-  const committed = await deps.commitEdit({
-    orderName, calculatedOrderId: q.edit.calculatedOrderId,
-    staffNote: `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
-  });
-  if (!committed.committed) {
-    if (committed.skipped) return json(503, { error: 'not_available' });
-    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
-    return json(502, { error: 'commit_failed' });
-  }
-
   const change = {
     orderName, ref, status: 'pending',
     orderDeskId: row.source?.orderDeskId ?? null,
@@ -424,14 +410,42 @@ async function requestChange(deps, authorised, event) {
     // out of the daily count.
     ...(row.testOrder ? { test: true } : {}),
   };
+
+  // The record goes in BEFORE Shopify is touched, replacing the unpaid one
+  // only if it is still that one. If this function is cut off after the
+  // commit, the record already says what Shopify now carries, so the payment
+  // webhook can still write Order Desk; if it is cut off before, the record
+  // points at a change Shopify never got, which the next request supersedes.
+  const save = (c) => deps.savePending(c);
+  try {
+    await save(existing?.status === 'pending' ? { ...change, replaces: existing.ref } : change);
+  } catch {
+    return json(409, { error: 'changed_meanwhile' });
+  }
+
+  const committed = await deps.commitEdit({
+    orderName, calculatedOrderId: q.edit.calculatedOrderId,
+    staffNote: switching
+      ? `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online (replaces unpaid ${existing.ref}, ${existing.to})`
+      : `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
+  });
+  if (!committed.committed) {
+    // Nothing changed in Shopify: put the record back the way it was.
+    await save(existing?.status === 'pending' ? { ...existing, replaces: ref } : { ...change, status: 'failed', replaces: ref })
+      .catch((err) => console.error(JSON.stringify({ msg: 'record rollback failed', orderName, ref, err: String(err) })));
+    if (committed.skipped) return json(503, { error: 'not_available' });
+    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
+    return json(502, { error: 'commit_failed' });
+  }
+
   // Shopify is the authority on what is owed. If the committed balance is not
-  // the one quoted, the team looks before any invoice goes out.
+  // the one quoted, the team looks before anyone pays.
   if (committed.outstandingCents !== q.totalCents) {
-    await deps.savePending({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
-      committedOutstandingCents: committed.outstandingCents });
+    await save({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
+      committedOutstandingCents: committed.outstandingCents, replaces: ref });
     return json(502, { error: 'commit_mismatch' });
   }
-  await deps.savePending({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}) });
+  await save({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}), replaces: ref, confirmed: true });
 
   // Shopify's own payment page for the balance: the customer pays exactly as
   // they did at checkout, nothing of ours handles the card. Only if Shopify

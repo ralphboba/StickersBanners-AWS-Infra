@@ -233,6 +233,9 @@ export class ComputeStack extends cdk.Stack {
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-change-request/index.handler',
       memorySize: 1024,
+      // Shopify edits can be slow; the customer's page gives up at ~30s but
+      // the function must still finish writing its record.
+      timeout: Duration.seconds(60),
       environment: changeEnv,
       description: 'Customer "send me the invoice": commit the order edit, email the balance invoice',
     });

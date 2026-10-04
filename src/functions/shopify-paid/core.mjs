@@ -87,6 +87,9 @@ export function makePaidHandler(deps) {
     if (!change) return reply(200, { ignored: 'no_pending_change' });
     if (change.status === 'done') return reply(200, { ignored: 'already_done', ref: change.ref });
     if (change.status === 'attention') return reply(200, { ignored: 'already_flagged', ref: change.ref });
+    // Only an unpaid choice is payable: a record retired by a switch or a
+    // failed commit ('replaced', 'failed') never writes Order Desk.
+    if (change.status !== 'pending') return reply(200, { ignored: 'not_pending', ref: change.ref, status: change.status });
 
     // ── paid too late? ─────────────────────────────────────────────────
     // The quote was right when it was given; the customer may pay days later.
