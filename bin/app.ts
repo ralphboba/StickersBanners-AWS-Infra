@@ -226,7 +226,8 @@ const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   env,
   config,
   pollerFn: computeStack.poller,
-  intervalMinutes: 5, // primary intake — poll the QTS folder every 5 min
+  intervalMinutes: 1, // primary intake — poll the QTS folder every minute (EventBridge floor);
+  // at 5 min, Linh's program took 23 Shopify orders on 2026-10-02 before we saw them
   // Demo feed is ENABLED (synthetic DEMO-* orders only); real poll stays OFF.
   demoFeederFn: computeStack.demoFeeder,
   demoIntervalMinutes: 10,
