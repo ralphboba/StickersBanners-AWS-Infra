@@ -234,6 +234,33 @@ async function priceCharge({ shop, token, input, amountCents, fetchImpl }) {
 }
 
 /**
+ * The order as it was before an UNPAID shipping change, for re-pricing while
+ * the customer is still choosing (Kai, 2026-10-04: "옵션 고를 수 있게 해야된다니까").
+ *
+ * Shopify's order already carries the chosen service and the balance. Put
+ * back the original line (the change's `restore`) and take the balance off the
+ * total, and quoteShippingChange prices every option exactly as it did the
+ * first time: the staged edit still removes the order's real line, and the
+ * balance it reports is what the customer owes for the NEW choice.
+ *
+ * @param {object} order   from fetchOrderForPricing
+ * @param {{ to: string, restore: { title: string, priceCents: number } }} change  the pending record
+ * @returns {object|null}  null when the order is not in the state the change left it in
+ */
+export function orderBeforeChange(order, change) {
+  const r = change?.restore;
+  if (!order || !r?.title || !Number.isSafeInteger(r.priceCents)) return null;
+  if (order.shippingLines?.length !== 1 || order.shippingLines[0].title !== change.to) return null;
+  if (!(order.outstandingCents > 0) || !Number.isSafeInteger(order.currentTotalCents)) return null;
+  return {
+    ...order,
+    shippingLines: [{ ...order.shippingLines[0], title: r.title, originalCents: r.priceCents, discountedCents: r.priceCents }],
+    outstandingCents: 0,
+    currentTotalCents: order.currentTotalCents - order.outstandingCents,
+  };
+}
+
+/**
  * Price a change of service on one order: an upgrade (Ground -> 3-Days …) or a
  * pickup converted to delivery.
  *

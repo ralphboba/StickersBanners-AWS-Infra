@@ -178,3 +178,96 @@ describe('every faster service', () => {
     assert.deepEqual(body.shipping.upgrades.map((u) => u.to), ['FedEx 3-Days', 'FedEx 1-Day']);
   });
 });
+
+describe('an unpaid choice can still be changed', () => {
+  const GROUND_ROW = { ...ROW, shipping: { ...ROW.shipping, method: 'FedEx Ground' } };
+  const PAY = 'https://stickersbanners.com/1/order_payment/2?secret=x';
+  // Shopify after the customer picked 1-Day and left the payment page.
+  const SHOPIFY = { name: 'S1', id: 'gid://shopify/Order/1', outstandingCents: 7355, currentTotalCents: 10000, paymentUrl: PAY,
+    shippingLines: [{ id: 'gid://shopify/ShippingLine/9', title: 'FedEx 1-Day', originalCents: 8925, discountedCents: 8925 }] };
+  const PENDING = { status: 'pending', ref: 'CHG-S1-1', from: 'FedEx Ground', to: 'FedEx 1-Day', shippingCents: 7355, taxCents: 0,
+    paymentUrl: PAY, restore: { title: 'FedEx Ground', priceCents: 1570 } };
+  const priced = { 'FedEx 3-Days': 1738, 'FedEx 2-Days': 3386, 'FedEx 1-Day': 7355 };
+  const build = ({ shopify = SHOPIFY, pending = PENDING } = {}) => {
+    const log = { quotes: [], commits: [], saved: [] };
+    const deps = {
+      loadRow: async () => GROUND_ROW,
+      loadShopifyOrder: async () => shopify,
+      loadPending: async () => pending,
+      quote: async (a) => {
+        log.quotes.push(a);
+        const c = priced[a.to];
+        return { ok: true, from: 'FedEx Ground', to: a.to, shippingCents: c, taxCents: 0, totalCents: c, fromCents: 1570, toCents: 1570 + c,
+          edit: { orderId: 'gid://shopify/Order/1', calculatedOrderId: `calc-${a.to}`, restore: { title: 'FedEx Ground', priceCents: 1570 } } };
+      },
+      estimates: async () => null,
+      commitEdit: async (a) => { log.commits.push(a); return { committed: true, outstandingCents: priced['FedEx 3-Days'], paymentUrl: PAY }; },
+      savePending: async (c) => { log.saved.push(c); },
+      sendInvoice: async () => ({ sent: true }),
+      now: () => 1790000000000,
+    };
+    return { handler: makeHandler(deps), log };
+  };
+  const get = (h) => h({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order', queryStringParameters: { o: 'S1', s: URL } });
+
+  test('the page shows every option again, priced from the order before the change, and the pending one to pay', async () => {
+    const { handler, log } = build();
+    const body = JSON.parse((await get(handler)).body);
+    assert.deepEqual(body.shipping.upgrades.map((u) => [u.to, u.total]), [['FedEx 3-Days', 17.38], ['FedEx 2-Days', 33.86], ['FedEx 1-Day', 73.55]]);
+    assert.equal(body.shipping.canUpgrade, true);
+    assert.deepEqual(body.shipping.awaitingPayment, { from: 'FedEx Ground', to: 'FedEx 1-Day', total: 73.55, paymentUrl: PAY });
+    // quoted on the order with Ground put back and the balance taken off
+    const o = log.quotes[0].order;
+    assert.equal(log.quotes[0].expectedFrom, 'FedEx Ground');
+    assert.deepEqual([o.shippingLines[0].title, o.shippingLines[0].originalCents, o.shippingLines[0].id], ['FedEx Ground', 1570, 'gid://shopify/ShippingLine/9']);
+    assert.equal(o.outstandingCents, 0);
+    assert.equal(o.currentTotalCents, 10000 - 7355);
+  });
+
+  test('picking a different speed replaces the unpaid edit and goes to payment for the new amount', async () => {
+    const { handler, log } = build();
+    const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(JSON.parse(r.body), { requested: true, total: 17.38, paymentUrl: PAY });
+    assert.equal(log.commits[0].calculatedOrderId, 'calc-FedEx 3-Days');
+    assert.match(log.commits[0].staffNote, /replaces unpaid CHG-S1-1, FedEx 1-Day/);
+    const saved = log.saved[0];
+    assert.deepEqual([saved.from, saved.to, saved.shippingCents, saved.replaces, saved.status], ['FedEx Ground', 'FedEx 3-Days', 1738, 'CHG-S1-1', 'pending']);
+    assert.deepEqual(saved.restore, { title: 'FedEx Ground', priceCents: 1570 });
+  });
+
+  test('the same speed again just returns the payment page', async () => {
+    const { handler, log } = build();
+    const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 1-Day', expectedTotal: 73.55 });
+    assert.deepEqual(JSON.parse(r.body), { requested: true, already: true, total: 73.55, paymentUrl: PAY });
+    assert.equal(log.commits.length, 0);
+  });
+
+  test('already paid (webhook not in yet): no switch', async () => {
+    const { handler, log } = build({ shopify: { ...SHOPIFY, outstandingCents: 0 } });
+    const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
+    assert.equal(r.statusCode, 409);
+    assert.equal(JSON.parse(r.body).error, 'already_paid');
+    assert.equal(log.commits.length, 0);
+  });
+
+  test('someone changed the Shopify line by hand: no switch', async () => {
+    const { handler, log } = build({ shopify: { ...SHOPIFY, shippingLines: [{ ...SHOPIFY.shippingLines[0], title: 'FedEx 2-Days' }] } });
+    const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
+    assert.equal(r.statusCode, 422);
+    assert.equal(log.commits.length, 0);
+  });
+});
+
+describe('orderBeforeChange', () => {
+  test('null unless Shopify still carries the unpaid choice with a balance', async () => {
+    const { orderBeforeChange } = await import('../../src/shared/shopify-pricing.mjs');
+    const order = { outstandingCents: 100, currentTotalCents: 500, shippingLines: [{ id: 'L', title: 'FedEx 1-Day', originalCents: 300, discountedCents: 300 }] };
+    const change = { to: 'FedEx 1-Day', restore: { title: 'FedEx Ground', priceCents: 200 } };
+    assert.deepEqual(orderBeforeChange(order, change), { outstandingCents: 0, currentTotalCents: 400,
+      shippingLines: [{ id: 'L', title: 'FedEx Ground', originalCents: 200, discountedCents: 200 }] });
+    assert.equal(orderBeforeChange({ ...order, outstandingCents: 0 }, change), null);
+    assert.equal(orderBeforeChange(order, { ...change, to: 'FedEx 2-Days' }), null);
+    assert.equal(orderBeforeChange(order, { to: 'FedEx 1-Day' }), null);
+  });
+});

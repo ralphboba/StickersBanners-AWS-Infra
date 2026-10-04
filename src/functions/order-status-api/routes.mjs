@@ -7,6 +7,7 @@ import { orderStage, STEPS } from '../../shared/order-stage.mjs';
 import { authorisesOrder } from '../../shared/order-token.mjs';
 import { centsToDollars, toCents } from '../../shared/money.mjs';
 import { isNoShipDestination, isPoBox } from '../../shared/upgrade-eligibility.mjs';
+import { orderBeforeChange } from '../../shared/shopify-pricing.mjs';
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -114,6 +115,34 @@ function logRefusal(orderName, reason) {
   console.log(JSON.stringify({ msg: 'shipping change not priced', orderName, reason }));
 }
 
+// Every faster service, each priced by Shopify on its own staged edit.
+// One at a time (the Shopify client never fans out). A refusal that is about
+// the ORDER (price not verifiable, balance due, …) applies to every option,
+// so the loop stops there; "service not sold at this subtotal" is per option.
+async function quoteUpgrades(deps, orderName, stage, order, expectedFrom) {
+  const upgrades = [];
+  let refusal = null;
+  for (const to of stage.upgradeOptions ?? [stage.upgradeTo]) {
+    const q = await deps.quote({ order, to, expectedFrom });
+    if (q.ok) {
+      upgrades.push({
+        to: q.to,
+        shipping: centsToDollars(q.shippingCents),
+        tax: centsToDollars(q.taxCents),
+        total: centsToDollars(q.totalCents),
+        final: true,
+        currentPrice: centsToDollars(q.fromCents),
+        newPrice: centsToDollars(q.toCents),
+      });
+      continue;
+    }
+    logRefusal(orderName, q.reason);
+    if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
+    refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
+  }
+  return { upgrades, refusal };
+}
+
 // ── GET /my-order ──────────────────────────────────────────────────────────
 async function status(deps, authorised, event) {
   const q = event?.queryStringParameters ?? {};
@@ -127,18 +156,24 @@ async function status(deps, authorised, event) {
 
   // ── an upgrade already chosen and waiting for payment ─────────────────
   // The customer clicked, the order was edited, they have not paid yet (closed
-  // the payment page, or came back from the email). Send them back to the same
-  // Shopify payment page rather than offering anything new.
+  // the payment page, or came back from the email). They can still pay for
+  // it — or pick a different speed (Kai: "옵션 고를 수 있게 해야된다니까"), so
+  // every option is priced again from the order as it was before the change.
   const pending = deps.loadPending ? await deps.loadPending(orderName) : null;
   if (pending?.status === 'pending') {
     const order = await deps.loadShopifyOrder(orderName);
     const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
     if (paymentUrl && order?.outstandingCents > 0) {
+      const before = stage.canUpgrade ? orderBeforeChange(order, pending) : null;
+      const { upgrades } = before
+        ? await quoteUpgrades(deps, orderName, stage, before, pending.from)
+        : { upgrades: [] };
       return json(200, {
         orderName: row.orderName,
         stage: { label: stage.label, step: stage.step, steps: STEPS },
         shipping: {
-          current: pending.from, canUpgrade: false, canConvert: false, reason: null,
+          current: pending.from, canUpgrade: upgrades.length > 0, canConvert: false, reason: null,
+          upgrades, upgrade: upgrades[0] ?? null,
           awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl },
         },
         addOns: [],
@@ -157,30 +192,11 @@ async function status(deps, authorised, event) {
     ? await deps.loadShopifyOrder(orderName)
     : null;
 
-  // Every faster service, each priced by Shopify on its own staged edit.
-  // One at a time (the Shopify client never fans out). A refusal that is about
-  // the ORDER (price not verifiable, balance due, …) applies to every option,
-  // so the loop stops there; "service not sold at this subtotal" is per option.
   const upgrades = [];
   if (stage.canUpgrade) {
-    for (const to of stage.upgradeOptions ?? [stage.upgradeTo]) {
-      const q = await deps.quote({ order: shopifyOrder, to, expectedFrom: currentMethod });
-      if (q.ok) {
-        upgrades.push({
-          to: q.to,
-          shipping: centsToDollars(q.shippingCents),
-          tax: centsToDollars(q.taxCents),
-          total: centsToDollars(q.totalCents),
-          final: true,
-          currentPrice: centsToDollars(q.fromCents),
-          newPrice: centsToDollars(q.toCents),
-        });
-        continue;
-      }
-      logRefusal(orderName, q.reason);
-      if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
-      refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
-    }
+    const priced = await quoteUpgrades(deps, orderName, stage, shopifyOrder, currentMethod);
+    upgrades.push(...priced.upgrades);
+    refusal = priced.refusal;
     upgrade = upgrades[0] ?? null;
     if (upgrade) refusal = null;
   }
@@ -329,16 +345,28 @@ async function requestChange(deps, authorised, event) {
   }
 
   const existing = await deps.loadPending(orderName);
-  if (existing?.status === 'pending') {
-    return existing.to === service
-      ? json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
-        ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) })
-      : json(409, { error: 'already_pending' });
+  if (existing?.status === 'pending' && existing.to === service) {
+    return json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
+      ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) });
   }
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
 
   const order = await deps.loadShopifyOrder(orderName);
-  const q = await deps.quote({ order, to: service, expectedFrom: row.shipping?.method ?? null });
+  // A different speed while the first choice is still unpaid: price it from the
+  // order as it was before that change; the new edit replaces the unpaid line,
+  // and the balance becomes the one for the new choice. Already paid (the
+  // webhook not yet in) is not switchable.
+  const switching = existing?.status === 'pending';
+  let pricedOn = order;
+  if (switching) {
+    pricedOn = orderBeforeChange(order, existing);
+    if (!pricedOn) {
+      return order?.outstandingCents > 0 ? json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY })
+        : json(409, { error: 'already_paid' });
+    }
+  }
+  const q = await deps.quote({ order: pricedOn, to: service,
+    expectedFrom: switching ? existing.from : (row.shipping?.method ?? null) });
   if (!q.ok || !q.edit) {
     logRefusal(orderName, q.reason ?? 'no_edit');
     return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
@@ -352,7 +380,9 @@ async function requestChange(deps, authorised, event) {
   const ref = `CHG-${orderName}-${now}`;
   const committed = await deps.commitEdit({
     orderName, calculatedOrderId: q.edit.calculatedOrderId,
-    staffNote: `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
+    staffNote: switching
+      ? `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online (replaces unpaid ${existing.ref}, ${existing.to})`
+      : `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
   });
   if (!committed.committed) {
     if (committed.skipped) return json(503, { error: 'not_available' });
@@ -371,6 +401,8 @@ async function requestChange(deps, authorised, event) {
     // A staff test order (seed-test-row.mjs) — marked "(TEST)" in Chat, left
     // out of the daily count.
     ...(row.testOrder ? { test: true } : {}),
+    // Replaces the unpaid record (savePending checks it is still that one).
+    ...(switching ? { replaces: existing.ref } : {}),
   };
   // Shopify is the authority on what is owed. If the committed balance is not
   // the one quoted, the team looks before any invoice goes out.

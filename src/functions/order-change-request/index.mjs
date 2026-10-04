@@ -36,12 +36,18 @@ export const handler = makeHandler({
   // One open change per order: a second pending record is refused by the
   // table, not just by the route's earlier check.
   savePending: async (change) => {
+    // A switch replaces the unpaid record it was priced against, and only that
+    // one: if it was paid or replaced meanwhile, the put is refused.
     await ddb.send(new PutCommand({
       TableName: JOBS_TABLE,
       Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
-      ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
-      ExpressionAttributeNames: { '#s': 'status' },
-      ExpressionAttributeValues: { ':pending': 'pending' },
+      ...(change.replaces
+        ? { ConditionExpression: '#s = :pending AND #r = :old',
+          ExpressionAttributeNames: { '#s': 'status', '#r': 'ref' },
+          ExpressionAttributeValues: { ':pending': 'pending', ':old': change.replaces } }
+        : { ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':pending': 'pending' } }),
     }));
     // Daily count (upgrade-log.mjs). Never fails the customer's request.
     if (change.status === 'pending') {

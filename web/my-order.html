@@ -117,9 +117,10 @@
       </div>
 
       <form id="upgrade" hidden style="margin-top:18px">
+        <p class="fine" id="pendingNote" hidden style="margin:0 0 12px 0"></p>
         <fieldset>
           <legend>Faster shipping</legend>
-          <label class="opt">
+          <label class="opt" id="keepRow">
             <input type="radio" name="svc" value="0" checked>
             <span class="b">
               <span class="nm" id="keepName"></span>
@@ -223,8 +224,10 @@
     var sh = data.shipping || {};
     set('current', sh.current || '—');
 
-    if (sh.awaitingPayment) {
-      var ap = sh.awaitingPayment;
+    // An upgrade chosen but not paid: the options stay open (Kai). The chosen
+    // one is preselected and pays on Shopify's page; another one replaces it.
+    var ap = sh.awaitingPayment || null;
+    if (ap && !(sh.canUpgrade && sh.upgrade)) {
       set('awaitingWhat', 'Upgrade to ' + ap.to + ' — waiting for payment');
       set('awaitingTotal', money(ap.total));
       set('awaitingPay', 'Pay ' + money(ap.total));
@@ -246,9 +249,17 @@
         var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
         b.appendChild(nm); b.appendChild(sub);
         var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
+        if (ap && u.to === ap.to) { input.checked = true; sub.textContent = 'Your choice — waiting for payment'; }
         label.appendChild(input); label.appendChild(b); label.appendChild(pr);
         box.appendChild(label);
       });
+      if (ap) {
+        // Nothing to "keep": the order already carries the unpaid choice.
+        $('keepRow').hidden = true;
+        $('keepRow').querySelector('input').checked = false;
+        set('pendingNote', 'You picked ' + ap.to + ' but haven’t paid yet. Pay for it below, or choose a different speed.');
+        $('pendingNote').hidden = false;
+      }
       $('upgrade').hidden = false;
 
       var chosen = function () {
@@ -260,7 +271,9 @@
         var u = chosen();
         set('total', money(u ? u.total : 0));
         $('send').disabled = !u;
-        set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
+        if (u && ap && u.to === ap.to) set('send', 'Pay ' + money(u.total));
+        else if (u && ap) set('send', 'Switch to ' + u.to + ' — pay ' + money(u.total));
+        else set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
       };
       Array.prototype.forEach.call(document.querySelectorAll('input[name="svc"]'), function (el) { el.addEventListener('change', update); });
       update();
@@ -271,6 +284,8 @@
         if (!u) return;
         $('send').disabled = true;
         set('send', 'Opening secure checkout…');
+        // Same choice as the unpaid one: straight to its payment page.
+        if (ap && u.to === ap.to) { window.location.href = ap.paymentUrl; return; }
         // The server re-prices from Shopify and commits only if the amount is
         // still exactly the one shown here.
         fetch('/api/my-order/request', {
@@ -302,6 +317,10 @@
               labels[ups.indexOf(u)].textContent = '+' + money(u.total);
               update();
               set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
+              return;
+            }
+            if (res.status === 409 && res.b.error === 'already_paid') {
+              set('send', 'Your payment is already in — refresh in a minute');
               return;
             }
             set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
