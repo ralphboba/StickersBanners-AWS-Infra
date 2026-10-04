@@ -168,6 +168,12 @@ async function status(deps, authorised, event) {
       const { upgrades } = before
         ? await quoteUpgrades(deps, orderName, stage, before, pending.from)
         : { upgrades: [] };
+      if (!upgrades.length) {
+        // Options could not be re-priced: say why in the log (no secrets).
+        console.warn(JSON.stringify({ msg: 'pending options not repriced', orderName, canUpgrade: stage.canUpgrade,
+          blockedBy: stage.blockedBy ?? null, before: Boolean(before), shopifyLine: order.shippingLines?.[0]?.title ?? null,
+          pendingTo: pending.to, hasRestore: Boolean(pending.restore), outstandingCents: order.outstandingCents }));
+      }
       return json(200, {
         orderName: row.orderName,
         stage: { label: stage.label, step: stage.step, steps: STEPS },
