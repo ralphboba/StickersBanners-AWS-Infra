@@ -225,4 +225,8 @@ OrderDesk 참조번호가 막는다.
   GA/NJ/TX가 단어로 들어가면 그 시설. SSM `gchat/webhook-url-{GA,NJ,TX}`. 28개 폴더 전부 시뮬레이션
   통과(`test/shared/chat-routing.test.mjs`), `scripts/chat-route-check.mjs --send`로 4개 방 모두 HTTP 200
   수신 확인(Kai). 실결제로 시설 방까지 간 건은 아직 없음 — S64262를 실제 시설 폴더에 넣어야 해서 안 함.
+- **전체 주문 활성화 (2026-10-04, Kai 승인):** `sb-dev-compute`를 `--context shippingChange=live`로 배포 —
+  주문 수정·OrderDesk 반영이 모든 주문에 켜짐(`WRITE_ONLY_ORDERS` 없음, 확인함). 결제 웹훅 2개 필터 없이 재등록.
+  미러(`sb-dev-mirror-sync`) ENABLED라 실제 주문 페이지 데이터가 채워짐. 고객 진입점인 확인 메일 버튼만
+  S64262 전용으로 남김. 인보이스는 옵션 선택 시점에 Shopify가 발송(결제 후에는 Shopify가 거절).
 - 남은 일(Kai 대기): 전 고객용 메일 버튼과 정식 도메인, `testOrders` 없이 정식 배포(실제 돈, 승인 필요).
