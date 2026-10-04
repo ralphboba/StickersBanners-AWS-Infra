@@ -115,15 +115,19 @@ function logRefusal(orderName, reason) {
   console.log(JSON.stringify({ msg: 'shipping change not priced', orderName, reason }));
 }
 
-// Every faster service, each priced by Shopify on its own staged edit.
-// One at a time (the Shopify client never fans out). A refusal that is about
-// the ORDER (price not verifiable, balance due, …) applies to every option,
-// so the loop stops there; "service not sold at this subtotal" is per option.
+// Every faster service, each priced by Shopify on its own staged edit. The
+// options are priced at the same time and share one rate lookup — one by one
+// they took ~9 Shopify calls in a row. Results are read in order: a refusal
+// about the ORDER (price not verifiable, balance due, …) applies to every
+// option and ends the list there; "service not sold at this subtotal" is per
+// option.
 async function quoteUpgrades(deps, orderName, stage, order, expectedFrom) {
   const upgrades = [];
   let refusal = null;
-  for (const to of stage.upgradeOptions ?? [stage.upgradeTo]) {
-    const q = await deps.quote({ order, to, expectedFrom });
+  const rateCache = new Map();
+  const options = stage.upgradeOptions ?? [stage.upgradeTo];
+  const results = await Promise.all(options.map((to) => deps.quote({ order, to, expectedFrom, rateCache })));
+  for (const q of results) {
     if (q.ok) {
       upgrades.push({
         to: q.to,

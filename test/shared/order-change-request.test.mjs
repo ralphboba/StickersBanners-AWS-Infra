@@ -167,11 +167,24 @@ describe('every faster service', () => {
     assert.equal(body.shipping.upgrade.to, 'FedEx 3-Days');
   });
 
-  test('an order-level refusal stops the loop and offers nothing', async () => {
-    let calls = 0;
-    const body = JSON.parse((await get(makeHandler(deps({ quote: async () => { calls += 1; return { ok: false, reason: 'price_unverified' }; } })))).body);
+  test('an order-level refusal offers nothing', async () => {
+    const body = JSON.parse((await get(makeHandler(deps({ quote: async () => ({ ok: false, reason: 'price_unverified' }) })))).body);
     assert.equal(body.shipping.canUpgrade, false);
-    assert.equal(calls, 1);
+    assert.equal(body.shipping.upgrades.length, 0);
+  });
+
+  test('the options are priced at the same time and share one rate cache', async () => {
+    const seen = [];
+    let inFlight = 0; let maxInFlight = 0;
+    const quote = async (a) => {
+      seen.push(a.rateCache); inFlight += 1; maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 5)); inFlight -= 1;
+      return { ok: true, to: a.to, shippingCents: 100, taxCents: 0, totalCents: 100, fromCents: 1, toCents: 101 };
+    };
+    const body = JSON.parse((await get(makeHandler(deps({ quote })))).body);
+    assert.equal(body.shipping.upgrades.length, 3);
+    assert.equal(maxInFlight, 3);
+    assert.ok(seen[0] instanceof Map && seen.every((c) => c === seen[0]));
   });
 
   test('a service not sold at this subtotal is just left out', async () => {

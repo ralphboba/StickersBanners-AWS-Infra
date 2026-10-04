@@ -115,6 +115,18 @@ async function quote(fake, extra = {}) {
 }
 
 describe('an upgrade priced from the live store', () => {
+  test('options priced with one rate cache share a single rate lookup', async () => {
+    const fake = fakeShopify();
+    const order = await fetchOrderForPricing({ ...ARGS, orderName: 'S64201', fetchImpl: fake.fetchImpl });
+    const rateCache = new Map();
+    const [a, b] = await Promise.all([
+      quoteShippingChange({ ...ARGS, order, to: 'FedEx 3-Days', rateCache, fetchImpl: fake.fetchImpl }),
+      quoteShippingChange({ ...ARGS, order, to: 'FedEx 3-Days', rateCache, fetchImpl: fake.fetchImpl }),
+    ]);
+    assert.equal(a.ok && b.ok, true);
+    assert.equal(fake.sent.filter((q) => q.query.includes('RateCheck')).length, 1);
+  });
+
   test('difference of checkout rates, tax from Shopify, all in cents', async () => {
     // NJ taxes shipping at 6.625%: 61.06 * 0.06625 = 4.045 -> Shopify says 4.05.
     const fake = fakeShopify({ tax: () => '4.05' });

@@ -74,4 +74,14 @@ async function loadPending(orderName) {
   return res?.Item ?? null;
 }
 
-export const handler = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending });
+const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending });
+
+// { warmup: true } from the 5-minute schedule: load the Shopify token so the
+// next customer does not wait for it, and return. Nothing else is touched.
+export async function handler(event = {}) {
+  if (event?.warmup === true) {
+    try { await shopifyCreds(); } catch (err) { console.warn(JSON.stringify({ msg: 'warmup token failed', err: String(err) })); }
+    return { warm: true };
+  }
+  return routes(event);
+}

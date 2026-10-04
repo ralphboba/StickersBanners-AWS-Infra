@@ -20,7 +20,7 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const creds = makeShopifyCredentials({ getSecret });
 
-export const handler = makeHandler({
+const routes = makeHandler({
   loadRow: async (orderName) => (await ddb.send(new GetCommand({
     TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
   loadShopifyOrder: async (orderName) => fetchOrderForPricing({ ...(await creds()), orderName }),
@@ -60,3 +60,13 @@ export const handler = makeHandler({
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
 });
+
+// { warmup: true } from the 5-minute schedule: load the Shopify token so the
+// next customer does not wait for it, and return. Nothing else is touched.
+export async function handler(event = {}) {
+  if (event?.warmup === true) {
+    try { await creds(); } catch (err) { console.warn(JSON.stringify({ msg: 'warmup token failed', err: String(err) })); }
+    return { warm: true };
+  }
+  return routes(event);
+}

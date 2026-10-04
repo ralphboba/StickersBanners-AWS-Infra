@@ -268,6 +268,7 @@ export function orderBeforeChange(order, change) {
  * @param {object} p.order      from fetchOrderForPricing
  * @param {string} p.to         the service, exactly as checkout titles it
  * @param {object} [p.deliverTo] the typed address — conversions only
+ * @param {Map} [p.rateCache]   per-request cache of rate lookups (see lookup)
  * @param {string} [p.expectedFrom] the service OrderDesk says the order is on;
  *        if Shopify's line says otherwise, someone has changed it by hand
  * @returns {Promise<{ ok: true, mode: 'upgrade'|'convert', from: string, to: string,
@@ -275,7 +276,7 @@ export function orderBeforeChange(order, change) {
  *                     taxCents: number, totalCents: number, draftInput: object }
  *                  | { ok: false, reason: string }>}
  */
-export async function quoteShippingChange({ shop, token, order, to, deliverTo, expectedFrom, fetchImpl }) {
+export async function quoteShippingChange({ shop, token, order, to, deliverTo, expectedFrom, rateCache, fetchImpl }) {
   const no = (reason) => ({ ok: false, reason });
   if (!order) return no('order_not_found');
   if (order.currency !== USD) return no('not_usd');
@@ -302,9 +303,16 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   const address = mode === 'convert' ? toMailingAddress(deliverTo) : order.shippingAddress;
   if (!address) return no('no_address');
 
-  const lookup = (subtotalCents) => checkoutRates({
-    shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId,
-  });
+  // One rate lookup per subtotal per request: the options on one page all ask
+  // the same question (rateCache, a Map the caller creates per request; the
+  // promise is cached so options priced at the same time share one call).
+  const lookup = (subtotalCents) => {
+    const key = `${subtotalCents}|${mode}|${JSON.stringify(address)}`;
+    if (rateCache?.has(key)) return rateCache.get(key);
+    const p = checkoutRates({ shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId });
+    rateCache?.set(key, p);
+    return p;
+  };
   const atCheckout = await lookup(order.subtotalCents);
   if (!atCheckout) return no('rates_unavailable');
   const now = edited ? await lookup(order.currentSubtotalCents) : atCheckout;

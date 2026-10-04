@@ -191,6 +191,9 @@ export class ComputeStack extends cdk.Stack {
       functionName: `${config.prefix}-order-status-api`,
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-status-api/index.handler',
+      // The customer waits on this one: more memory = more CPU = faster cold
+      // start and TLS. Still free-tier at this volume.
+      memorySize: 1024,
       environment: {
         JOBS_TABLE: jobsTable.tableName,
         SB_ENV: config.env,
@@ -229,6 +232,7 @@ export class ComputeStack extends cdk.Stack {
       functionName: `${config.prefix}-order-change-request`,
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-change-request/index.handler',
+      memorySize: 1024,
       environment: changeEnv,
       description: 'Customer "send me the invoice": commit the order edit, email the balance invoice',
     });
@@ -252,6 +256,19 @@ export class ComputeStack extends cdk.Stack {
     for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry]) {
       jobsTable.grantReadWriteData(fn);
       this.grantSecretsRead(fn, config);
+    }
+
+    // Keep the two functions a customer waits on warm (Kai, 2026-10-04: the
+    // page and the Pay button were slow). Every 5 minutes each gets
+    // { warmup: true }, which only loads its Shopify token and returns — no
+    // order is read or written. ~17k tiny invocations a month: free tier.
+    for (const [id, fn] of [['OrderStatusApiWarm', this.orderStatusApi], ['OrderChangeRequestWarm', this.orderChangeRequest]] as const) {
+      new scheduler.Schedule(this, id, {
+        scheduleName: `${fn === this.orderStatusApi ? `${config.prefix}-order-status-api` : `${config.prefix}-order-change-request`}-warm`,
+        description: 'Keep the customer-facing function warm (no-op invocation)',
+        schedule: scheduler.ScheduleExpression.rate(Duration.minutes(5)),
+        target: new targets.LambdaInvoke(fn, { input: scheduler.ScheduleTargetInput.fromObject({ warmup: true }), retryAttempts: 0 }),
+      });
     }
 
     // Daily shipping-upgrade count (Kai, 2026-10-04): yesterday's requests and

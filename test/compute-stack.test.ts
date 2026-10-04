@@ -198,4 +198,16 @@ describe('ComputeStack', () => {
     expect(env.SHOPIFY_WRITES).toBeUndefined();
     expect(env.ORDERDESK_UPGRADE_WRITES).toBeUndefined();
   });
+
+  test('the two customer-facing functions get 1 GB and a 5-minute no-op warm-up', () => {
+    const t = synth();
+    const fns = Object.values(t.findResources('AWS::Lambda::Function'));
+    for (const name of ['sb-dev-order-status-api', 'sb-dev-order-change-request']) {
+      expect(fns.find((f) => f.Properties.FunctionName === name)!.Properties.MemorySize).toBe(1024);
+      t.hasResourceProperties('AWS::Scheduler::Schedule', {
+        Name: `${name}-warm`, ScheduleExpression: 'rate(5 minutes)', State: 'ENABLED',
+        Target: Match.objectLike({ Input: JSON.stringify({ warmup: true }) }),
+      });
+    }
+  });
 });
