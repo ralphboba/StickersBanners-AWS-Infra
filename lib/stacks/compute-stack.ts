@@ -9,6 +9,8 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as targets from 'aws-cdk-lib/aws-scheduler-targets';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { EnvironmentConfig } from '../config/types';
 import { secretsArnPattern, secretsPrefix } from '../config/secrets';
 import { trialConfig } from '../config/trial';
@@ -31,6 +33,8 @@ export interface ComputeStackProps extends cdk.StackProps {
    * both switches off, which is the default and the only go-live-safe state.
    */
   readonly shippingChangeTestOrders?: string;
+  /** Who gets the daily shipping-upgrade count by email (Kai only). */
+  readonly upgradeReportEmail?: string;
 }
 
 const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
@@ -251,22 +255,28 @@ export class ComputeStack extends cdk.Stack {
     }
 
     // Daily shipping-upgrade count (Kai, 2026-10-04): yesterday's requests and
-    // payments, one line into the main Chat space every morning. Read-only on
-    // the table; lives here rather than in the scheduler stack, which also
-    // holds the mirror and the real poller and is not deployed for this test.
+    // payments, emailed to Kai only — "그냥 나한테만 … 구글 채트 말고". SNS email
+    // (free tier); the subscription must be confirmed once from the inbox.
+    // Read-only on the table; lives here rather than in the scheduler stack,
+    // which also holds the mirror and the real poller.
+    const reportTopic = new sns.Topic(this, 'UpgradeReportTopic', {
+      topicName: `${config.prefix}-upgrade-report`,
+      displayName: 'SB shipping upgrades',
+    });
+    reportTopic.addSubscription(new subs.EmailSubscription(props.upgradeReportEmail ?? 'kai@stickersbanners.com'));
     this.upgradeReport = new lambda.Function(this, 'UpgradeReport', {
       ...base,
       functionName: `${config.prefix}-upgrade-report`,
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/upgrade-report/index.handler',
-      environment: { JOBS_TABLE: jobsTable.tableName, SB_ENV: config.env },
-      description: 'Daily count of customer shipping upgrades -> Google Chat',
+      environment: { JOBS_TABLE: jobsTable.tableName, REPORT_TOPIC_ARN: reportTopic.topicArn },
+      description: 'Daily count of customer shipping upgrades -> email to Kai',
     });
     jobsTable.grantReadData(this.upgradeReport);
-    this.grantSecretsRead(this.upgradeReport, config);
+    reportTopic.grantPublish(this.upgradeReport);
     new scheduler.Schedule(this, 'UpgradeReportDaily', {
       scheduleName: `${config.prefix}-upgrade-report`,
-      description: "Yesterday's shipping upgrades into Google Chat, 8:52 New York time",
+      description: "Yesterday's shipping upgrades by email, 8:52 New York time",
       schedule: scheduler.ScheduleExpression.cron({ minute: '52', hour: '8', timeZone: cdk.TimeZone.AMERICA_NEW_YORK }),
       target: new targets.LambdaInvoke(this.upgradeReport, { retryAttempts: 1 }),
     });

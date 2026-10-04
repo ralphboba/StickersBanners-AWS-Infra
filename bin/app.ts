@@ -156,6 +156,7 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   // `--context testOrders=S64262` arms the shipping-change writes for that
   // order only. Omit it and every write switch stays disabled.
   shippingChangeTestOrders: app.node.tryGetContext('testOrders') as string | undefined,
+  upgradeReportEmail: 'kai@stickersbanners.com',
   description: `StickersBanners Lambda compute (${config.env})`,
 });
 

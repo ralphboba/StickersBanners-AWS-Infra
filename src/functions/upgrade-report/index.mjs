@@ -1,19 +1,19 @@
-// Every morning: yesterday's shipping-upgrade count into the main Chat space.
+// Every morning: yesterday's shipping-upgrade count, emailed to Kai only.
 //
 //   { "date": "2026-10-03" }   optional — any day; default is yesterday (New York)
-//   { "post": false }          optional — return the numbers without posting
+//   { "send": false }          optional — return the numbers without emailing
 //
-// Reads the UPGRADELOG#<day> rows (src/shared/upgrade-log.mjs). Posts to
-// /sb/<env>/gchat/webhook-url, the space that already gets every paid change.
+// Reads the UPGRADELOG#<day> rows (src/shared/upgrade-log.mjs) and publishes
+// to the SNS topic REPORT_TOPIC_ARN, whose only subscriber is Kai's address.
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 
-import { getSecret } from '../../shared/secrets.mjs';
-import { sendChat } from '../../shared/gchat.mjs';
-import { nyYesterday, summarize, dailyMessage } from '../../shared/upgrade-log.mjs';
+import { nyYesterday, summarize, dailyEmail } from '../../shared/upgrade-log.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const sns = new SNSClient({});
 
 export async function handler(event = {}) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(event.date ?? '') ? event.date : nyYesterday(Date.now());
@@ -29,9 +29,9 @@ export async function handler(event = {}) {
   } while (ExclusiveStartKey);
 
   const summary = summarize(items);
-  const text = dailyMessage(date, summary);
-  const chat = event.post === false ? { sent: false, skipped: 'post_false' }
-    : await sendChat({ webhookUrl: await getSecret('gchat', 'webhook-url'), orderName: 'REPORT', text });
-  console.log(JSON.stringify({ msg: 'upgrade report', date, summary, chat: chat.sent }));
-  return { date, ...summary, text, posted: chat.sent };
+  const { subject, body } = dailyEmail(date, items);
+  const send = event.send !== false;
+  if (send) await sns.send(new PublishCommand({ TopicArn: process.env.REPORT_TOPIC_ARN, Subject: subject, Message: body }));
+  console.log(JSON.stringify({ msg: 'upgrade report', date, summary, emailed: send }));
+  return { date, ...summary, subject, body, emailed: send };
 }

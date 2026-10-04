@@ -55,7 +55,7 @@ export function summarize(items) {
   };
 }
 
-/** One Chat line for the day. */
+/** The one-line summary for the day (the email's first line). */
 export function dailyMessage(date, s) {
   const day = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
   const services = Object.entries(s.byService).sort((a, b) => b[1] - a[1]).map(([to, n]) => `${to} ${n}`).join(', ');
@@ -63,4 +63,29 @@ export function dailyMessage(date, s) {
     + (s.paid ? ` · +$${centsToAmount(s.paidShippingCents)} shipping (${services})` : '')
     + ` · ${s.requested} requested`
     + (s.test ? ` · ${s.test} test order${s.test === 1 ? '' : 's'} not counted` : '');
+}
+
+/**
+ * The daily email: subject = the summary, body = the summary plus every order
+ * behind it. Paid orders first, then requests not paid that day.
+ * @returns {{ subject: string, body: string }}
+ */
+export function dailyEmail(date, items) {
+  const s = summarize(items);
+  const line = dailyMessage(date, s);
+  const real = items.filter((i) => !i.test);
+  const paidOrders = new Map(real.filter((i) => i.kind === 'paid').map((i) => [i.orderName, i]));
+  const unpaid = [...new Map(real.filter((i) => i.kind === 'requested' && !paidOrders.has(i.orderName))
+    .map((i) => [i.orderName, i])).values()];
+  const row = (i) => `  ${i.orderName}  ${i.from} -> ${i.to}  +$${centsToAmount(i.shippingCents ?? 0)}`;
+  const body = [
+    line, '',
+    `Paid (${paidOrders.size}):`, ...([...paidOrders.values()].map(row)), ...(paidOrders.size ? [] : ['  none']), '',
+    `Requested, not paid that day (${unpaid.length}):`, ...unpaid.map(row), ...(unpaid.length ? [] : ['  none']), '',
+    `Day: ${date}, New York time. Test orders are not counted.`,
+  ].join('\n');
+  // SNS caps the subject at 100 characters; the full line is the body's first.
+  const day = line.slice('Shipping upgrades '.length, line.indexOf(':'));
+  const subject = `Shipping upgrades ${day}: ${s.paid} paid${s.paid ? `, +$${centsToAmount(s.paidShippingCents)}` : ''} (${s.requested} requested)`;
+  return { subject: subject.slice(0, 100), body };
 }

@@ -182,8 +182,10 @@ describe('ComputeStack', () => {
     expect(actions).toEqual(expect.arrayContaining(['ssm:GetParameter']));
   });
 
-  test('the daily upgrade report runs every morning, New York time, read-only on the table', () => {
+  test('the daily upgrade report runs every morning, New York time, emails Kai only, read-only on the table', () => {
     const t = synth();
+    t.resourceCountIs('AWS::SNS::Subscription', 1);
+    t.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'kai@stickersbanners.com' });
     t.hasResourceProperties('AWS::Scheduler::Schedule', {
       Name: 'sb-dev-upgrade-report',
       ScheduleExpression: 'cron(52 8 * * ? *)',
@@ -192,6 +194,7 @@ describe('ComputeStack', () => {
     });
     const env = Object.values(t.findResources('AWS::Lambda::Function'))
       .find((fn) => fn.Properties.FunctionName === 'sb-dev-upgrade-report')!.Properties.Environment.Variables;
+    expect(env.REPORT_TOPIC_ARN).toBeDefined();
     expect(env.SHOPIFY_WRITES).toBeUndefined();
     expect(env.ORDERDESK_UPGRADE_WRITES).toBeUndefined();
   });

@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { nyDate, nyYesterday, logItem, summarize, dailyMessage } from '../../src/shared/upgrade-log.mjs';
+import { nyDate, nyYesterday, logItem, summarize, dailyMessage, dailyEmail } from '../../src/shared/upgrade-log.mjs';
 
 const C = (orderName, to, shippingCents, extra = {}) => ({ orderName, ref: `CHG-${orderName}`, from: 'FedEx Ground', to, shippingCents, taxCents: 0, ...extra });
 
@@ -37,5 +37,23 @@ describe('upgrade log', () => {
   });
   test('a quiet day still reports', () => {
     assert.equal(dailyMessage('2026-10-05', summarize([])), 'Shipping upgrades Mon, Oct 5: 0 paid · 0 requested');
+  });
+  test('the email lists every paid and unpaid order, test orders left out', () => {
+    const at = Date.parse('2026-10-03T14:00:00Z');
+    const { subject, body } = dailyEmail('2026-10-03', [
+      logItem('requested', C('S1', 'FedEx 3-Days', 1738), at), logItem('paid', C('S1', 'FedEx 3-Days', 1738), at),
+      logItem('requested', C('S3', 'FedEx 2-Days', 3386), at),
+      logItem('paid', C('S64262', 'FedEx 1-Day', 7355, { test: true }), at),
+    ]);
+    assert.equal(subject, 'Shipping upgrades Sat, Oct 3: 1 paid, +$17.38 (2 requested)');
+    assert.match(body, /^Shipping upgrades Sat, Oct 3: 1 paid · \+\$17\.38 shipping \(FedEx 3-Days 1\) · 2 requested · 1 test order not counted\n/);
+    assert.match(body, /Paid \(1\):\n  S1  FedEx Ground -> FedEx 3-Days  \+\$17\.38/);
+    assert.match(body, /Requested, not paid that day \(1\):\n  S3  FedEx Ground -> FedEx 2-Days  \+\$33\.86/);
+    assert.doesNotMatch(body, /S64262/);
+  });
+  test('a quiet day says none', () => {
+    const { subject, body } = dailyEmail('2026-10-05', []);
+    assert.equal(subject, 'Shipping upgrades Mon, Oct 5: 0 paid (0 requested)');
+    assert.match(body, /Paid \(0\):\n  none/);
   });
 });
