@@ -36,7 +36,7 @@ import { shopifyGraphQL } from './shopify-fetch.mjs';
 import { toMailingAddress } from './shopify-orders.mjs';
 import { toCents, centsToAmount } from './money.mjs';
 import { isPickup } from './order-stage.mjs';
-import { stageShippingChange } from './shopify-order-edit.mjs';
+import { stageShippingChange, beginOrderEdit } from './shopify-order-edit.mjs';
 
 const ORDER_FOR_PRICING = `
   query OrderForPricing($q: String!) {
@@ -313,6 +313,12 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
     rateCache?.set(key, p);
     return p;
   };
+  // An upgrade is priced on an order edit; open it now, alongside the rate
+  // lookup, instead of after it (one Shopify round trip less per page). If
+  // the quote stops early the uncommitted edit just expires.
+  const begun = mode === 'upgrade' && order.outstandingCents === 0 && order.id
+    ? beginOrderEdit({ shop, token, orderId: order.id, fetchImpl }).catch(() => null)
+    : null;
   const atCheckout = await lookup(order.subtotalCents);
   if (!atCheckout) return no('rates_unavailable');
   const now = edited ? await lookup(order.currentSubtotalCents) : atCheckout;
@@ -348,6 +354,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
       shop, token, fetchImpl,
       orderId: order.id, removeLineId: line.id, title: to,
       priceCents: newLineCents, totalBeforeCents: order.currentTotalCents,
+      ...(begun ? { begun } : {}),
     });
     if (!edit.ok) return no(edit.reason);
     const taxCents = edit.outstandingCents - shippingCents;

@@ -98,6 +98,14 @@
         <span class="v" id="current"></span>
       </div>
 
+      <div id="pricing" hidden style="margin-top:18px">
+        <fieldset>
+          <legend>Faster shipping</legend>
+          <div id="pricingOpts"></div>
+        </fieldset>
+        <p class="fine">Getting today’s prices from our checkout…</p>
+      </div>
+
       <div id="locked" hidden style="margin-top:14px">
         <div class="notice">
           <b id="lockedTitle">This order can no longer be changed</b>
@@ -201,17 +209,27 @@
 
   if (!o || !s) { fail(); return; }
 
-  fetch('/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s), {
-    headers: { accept: 'application/json' },
-  })
-    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-    .then(render)
+  var api = '/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s);
+  var getJson = function (url) {
+    return fetch(url, { headers: { accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+  };
+  // First the quick view (no Shopify call: order, progress, option names),
+  // then the priced one. Pricing takes Shopify a few seconds; the customer
+  // sees their order meanwhile instead of "Loading…". One after the other so
+  // both land on the same warm function.
+  var rendered = false;
+  getJson(api + '&lite=1')
+    .then(function (d) { if (!rendered) quick(d); })
+    .catch(function () {})
+    .then(function () { return getJson(api); })
+    .then(function (d) { rendered = true; render(d); })
     .catch(fail);
 
-  function render(data) {
+  function drawHeader(data) {
     set('orderName', data.orderName || '');
-
     var steps = $('steps');
+    steps.textContent = '';
     (data.stage.steps || []).forEach(function (label, i) {
       var li = document.createElement('li');
       li.textContent = label;
@@ -219,9 +237,34 @@
       else if (i === data.stage.step) li.className = 'now';
       steps.appendChild(li);
     });
+    set('current', (data.shipping || {}).current || '—');
+  }
+
+  function quick(data) {
+    drawHeader(data);
+    var names = (data.shipping || {}).optionNames || [];
+    var box = $('pricingOpts');
+    names.forEach(function (name) {
+      var label = document.createElement('div');
+      label.className = 'opt';
+      var b = document.createElement('span'); b.className = 'b';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = name;
+      var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Calculating…';
+      b.appendChild(nm); b.appendChild(sub);
+      var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '…';
+      label.appendChild(b); label.appendChild(pr);
+      box.appendChild(label);
+    });
+    $('pricing').hidden = names.length === 0;
+    $('loading').hidden = true;
+    $('view').hidden = false;
+  }
+
+  function render(data) {
+    $('pricing').hidden = true;
+    drawHeader(data);
 
     var sh = data.shipping || {};
-    set('current', sh.current || '—');
 
     // An upgrade chosen but not paid: the same option screen as a fresh order,
     // nothing preselected (Kai). Picking the unpaid one again goes straight to

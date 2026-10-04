@@ -115,6 +115,15 @@ async function quote(fake, extra = {}) {
 }
 
 describe('an upgrade priced from the live store', () => {
+  test('the order edit is opened alongside the rate lookup, not after it', async () => {
+    const fake = fakeShopify();
+    const q = await quote(fake);
+    assert.equal(q.ok, true);
+    const kinds = fake.sent.map((b) => (b.query.includes('EditBegin') ? 'begin' : b.query.includes('RateCheck') ? 'rates' : null)).filter(Boolean);
+    assert.equal(kinds[0], 'begin');
+    assert.equal(kinds.filter((k) => k === 'begin').length, 1);
+  });
+
   test('options priced with one rate cache share a single rate lookup', async () => {
     const fake = fakeShopify();
     const order = await fetchOrderForPricing({ ...ARGS, orderName: 'S64201', fetchImpl: fake.fetchImpl });

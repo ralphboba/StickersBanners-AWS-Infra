@@ -167,6 +167,25 @@ async function status(deps, authorised, event) {
 
   const currentMethod = row.shipping?.method ?? null;
   const stage = stageFor(row);
+
+  // ── the quick view (?lite=1) ───────────────────────────────────────────
+  // No Shopify call: the order, its progress and the names of the faster
+  // services, so the page shows something at once while the priced view
+  // (below, a few seconds of Shopify) is on its way. Nothing here is more
+  // than the full view already says.
+  if (q.lite === '1') {
+    return json(200, {
+      orderName: row.orderName,
+      stage: { label: stage.label, step: stage.step, steps: STEPS },
+      shipping: {
+        current: stage.currentService ?? currentMethod,
+        lite: true,
+        optionNames: stage.canUpgrade ? (stage.upgradeOptions ?? [stage.upgradeTo]) : [],
+      },
+      addOns: [],
+    });
+  }
+
   const t = timer('GET', orderName);
 
   // ── an upgrade already chosen and waiting for payment ─────────────────

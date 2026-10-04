@@ -188,6 +188,20 @@ describe('every faster service', () => {
     assert.ok(seen[0] instanceof Map && seen.every((c) => c === seen[0]));
   });
 
+  test('the quick view (lite=1) answers without asking Shopify anything', async () => {
+    const boom = async () => { throw new Error('must not call Shopify'); };
+    const h = makeHandler(deps({ loadShopifyOrder: boom, quote: boom }));
+    const r = await h({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order',
+      queryStringParameters: { o: 'S1', s: URL, lite: '1' } });
+    const body = JSON.parse(r.body);
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(body.shipping, { current: 'FedEx Ground', lite: true, optionNames: ['FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day'] });
+    // the token check still applies
+    const bad = await h({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order',
+      queryStringParameters: { o: 'S1', s: 'https://evil.example/x', lite: '1' } });
+    assert.equal(bad.statusCode, 404);
+  });
+
   test('a service not sold at this subtotal is just left out', async () => {
     delete priced['FedEx 2-Days'];
     const body = JSON.parse((await get(makeHandler(deps()))).body);

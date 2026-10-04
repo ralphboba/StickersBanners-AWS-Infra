@@ -77,14 +77,22 @@ const tail = (gid) => String(gid ?? '').split('/').pop();
  * @param {string} p.title         the new service, e.g. "FedEx 3-Days"
  * @param {number} p.priceCents    its full price
  * @param {number} p.totalBeforeCents  the order's current total, to check the arithmetic
+ * @param {Promise} [p.begun]     result of beginOrderEdit started earlier (optional)
  * @returns {Promise<{ ok: true, calculatedOrderId: string, outstandingCents: number,
  *                     totalCents: number } | { ok: false, reason: string }>}
  */
+/** Open an order edit (uncommitted; it simply expires if never used). */
+export function beginOrderEdit({ shop, token, orderId, fetchImpl }) {
+  return shopifyGraphQL({ shop, token, fetchImpl, query: BEGIN, variables: { id: orderId } });
+}
+
 export async function stageShippingChange({
-  shop, token, orderId, removeLineId, title, priceCents, totalBeforeCents, fetchImpl,
+  shop, token, orderId, removeLineId, title, priceCents, totalBeforeCents, begun: begunEarly, fetchImpl,
 }) {
   if (!Number.isSafeInteger(priceCents) || priceCents <= 0) return { ok: false, reason: 'bad_price' };
-  const begun = await shopifyGraphQL({ shop, token, fetchImpl, query: BEGIN, variables: { id: orderId } });
+  // `begun`: an edit the caller opened earlier, while it was still looking up
+  // rates — saves one Shopify round trip on the customer's page.
+  const begun = await (begunEarly ?? beginOrderEdit({ shop, token, orderId, fetchImpl }));
   const b = begun?.data?.orderEditBegin;
   if ((b?.userErrors ?? []).length || !b?.calculatedOrder?.id) return { ok: false, reason: 'edit_begin_failed' };
 
