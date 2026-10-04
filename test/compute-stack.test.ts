@@ -48,6 +48,7 @@ describe('ComputeStack', () => {
       'sb-dev-proof-approval',
       'sb-dev-shipping-change-expiry',
       'sb-dev-shopify-paid',
+      'sb-dev-upgrade-report',
       'sb-dev-webhook',
     ]);
   });
@@ -179,5 +180,19 @@ describe('ComputeStack', () => {
       .flatMap((p: any) => p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
         (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
     expect(actions).toEqual(expect.arrayContaining(['ssm:GetParameter']));
+  });
+
+  test('the daily upgrade report runs every morning, New York time, read-only on the table', () => {
+    const t = synth();
+    t.hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-upgrade-report',
+      ScheduleExpression: 'cron(52 8 * * ? *)',
+      ScheduleExpressionTimezone: 'America/New_York',
+      State: 'ENABLED',
+    });
+    const env = Object.values(t.findResources('AWS::Lambda::Function'))
+      .find((fn) => fn.Properties.FunctionName === 'sb-dev-upgrade-report')!.Properties.Environment.Variables;
+    expect(env.SHOPIFY_WRITES).toBeUndefined();
+    expect(env.ORDERDESK_UPGRADE_WRITES).toBeUndefined();
   });
 });

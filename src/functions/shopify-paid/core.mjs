@@ -60,7 +60,7 @@ const reply = (statusCode, body) => ({ statusCode, body: JSON.stringify(body) })
 /**
  * @param {{ webhookSecret: () => Promise<string>,
  *           loadPending: (orderName: string) => Promise<object|null>,
- *           markDone: (orderName: string, ref: string, result: object) => Promise<void>,
+ *           markDone: (orderName: string, ref: string, result: object, change: object) => Promise<void>,
  *           markAttention: (orderName: string, ref: string, reason: string) => Promise<void>,
  *           stillAllowed: (change: object) => Promise<{ allowed: boolean, reason?: string, label?: string }>,
  *           applyOrderDesk: (change: object) => Promise<object>,
@@ -114,7 +114,7 @@ export function makePaidHandler(deps) {
         { written: false, reason: result.skipped ?? result.error });
     }
 
-    await deps.markDone(orderName, change.ref, result);
+    await deps.markDone(orderName, change.ref, result, change);
 
     // Only a write that happened now is announced; a duplicate was announced
     // the first time.

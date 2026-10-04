@@ -11,7 +11,7 @@
 // remaining steps (docs/pricing-and-tax.md).
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { getSecret } from '../../shared/secrets.mjs';
 import { applyShippingUpgrade } from '../../shared/orderdesk-write.mjs';
@@ -20,6 +20,7 @@ import { stillAllowed } from '../../shared/paid-recheck.mjs';
 import { notifyChat } from '../../shared/gchat.mjs';
 import { chatFacilityOf } from '../../shared/orderdesk-folders.mjs';
 import { centsToDollars } from '../../shared/money.mjs';
+import { logItem } from '../../shared/upgrade-log.mjs';
 import { makePaidHandler } from './core.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -30,7 +31,7 @@ export const handler = makePaidHandler({
   // Webhooks this app subscribes to are signed with the app's Client secret.
   webhookSecret: () => getSecret('shopify', 'client-secret'),
   loadPending: async (orderName) => (await ddb.send(new GetCommand({ TableName: JOBS_TABLE, Key: key(orderName) })))?.Item ?? null,
-  markDone: async (orderName, ref, result) => {
+  markDone: async (orderName, ref, result, change) => {
     await ddb.send(new UpdateCommand({
       TableName: JOBS_TABLE, Key: key(orderName),
       UpdateExpression: 'SET #s = :done, doneAt = :at, orderTotal = :t',
@@ -38,6 +39,12 @@ export const handler = makePaidHandler({
       ExpressionAttributeNames: { '#s': 'status', '#r': 'ref' },
       ExpressionAttributeValues: { ':done': 'done', ':at': new Date().toISOString(), ':ref': ref, ':t': result.orderTotal ?? null },
     }));
+    // Daily count (upgrade-log.mjs) — only a write that happened now, and
+    // never at the cost of the 200 Shopify is waiting for.
+    if (result.applied && change) {
+      await ddb.send(new PutCommand({ TableName: JOBS_TABLE, Item: logItem('paid', change, Date.now()) }))
+        .catch((err) => console.warn(JSON.stringify({ msg: 'upgrade log failed', err: String(err) })));
+    }
   },
   markAttention: async (orderName, ref, reason) => {
     await ddb.send(new UpdateCommand({

@@ -368,6 +368,9 @@ async function requestChange(deps, authorised, event) {
     restore: q.edit.restore,
     committedAt: new Date(now).toISOString(),
     revertAfter: new Date(now + REVERT_AFTER_MS).toISOString(),
+    // A staff test order (seed-test-row.mjs) — marked "(TEST)" in Chat, left
+    // out of the daily count.
+    ...(row.testOrder ? { test: true } : {}),
   };
   // Shopify is the authority on what is owed. If the committed balance is not
   // the one quoted, the team looks before any invoice goes out.

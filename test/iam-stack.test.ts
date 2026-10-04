@@ -70,7 +70,9 @@ describe('IamStack', () => {
 describe('secrets config', () => {
   test('every parameter path is well-formed (/sb/<env>/<group>/<key>)', () => {
     for (const p of SECRET_PARAMS) {
-      expect(secretPath('dev', p)).toMatch(/^\/sb\/dev\/[a-z0-9-]+\/[a-z0-9-]+$/);
+      // Keys are lowercase, except a facility code suffix (gchat/webhook-url-GA),
+      // already stored in SSM under that name.
+      expect(secretPath('dev', p)).toMatch(/^\/sb\/dev\/[a-z0-9-]+\/[a-z0-9-]+(-(GA|NJ|TX))?$/);
     }
   });
 

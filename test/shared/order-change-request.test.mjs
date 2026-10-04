@@ -10,10 +10,10 @@ const ROW = { orderName: 'S1', folderId: '73068', orderStatusUrl: URL, source: {
 const QUOTE = { ok: true, from: 'FedEx 2-Days', to: 'FedEx 1-Day', shippingCents: 3396, taxCents: 225, totalCents: 3621,
   edit: { orderId: 'gid://shopify/Order/1', calculatedOrderId: 'gid://shopify/CalculatedOrder/9', restore: { title: 'FedEx 2-Days', priceCents: 12811 } } };
 
-function build({ quote = QUOTE, pending = null, commit = { committed: true, outstandingCents: 3621 }, invoice = { sent: true }, writes = true } = {}) {
+function build({ row = ROW, quote = QUOTE, pending = null, commit = { committed: true, outstandingCents: 3621 }, invoice = { sent: true }, writes = true } = {}) {
   const log = { commits: [], saved: [], invoices: [] };
   const deps = {
-    loadRow: async (n) => (n === 'S1' ? ROW : undefined),
+    loadRow: async (n) => (n === 'S1' ? row : undefined),
     loadShopifyOrder: async () => ({ name: 'S1' }),
     quote: async () => quote,
     estimates: async () => null,
@@ -44,6 +44,15 @@ describe('Send me the invoice', () => {
     assert.equal(log.saved[0].revertAfter, new Date(1790000000000 + 48 * 3600e3).toISOString());
     assert.deepEqual(log.saved[0].restore, { title: 'FedEx 2-Days', priceCents: 12811 });
     assert.equal(log.invoices.length, 1);
+  });
+
+  test('a staff test order is marked test (left out of the daily count); a real one is not', async () => {
+    const real = build();
+    await post(real.handler, OK);
+    assert.equal(real.log.saved[0].test, undefined);
+    const t = build({ row: { ...ROW, testOrder: true } });
+    await post(t.handler, OK);
+    assert.equal(t.log.saved[0].test, true);
   });
 
   test('the balance moved since the page loaded: nothing committed, the new figure returned', async () => {

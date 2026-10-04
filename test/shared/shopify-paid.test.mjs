@@ -18,7 +18,7 @@ function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground
   const handler = makePaidHandler({
     webhookSecret: async () => SECRET,
     loadPending: async (name) => (change && name === change.orderName ? change : null),
-    markDone: async (name, ref) => { log.done.push([name, ref]); },
+    markDone: async (name, ref, result, c) => { log.done.push([name, ref]); log.doneChange = c; },
     markAttention: async (name, ref, why) => { log.attention.push([name, ref, why]); },
     stillAllowed: async () => allowed,
     applyOrderDesk: async (c) => { log.applied.push(c.ref); return apply; },
@@ -36,6 +36,7 @@ describe('orders/paid', () => {
     assert.deepEqual(body(r), { written: true, duplicate: false, chat: true });
     assert.deepEqual(log.applied, ['CHG-1']);
     assert.deepEqual(log.done, [['S64262', 'CHG-1']]);
+    assert.equal(log.doneChange.to, 'FedEx 3-Days');   // the daily count's row is built from it
     assert.deepEqual(log.chat, ['S64262 upgraded FedEx Ground → FedEx 3-Days · +$17.38 + $1.04 tax']);
   });
 

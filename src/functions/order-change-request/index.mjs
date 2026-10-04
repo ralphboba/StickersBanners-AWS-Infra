@@ -14,6 +14,7 @@ import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
 import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
+import { logItem } from '../../shared/upgrade-log.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
@@ -34,13 +35,20 @@ export const handler = makeHandler({
     TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'CHANGE' } })))?.Item ?? null,
   // One open change per order: a second pending record is refused by the
   // table, not just by the route's earlier check.
-  savePending: async (change) => ddb.send(new PutCommand({
-    TableName: JOBS_TABLE,
-    Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
-    ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
-    ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: { ':pending': 'pending' },
-  })),
+  savePending: async (change) => {
+    await ddb.send(new PutCommand({
+      TableName: JOBS_TABLE,
+      Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
+      ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
+      ExpressionAttributeNames: { '#s': 'status' },
+      ExpressionAttributeValues: { ':pending': 'pending' },
+    }));
+    // Daily count (upgrade-log.mjs). Never fails the customer's request.
+    if (change.status === 'pending') {
+      await ddb.send(new PutCommand({ TableName: JOBS_TABLE, Item: logItem('requested', change, Date.now()) }))
+        .catch((err) => console.warn(JSON.stringify({ msg: 'upgrade log failed', err: String(err) })));
+    }
+  },
   commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
