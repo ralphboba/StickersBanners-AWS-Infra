@@ -89,7 +89,8 @@ export function beginOrderEdit({ shop, token, orderId, fetchImpl }) {
 export async function stageShippingChange({
   shop, token, orderId, removeLineId, title, priceCents, totalBeforeCents, begun: begunEarly, fetchImpl,
 }) {
-  if (!Number.isSafeInteger(priceCents) || priceCents <= 0) return { ok: false, reason: 'bad_price' };
+  // 0 is a free line (a pickup put back by set-test-shipping.mjs); never negative.
+  if (!Number.isSafeInteger(priceCents) || priceCents < 0) return { ok: false, reason: 'bad_price' };
   // `begun`: an edit the caller opened earlier, while it was still looking up
   // rates — saves one Shopify round trip on the customer's page.
   const begun = await (begunEarly ?? beginOrderEdit({ shop, token, orderId, fetchImpl }));
