@@ -111,6 +111,16 @@ export function makeHandler(deps) {
   };
 }
 
+// Where the customer's wait goes: ms since the request started, per step.
+function timer(route, orderName) {
+  const t0 = Date.now();
+  const marks = {};
+  return {
+    mark: (k) => { marks[k] = Date.now() - t0; },
+    done: (k = 'total') => { marks[k] = Date.now() - t0; console.log(JSON.stringify({ msg: 'timing', route, orderName, ...marks })); },
+  };
+}
+
 function logRefusal(orderName, reason) {
   console.log(JSON.stringify({ msg: 'shipping change not priced', orderName, reason }));
 }
@@ -157,6 +167,7 @@ async function status(deps, authorised, event) {
 
   const currentMethod = row.shipping?.method ?? null;
   const stage = stageFor(row);
+  const t = timer('GET', orderName);
 
   // ── an upgrade already chosen and waiting for payment ─────────────────
   // The customer clicked, the order was edited, they have not paid yet (closed
@@ -166,6 +177,7 @@ async function status(deps, authorised, event) {
   const pending = deps.loadPending ? await deps.loadPending(orderName) : null;
   if (pending?.status === 'pending') {
     const order = await deps.loadShopifyOrder(orderName);
+    t.mark('shopifyOrder');
     const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
     if (paymentUrl && order?.outstandingCents > 0) {
       const before = stage.canUpgrade ? orderBeforeChange(order, pending) : null;
@@ -178,6 +190,7 @@ async function status(deps, authorised, event) {
           blockedBy: stage.blockedBy ?? null, before: Boolean(before), shopifyLine: order.shippingLines?.[0]?.title ?? null,
           pendingTo: pending.to, hasRestore: Boolean(pending.restore), outstandingCents: order.outstandingCents }));
       }
+      t.done();
       return json(200, {
         orderName: row.orderName,
         stage: { label: stage.label, step: stage.step, steps: STEPS },
@@ -204,7 +217,9 @@ async function status(deps, authorised, event) {
 
   const upgrades = [];
   if (stage.canUpgrade) {
+    t.mark('shopifyOrder');
     const priced = await quoteUpgrades(deps, orderName, stage, shopifyOrder, currentMethod);
+    t.mark('quotes');
     upgrades.push(...priced.upgrades);
     refusal = priced.refusal;
     upgrade = upgrades[0] ?? null;
@@ -232,6 +247,7 @@ async function status(deps, authorised, event) {
   }
 
   const offering = Boolean(upgrade || delivery);
+  t.done();
   return json(200, {
     orderName: row.orderName,
     stage: { label: stage.label, step: stage.step, steps: STEPS },
@@ -361,7 +377,9 @@ async function requestChange(deps, authorised, event) {
   }
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
 
+  const t = timer('POST', orderName);
   const order = await deps.loadShopifyOrder(orderName);
+  t.mark('shopifyOrder');
   const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
   // A different speed while the first choice is unpaid: Shopify still carries
   // that choice and its balance. Priced exactly as the page prices it (the
@@ -387,6 +405,7 @@ async function requestChange(deps, authorised, event) {
   }
   const q = await deps.quote({ order: pricedOn, to: service,
     expectedFrom: switching ? existing.from : (row.shipping?.method ?? null) });
+  t.mark('quote');
   if (!q.ok || !q.edit) {
     logRefusal(orderName, q.reason ?? 'no_edit');
     return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
@@ -429,6 +448,7 @@ async function requestChange(deps, authorised, event) {
       ? `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online (replaces unpaid ${existing.ref}, ${existing.to})`
       : `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
   });
+  t.mark('commit');
   if (!committed.committed) {
     // Nothing changed in Shopify: put the record back the way it was.
     await save(existing?.status === 'pending' ? { ...existing, replaces: ref } : { ...change, status: 'failed', replaces: ref })
@@ -446,6 +466,7 @@ async function requestChange(deps, authorised, event) {
     return json(502, { error: 'commit_mismatch' });
   }
   await save({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}), replaces: ref, confirmed: true });
+  t.done();
 
   // Shopify's own payment page for the balance: the customer pays exactly as
   // they did at checkout, nothing of ours handles the card. Only if Shopify
