@@ -40,7 +40,9 @@ export function orderVariant(order) {
 
 // Legacy VALID_FILES_EXT — identical in both classes. Anything else is treated
 // as a missing/unusable file (legacy tags the order Red and hands it to staff).
-export const VALID_FILE_EXTS = new Set(['jpg', 'jpeg', 'png', 'tif', 'tiff', 'pdf', 'ai', 'psd']);
+// eps added 2026-10-04 (Kai): resize converts it with Ghostscript. Legacy has
+// no EPS support, so these were all held as missing files.
+export const VALID_FILE_EXTS = new Set(['jpg', 'jpeg', 'png', 'tif', 'tiff', 'pdf', 'ai', 'psd', 'eps']);
 
 /**
  * Legacy getFinishMode normalisation — and the two classes differ here.

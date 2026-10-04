@@ -40,7 +40,7 @@ from artwork import artwork_extension, corrected_extension
 from converter import (PDF_MAX_RENDER_PIXELS, PDF_RENDER_DPI, check_pdf_pages,
                        get_dimensions, pdf_render_dpi)
 from fetch import download
-from orientation import orientation_mismatch, source_size
+from orientation import eps_bounding_box, orientation_mismatch, source_size
 
 Image.MAX_IMAGE_PIXELS = None  # same as converter: banners exceed PIL's guard
 
@@ -163,8 +163,18 @@ def probe_item(item, scratch, max_bytes):
     out["outputPixels"] = [width_px, height_px]
 
     try:
-        if ext in ("pdf", "eps"):
+        if ext == "pdf":
             result = probe_pdf(local, width_px, height_px)
+        elif ext == "eps":
+            # PostScript: resize converts it to PDF with Ghostscript first.
+            with open(local, "rb") as fh:
+                is_pdf = fh.read(4) == b"%PDF"
+            if is_pdf:
+                result = probe_pdf(local, width_px, height_px)
+            else:
+                size = eps_bounding_box(local)
+                result = ({"verdict": "ok", "pageInches": [round(size[0] / 72, 2), round(size[1] / 72, 2)]}
+                          if size else {"verdict": "warn", "reason": "eps-no-bounding-box"})
         elif ext == "ai":
             # Legacy sniffs the header rather than trusting the extension, and
             # so does converter: a %PDF-flavoured .ai goes down the PDF path and

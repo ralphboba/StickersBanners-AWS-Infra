@@ -28,7 +28,7 @@ class Sniff(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cases = {b'%PDF-1.4': 'pdf', b'8BPS\x00\x01': 'psd',
                      b'\x89PNG\r\n\x1a\n': 'png', b'\xff\xd8\xff\xe0': 'jpg',
-                     b'II*\x00': 'tif', b'MM\x00*': 'tif', b'%!PS-Adobe': 'ps',
+                     b'II*\x00': 'tif', b'MM\x00*': 'tif', b'%!PS-Adobe': 'ps', b'\xc5\xd0\xd3\xc6': 'ps',
                      b'random bytes': None}
             for head, want in cases.items():
                 self.assertEqual(sniff_format(write(d, 'f', head)), want, head)
@@ -55,7 +55,10 @@ class Corrected(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(corrected_extension('png', write(d, 'a', b'%PDF-1.4')), 'pdf')
             self.assertEqual(corrected_extension('pdf', write(d, 'a', b'\x89PNG\r\n\x1a\n')), 'png')
-            self.assertEqual(corrected_extension('pdf', write(d, 'a', b'%!PS-Adobe')), 'ai')
+            self.assertEqual(corrected_extension('pdf', write(d, 'a', b'%!PS-Adobe')), 'eps')
+            # Illustrator/Photoshop "EPS with preview" binary header.
+            self.assertEqual(corrected_extension('pdf', write(d, 'a', b'\xc5\xd0\xd3\xc6')), 'eps')
+            self.assertEqual(corrected_extension('eps', write(d, 'a', b'\xc5\xd0\xd3\xc6')), 'eps')
 
 
 class PsdFallback(unittest.TestCase):

@@ -39,12 +39,15 @@ _SIGNATURES = (
     (b"II*\x00", "tif"),
     (b"MM\x00*", "tif"),
     (b"%!PS", "ps"),
+    # DOS EPS: Illustrator / Photoshop "EPS with preview" -- a binary header in
+    # front of the PostScript. All five .eps uploads 2026-09-29..10-02 were this.
+    (b"\xc5\xd0\xd3\xc6", "ps"),
 )
 
 # Which converter path each format takes. Two names on the same route are the
 # same decision, so an .ai that holds a PDF stays "ai" (converter sniffs it
 # again) and a .jpeg stays "jpeg".
-_ROUTE = {"pdf": "pdf", "eps": "pdf", "ai": "ai", "psd": "psd", "ps": "ai",
+_ROUTE = {"pdf": "pdf", "eps": "eps", "ai": "ai", "psd": "psd", "ps": "eps",
           "png": "raster", "jpg": "raster", "jpeg": "raster",
           "tif": "raster", "tiff": "raster"}
 
@@ -74,7 +77,7 @@ def corrected_extension(ext, path):
     if real is None or _ROUTE.get(real) == _ROUTE.get(ext):
         return ext
     # An .ai is either a PDF or PostScript inside, and the converter's .ai path
-    # already sniffs which; an .eps that is PostScript stays as named.
-    if (ext == "ai" and real in ("pdf", "ps")) or (ext == "eps" and real == "ps"):
+    # already sniffs which; an .eps that holds a PDF is handled by the eps path.
+    if (ext == "ai" and real in ("pdf", "ps")) or (ext == "eps" and real == "pdf"):
         return ext
-    return "ai" if real == "ps" else real
+    return "eps" if real == "ps" else real

@@ -81,8 +81,9 @@ test('distribution-centre orders go to manual (legacy Orange)', () => {
 
 test('missing or unusable artwork goes to manual (legacy Red)', () => {
   assert.equal(intakeGate(job({ art: null })).reason, 'missing-file');
-  // eps is not in legacy VALID_FILES_EXT
-  assert.equal(intakeGate(job({ art: 'https://cdn.shop/files/art.eps' })).reason, 'missing-file');
+  // docx is not a print file (eps was, until it became one on 2026-10-04)
+  assert.equal(intakeGate(job({ art: 'https://cdn.shop/files/art.docx' })).reason, 'missing-file');
+  assert.equal(intakeGate(job({ art: 'https://cdn.shop/files/art.eps' })), null);
   const g = intakeGate(job({ art: null }));
   assert.equal(g.folder, 'manual');
   assert.equal(g.tag, 'Red');

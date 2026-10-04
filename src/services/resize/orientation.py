@@ -52,6 +52,18 @@ def orientation_mismatch(src_w, src_h, out_w, out_h, tol=SQUARE_TOLERANCE):
     }
 
 
+def eps_bounding_box(path):
+    """(width, height) in points from an EPS's %%BoundingBox, or None."""
+    import re
+    with open(path, "rb") as f:
+        head = f.read(1 << 20)
+    m = re.search(rb"%%BoundingBox:\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)", head)
+    if not m:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in m.groups())
+    return (x1 - x0, y1 - y0) if x1 > x0 and y1 > y0 else None
+
+
 def source_size(path, ext):
     """The file's own width x height, in whatever units, or None.
 
@@ -62,6 +74,8 @@ def source_size(path, ext):
     """
     ext = (ext or "").lower()
     try:
+        if ext == "eps":
+            return eps_bounding_box(path)
         if ext in ("pdf", "ai"):
             with open(path, "rb") as f:
                 if not f.read(5).startswith(b"%PDF"):

@@ -194,10 +194,20 @@ test('artwork: QTS reads metadata.image1..5', () => {
 });
 
 test('artwork: an unsupported extension is a missing file, not a job', () => {
-  // Legacy VALID_FILES_EXT has no eps — such a line is tagged Red for staff.
-  const it = firstItem(order({ vl: { 'Uploaded File': 'https://cdn.shop/files/art.eps' } }));
-  assert.equal(it.isMissingFile, true);
-  assert.equal(it.artworkUrl, undefined);
+  // Word documents and SVGs are not print files — such a line is tagged Red for staff.
+  for (const f of ['PARADE POSTER.docx', 'Untitled design.svg']) {
+    const it = firstItem(order({ vl: { 'Uploaded File': `https://cdn.shop/files/${f}` } }));
+    assert.equal(it.isMissingFile, true, f);
+    assert.equal(it.artworkUrl, undefined, f);
+  }
+});
+
+test('artwork: .eps is a print file now (legacy held it as missing)', () => {
+  // Kai, 2026-10-04. Five real .eps uploads 09-29..10-02 were all held;
+  // resize converts them with Ghostscript.
+  const it = firstItem(order({ vl: { 'Uploaded File': 'https://cdn.shop/files/nunez-banner.eps' } }));
+  assert.equal(it.isMissingFile, false);
+  assert.equal(it.artworkExt, 'eps');
 });
 
 test('artwork: several uploads set hasMultipleFiles and produce no artwork', () => {

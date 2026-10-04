@@ -301,6 +301,29 @@ def _convert_postscript(file_path, width_px, height_px, output_path):
             os.remove(tmp_png)
 
 
+def _convert_eps(file_path, width_px, height_px, output_path):
+    """EPS -> PDF with Ghostscript, then the ordinary PDF path.
+
+    Legacy has no EPS support at all: every .eps upload was held as a missing
+    file (S64674, S64760, S64887 x2, S65646 between 2026-09-29 and 10-02).
+    Converting to PDF rather than rasterising here means the page goes through
+    the same dpi budget, memory retry and trimbox crop as every other PDF.
+    -dEPSCrop makes the page the EPS bounding box -- the artwork, not a sheet
+    of paper around it.
+    """
+    with open(file_path, "rb") as f:
+        if f.read(4) == b"%PDF":  # named .eps, actually a PDF
+            return _convert_pdf(file_path, width_px, height_px, output_path)
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf = os.path.join(tmp, "eps.pdf")
+        subprocess.run(
+            ["gs", "-q", "-dBATCH", "-dNOPAUSE", "-dSAFER", "-dEPSCrop",
+             "-sDEVICE=pdfwrite", f"-sOutputFile={pdf}", file_path],
+            check=True,
+        )
+        return _convert_pdf(pdf, width_px, height_px, output_path)
+
+
 def _convert_ai(file_path, width_px, height_px, output_path):
     """Legacy AI detection: %PDF header -> pdf path, %!PS -> ghostscript."""
     with open(file_path, "rb") as f:
@@ -346,8 +369,10 @@ def process_image(file_path, width, height, unit, output_path):
     if ext in RASTER_FILE_TYPES:
         with Image.open(file_path) as img:
             return _rescale_and_save(img, width_px, height_px, output_path)
-    if ext in ("pdf", "eps"):
+    if ext == "pdf":
         return _convert_pdf(file_path, width_px, height_px, output_path)
+    if ext == "eps":
+        return _convert_eps(file_path, width_px, height_px, output_path)
     if ext == "ai":
         return _convert_ai(file_path, width_px, height_px, output_path)
     if ext == "psd":
