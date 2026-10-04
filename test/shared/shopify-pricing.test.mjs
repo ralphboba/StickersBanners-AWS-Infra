@@ -115,6 +115,25 @@ async function quote(fake, extra = {}) {
 }
 
 describe('an upgrade priced from the live store', () => {
+  test('a pickup with no typed address: priced on the order like an upgrade, ships to the order address', async () => {
+    const pickup = shopifyOrder({
+      currentTotalPriceSet: { shopMoney: { amount: '150.00' } },
+      shippingLines: { nodes: [{ id: 'gid://shopify/ShippingLine/77', title: 'Georgia Warehouse', isRemoved: false,
+        originalPriceSet: { shopMoney: { amount: '0.00' } }, discountedPriceSet: { shopMoney: { amount: '0.00' } } }] },
+    });
+    const fake = fakeShopify({ order: pickup });
+    const order = await fetchOrderForPricing({ ...ARGS, orderName: 'S64201', fetchImpl: fake.fetchImpl });
+    const q = await quoteShippingChange({ ...ARGS, order, to: 'FedEx Ground', expectedFrom: 'Georgia Warehouse', fetchImpl: fake.fetchImpl });
+    assert.equal(q.ok, true);
+    assert.equal(q.mode, 'convert');
+    assert.equal(q.shippingCents, 2567);             // the full Ground rate: pickup was free
+    assert.equal(q.totalCents, 2567);                // + Shopify's tax (0 in this fake)
+    assert.equal(fake.stage().variables.add.price.amount, '25.67');
+    assert.deepEqual(q.edit.restore, { title: 'Georgia Warehouse', priceCents: 0 });
+    assert.deepEqual(q.deliverTo, { address1: '115 Powelton Avenue', address2: '', city: 'Oaklyn', province: 'NJ', zip: '08107', country: 'US' });
+    assert.equal(fake.sent.filter((b) => b.query.includes('ChargeQuote')).length, 0);   // no draft
+  });
+
   test('the order edit is opened alongside the rate lookup, not after it', async () => {
     const fake = fakeShopify();
     const q = await quote(fake);

@@ -131,11 +131,10 @@ function logRefusal(orderName, reason) {
 // about the ORDER (price not verifiable, balance due, …) applies to every
 // option and ends the list there; "service not sold at this subtotal" is per
 // option.
-async function quoteUpgrades(deps, orderName, stage, order, expectedFrom) {
+async function quoteUpgrades(deps, orderName, options, order, expectedFrom) {
   const upgrades = [];
   let refusal = null;
   const rateCache = new Map();
-  const options = stage.upgradeOptions ?? [stage.upgradeTo];
   const results = await Promise.all(options.map((to) => deps.quote({ order, to, expectedFrom, rateCache })));
   for (const q of results) {
     if (q.ok) {
@@ -155,6 +154,15 @@ async function quoteUpgrades(deps, orderName, stage, order, expectedFrom) {
     refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
   }
   return { upgrades, refusal };
+}
+
+// The services a customer may move to: faster ones for a shipped order, all
+// four for a pickup (delivered to the address on the order). One list, one
+// screen, one way to pay.
+function offeredServices(stage) {
+  if (stage.canUpgrade) return stage.upgradeOptions ?? [stage.upgradeTo];
+  if (stage.canConvert) return stage.convertTo ?? [];
+  return [];
 }
 
 // ── GET /my-order ──────────────────────────────────────────────────────────
@@ -180,7 +188,7 @@ async function status(deps, authorised, event) {
       shipping: {
         current: stage.currentService ?? currentMethod,
         lite: true,
-        optionNames: stage.canUpgrade ? (stage.upgradeOptions ?? [stage.upgradeTo]) : [],
+        optionNames: offeredServices(stage),
       },
       addOns: [],
     });
@@ -199,9 +207,9 @@ async function status(deps, authorised, event) {
     t.mark('shopifyOrder');
     const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
     if (paymentUrl && order?.outstandingCents > 0) {
-      const before = stage.canUpgrade ? orderBeforeChange(order, pending) : null;
+      const before = offeredServices(stage).length ? orderBeforeChange(order, pending) : null;
       const { upgrades } = before
-        ? await quoteUpgrades(deps, orderName, stage, before, pending.from)
+        ? await quoteUpgrades(deps, orderName, offeredServices(stage), before, pending.from)
         : { upgrades: [] };
       if (!upgrades.length) {
         // Options could not be re-priced: say why in the log (no secrets).
@@ -215,6 +223,7 @@ async function status(deps, authorised, event) {
         stage: { label: stage.label, step: stage.step, steps: STEPS },
         shipping: {
           current: pending.from, canUpgrade: upgrades.length > 0, canConvert: false, reason: null,
+          pickup: stage.canConvert === true,
           upgrades, upgrade: upgrades[0] ?? null,
           awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl },
         },
@@ -234,36 +243,21 @@ async function status(deps, authorised, event) {
     ? await deps.loadShopifyOrder(orderName)
     : null;
 
+  // One option list for every order: faster services for a shipped order,
+  // delivery services for a pickup (on the address already on the order).
+  // No address form (Kai).
   const upgrades = [];
-  if (stage.canUpgrade) {
+  const services = offeredServices(stage);
+  if (services.length) {
     t.mark('shopifyOrder');
-    const priced = await quoteUpgrades(deps, orderName, stage, shopifyOrder, currentMethod);
+    const priced = await quoteUpgrades(deps, orderName, services, shopifyOrder, currentMethod);
     t.mark('quotes');
     upgrades.push(...priced.upgrades);
     refusal = priced.refusal;
     upgrade = upgrades[0] ?? null;
     if (upgrade) refusal = null;
   }
-
-  // ── the delivery conversion ───────────────────────────────────────────
-  // No delivery address yet, so no tax yet. Each option shows the rate
-  // checkout would charge, marked "plus tax"; the amount due is produced by
-  // POST once the customer has typed an address. A rate we could not fetch is
-  // shown as a name without a price, never as a guess.
-  let delivery = null;
-  if (stage.canConvert) {
-    const est = await deps.estimates({ order: shopifyOrder, services: stage.convertTo });
-    const byService = new Map((est ?? []).map((e) => [e.service, e.shippingCents]));
-    const options = stage.convertTo
-      // With estimates, list only what checkout actually offers at this
-      // subtotal; without them, list the services and price them at quote time.
-      .filter((service) => !est || byService.has(service))
-      .map((service) => ({
-        service,
-        shipping: byService.has(service) ? centsToDollars(byService.get(service)) : null,
-      }));
-    if (options.length) delivery = { options, needsAddress: true, final: false };
-  }
+  const delivery = null;
 
   const offering = Boolean(upgrade || delivery);
   t.done();
@@ -279,6 +273,7 @@ async function status(deps, authorised, event) {
         : (refusal ?? BLOCKED_COPY[stage.blockedBy] ?? BLOCKED_COPY.unknown_folder),
       upgrade,
       delivery,
+      pickup: stage.canConvert === true,
     },
     addOns: [], // pending the item and price list
   });
@@ -385,7 +380,7 @@ async function requestChange(deps, authorised, event) {
   if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
 
   const stage = stageFor(row);
-  if (!stage.canUpgrade || !(stage.upgradeOptions ?? [stage.upgradeTo]).includes(service)) {
+  if (!offeredServices(stage).includes(service)) {
     return json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY });
   }
 
@@ -442,6 +437,8 @@ async function requestChange(deps, authorised, event) {
     shopifyOrderId: q.edit.orderId,
     from: q.from, to: q.to, shippingCents: q.shippingCents, taxCents: q.taxCents,
     restore: q.edit.restore,
+    // A pickup converted to delivery: the address Order Desk must ship to.
+    ...(q.deliverTo ? { deliverTo: q.deliverTo } : {}),
     committedAt: new Date(now).toISOString(),
     revertAfter: new Date(now + REVERT_AFTER_MS).toISOString(),
     // A staff test order (seed-test-row.mjs) — marked "(TEST)" in Chat, left

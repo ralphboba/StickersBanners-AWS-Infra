@@ -61,30 +61,33 @@ const ADDRESS = { address1: '1 Peachtree St', city: 'Atlanta', province: 'ga', z
 beforeEach(() => fake(pickupRow()));
 
 describe('GET /my-order for a pickup order', () => {
-  test('offers delivery, at card price, not final', async () => {
+  // Kai: a pickup order gets the same option list as any order — the delivery
+  // services, each priced by Shopify on the address already on the order. No
+  // address form, no "plus tax" estimates.
+  test('lists the four delivery services as options, each priced by Shopify, tax included', async () => {
+    fake(pickupRow(), { quoteResult: undefined });
     const { status, body } = read(await get('S70001'));
     assert.equal(status, 200);
-    assert.equal(body.shipping.canConvert, true);
-    assert.equal(body.shipping.canUpgrade, false);
+    assert.equal(body.shipping.canUpgrade, true);
+    assert.equal(body.shipping.pickup, true);
+    assert.equal(body.shipping.delivery, null);
     assert.equal(body.shipping.reason, null);
-    assert.equal(body.shipping.delivery.needsAddress, true);
-    assert.equal(body.shipping.delivery.final, false);
-    assert.deepEqual(body.shipping.delivery.options.map((o) => o.service),
-      ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
-    for (const o of body.shipping.delivery.options) assert.equal(o.shipping, RATE[o.service] / 100);
+    assert.deepEqual(body.shipping.upgrades.map((u) => u.to), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
+    for (const u of body.shipping.upgrades) assert.equal(u.final, true);
   });
 
-  test('asks for no tax: there is no address to tax yet', async () => {
+  test('priced on the order (no typed address), never from estimates', async () => {
     await get('S70001');
-    assert.equal(calls.quote.length, 0);
-    assert.equal(calls.estimates.length, 1);
+    assert.equal(calls.quote.length, 4);
+    assert.ok(calls.quote.every((q) => q.deliverTo === undefined && q.expectedFrom === 'Georgia Warehouse'));
+    assert.equal(calls.estimates.length, 0);
   });
 
-  test('without estimates the services are listed unpriced, never guessed', async () => {
-    fake(pickupRow(), { estimates: false });
+  test('no address on the Shopify order: nothing offered, a plain reason', async () => {
+    fake(pickupRow(), { quoteResult: { ok: false, reason: 'no_address' } });
     const { body } = read(await get('S70001'));
-    assert.equal(body.shipping.canConvert, true);
-    for (const o of body.shipping.delivery.options) assert.equal(o.shipping, null);
+    assert.equal(body.shipping.canUpgrade, false);
+    assert.ok(body.shipping.reason);
   });
 
   test('says nothing internal: no folder id, no facility', async () => {

@@ -290,7 +290,8 @@
         input.type = 'radio'; input.name = 'svc'; input.value = String(i + 1);
         var b = document.createElement('span'); b.className = 'b';
         var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = u.to;
-        var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
+        var sub = document.createElement('span'); sub.className = 'sub';
+        sub.textContent = sh.pickup ? 'Shipped to the address on your order — includes tax' : 'Arrives sooner — includes tax';
         b.appendChild(nm); b.appendChild(sub);
         var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
         label.appendChild(input); label.appendChild(b); label.appendChild(pr);

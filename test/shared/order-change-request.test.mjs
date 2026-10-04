@@ -55,6 +55,16 @@ describe('Send me the invoice', () => {
     assert.equal(t.log.saved[0].test, true);
   });
 
+  test('a pickup converted on the order address: the record carries where Order Desk must ship', async () => {
+    const PICKUP_ROW = { ...ROW, shipping: { method: 'Georgia Warehouse', state: 'GA' } };
+    const TO = { address1: '1 Main', address2: '', city: 'Atlanta', province: 'GA', zip: '30303', country: 'US' };
+    const { handler, log } = build({ row: PICKUP_ROW, quote: { ...QUOTE, from: 'Georgia Warehouse', to: 'FedEx Ground', deliverTo: TO },
+      commit: { committed: true, outstandingCents: 3621 } });
+    const r = await post(handler, { ...OK, service: 'FedEx Ground' });
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(log.saved[0].deliverTo, TO);
+  });
+
   test('the balance moved since the page loaded: nothing committed, the new figure returned', async () => {
     const { handler, log } = build({ quote: { ...QUOTE, totalCents: 3622, taxCents: 226 } });
     const { status, body } = read(await post(handler, OK));

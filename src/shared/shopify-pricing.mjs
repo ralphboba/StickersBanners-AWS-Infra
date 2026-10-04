@@ -300,8 +300,13 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   }
 
   const mode = isPickup(line.title) ? 'convert' : 'upgrade';
-  const address = mode === 'convert' ? toMailingAddress(deliverTo) : order.shippingAddress;
+  // A pickup with no typed address is priced like an upgrade (Kai: the page
+  // shows the delivery options, no address form): on the address already on
+  // the Shopify order, through an order edit that replaces the free pickup line.
+  const onOrderAddress = mode === 'convert' && !deliverTo;
+  const address = mode === 'convert' && deliverTo ? toMailingAddress(deliverTo) : order.shippingAddress;
   if (!address) return no('no_address');
+  const byEdit = mode === 'upgrade' || onOrderAddress;
 
   // One rate lookup per subtotal per request: the options on one page all ask
   // the same question (rateCache, a Map the caller creates per request; the
@@ -316,7 +321,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   // An upgrade is priced on an order edit; open it now, alongside the rate
   // lookup, instead of after it (one Shopify round trip less per page). If
   // the quote stops early the uncommitted edit just expires.
-  const begun = mode === 'upgrade' && order.outstandingCents === 0 && order.id
+  const begun = byEdit && order.outstandingCents === 0 && order.id
     ? beginOrderEdit({ shop, token, orderId: order.id, fetchImpl }).catch(() => null)
     : null;
   const atCheckout = await lookup(order.subtotalCents);
@@ -342,7 +347,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   const shippingCents = toCentsRate - fromCents;
   if (shippingCents <= 0) return no('not_an_upgrade');
 
-  if (mode === 'upgrade') {
+  if (byEdit) {
     // Priced on the customer's own order (Order Edit): remove the paid line,
     // add the new service, read the balance Shopify would invoice. The new
     // line is priced so the balance's shipping part is exactly shippingCents:
@@ -369,6 +374,12 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
       edit: { orderId: order.id, removeLineId: line.id, title: to, priceCents: newLineCents,
         expectedOutstandingCents: edit.outstandingCents, calculatedOrderId: edit.calculatedOrderId,
         restore: { title: line.title, priceCents: line.originalCents } },
+      // A pickup converted on the order's own address: where Order Desk must
+      // now ship it (orderdesk-write.mjs needs it for a conversion).
+      ...(onOrderAddress ? { deliverTo: {
+        address1: address.address1 ?? '', address2: address.address2 ?? '', city: address.city ?? '',
+        province: address.provinceCode, zip: address.zip, country: address.countryCode,
+      } } : {}),
     };
   }
 
