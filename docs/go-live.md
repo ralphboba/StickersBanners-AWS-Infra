@@ -8,8 +8,10 @@ without Kai's explicit approval at each stage.
 Each is independent, and each is off today. That is deliberate: it means every
 stage can be turned on, watched, and turned back off on its own.
 
-1. **`sb-dev-poller` schedule** — DISABLED. Off, no real order enters the
-   pipeline at all. (The `sb-dev-mirror-sync` schedule is separate, enabled, and
+1. **`sb-dev-poller` schedule** — **ENABLED since 2026-09-29** (Kai, image
+   processing only; every 1 min; `intakePollEnabled` in
+   `lib/config/environments.ts`, dev only). Real orders run the pipeline, held
+   at switches 2, 4 and 5. (The `sb-dev-mirror-sync` schedule is separate, enabled, and
    read-only: it copies real orders onto the dashboard for display and never
    processes them.)
 2. **`ZENDESK_SENDS`** — `disabled`. The only code that contacts a customer.

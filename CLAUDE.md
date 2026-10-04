@@ -25,8 +25,11 @@ authority: **Linh** (legacy author).
 - Intake is by **polling** the OrderDesk QTS folder (no webhook).
 
 ## Safety
-- dev uses REAL production credentials. Never process real orders without explicit
-  go-live approval. The real poll schedule (`sb-dev-poller`) stays DISABLED.
+- dev uses REAL production credentials. The real poll (`sb-dev-poller`, every
+  1 min) is ON since Kai enabled it on 2026-09-29 — image processing only; in
+  code as `intakePollEnabled` (dev only, prod stays off). Real orders run the
+  pipeline; the three switches below keep them away from OrderDesk, customers
+  and facilities. Arming any of those needs Kai's explicit go-live approval.
 - **`ORDERDESK_WRITES` stays `disabled`.** It arms the only code that writes back
   to OrderDesk (`src/shared/orderdesk-write.mjs` — the intake gate's folder/tag
   move, ported from Linh's `updateOrderdeskDetails`). The gate itself always runs

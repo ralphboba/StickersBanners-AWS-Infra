@@ -32,4 +32,10 @@ export interface EnvironmentConfig {
   readonly network: NetworkConfig;
   /** Tags applied to every resource in the environment. */
   readonly tags: Record<string, string>;
+  /**
+   * Whether the real intake poll (`<prefix>-poller`) runs on its schedule.
+   * Off unless set. On, real QTS orders enter the pipeline; what they can then
+   * touch outside it is still decided by the switches in `trial.ts`.
+   */
+  readonly intakePollEnabled?: boolean;
 }

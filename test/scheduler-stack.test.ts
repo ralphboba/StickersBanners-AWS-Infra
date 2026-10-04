@@ -4,9 +4,8 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { getConfig } from '../lib/config/environments';
 import { SchedulerStack } from '../lib/stacks/scheduler-stack';
 
-function synth(intervalMinutes?: number) {
+function synth(intervalMinutes?: number, config = getConfig('dev')) {
   const app = new cdk.App();
-  const config = getConfig('dev');
   const env = { account: '123456789012', region: 'us-east-1' };
   const deps = new cdk.Stack(app, 'deps', { env });
   const pollerFn = new lambda.Function(deps, 'Poller', {
@@ -28,9 +27,22 @@ describe('SchedulerStack', () => {
     synth().resourceCountIs('AWS::Scheduler::Schedule', 2);
   });
 
-  test('the real process-poll ships DISABLED (go-live is a deliberate flip)', () => {
+  test('the real poll follows intakePollEnabled — on in dev, off in prod', () => {
     synth().hasResourceProperties('AWS::Scheduler::Schedule', {
-      ScheduleExpression: 'rate(15 minutes)',
+      Name: 'sb-dev-poller',
+      State: 'ENABLED',
+    });
+    synth(undefined, getConfig('prod')).hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-prod-poller',
+      State: 'DISABLED',
+    });
+  });
+
+  test('the real poll is off when the environment does not say', () => {
+    const { intakePollEnabled, ...unset } = getConfig('dev');
+    expect(intakePollEnabled).toBe(true);
+    synth(undefined, unset).hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-poller',
       State: 'DISABLED',
     });
   });

@@ -29,9 +29,8 @@ export interface SchedulerStackProps extends cdk.StackProps {
  * (10-min auto-routing) is obsolete — routing now happens inline when the
  * webhook cleans each order, so it is intentionally not recreated.
  *
- * Created **DISABLED**: the poller's OrderDesk logic is still a skeleton, so the
- * schedule ships off and is flipped on (console/CLI) once credentials are seeded
- * and the poll logic is filled in. EventBridge Scheduler is free at this volume
+ * The poll schedule is off unless the environment sets `intakePollEnabled`
+ * (dev does, since 2026-09-29; prod does not). EventBridge Scheduler is free at this volume
  * (14M invocations/mo free) => $0. Uses the `scheduler.amazonaws.com` principal
  * (distinct from the classic EventBridge Rules role), so the L2 construct
  * provisions a dedicated least-privilege execution role scoped to invoking the
@@ -57,15 +56,14 @@ export class SchedulerStack extends cdk.Stack {
       target: new targets.LambdaInvoke(pollerFn, {
         retryAttempts: 2,
       }),
-      // Polling is the primary intake, but it ships OFF: enabling it starts
-      // auto-processing REAL QTS orders straight to production (FTP/Drive) and
-      // emailing real customers. Flip to ENABLED only as a deliberate go-live.
-      enabled: false,
+      // On, this processes REAL QTS orders. Whether they then reach OrderDesk,
+      // a customer or a facility is up to the trial switches, not this.
+      enabled: config.intakePollEnabled ?? false,
     });
 
     new cdk.CfnOutput(this, 'PollerScheduleName', {
       value: this.pollerSchedule.scheduleName,
-      description: 'DISABLED by default — enable after seeding OrderDesk credentials',
+      description: config.intakePollEnabled ? 'ENABLED (intakePollEnabled)' : 'DISABLED (intakePollEnabled unset)',
     });
 
     // Demo feed — ENABLED. Injects synthetic DEMO-* orders into the real

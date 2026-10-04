@@ -64,7 +64,7 @@ function ecsTemplate(context?: Record<string, unknown>) {
   return Template.fromStack(stack);
 }
 
-function schedulerTemplate() {
+function schedulerTemplate(cfg = config) {
   const app = new cdk.App();
   const deps = new cdk.Stack(app, 'deps', { env });
   const fn = (id: string) =>
@@ -73,9 +73,9 @@ function schedulerTemplate() {
       handler: 'index.handler',
       code: lambda.Code.fromInline('exports.handler = async () => ({});'),
     });
-  const stack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
+  const stack = new SchedulerStack(app, `${cfg.prefix}-scheduler`, {
     env,
-    config,
+    config: cfg,
     pollerFn: fn('Poller'),
     demoFeederFn: fn('DemoFeeder'),
   });
@@ -115,22 +115,25 @@ describe('go-live switches are all off', () => {
     }
   });
 
-  test('the real poll schedule is DISABLED — no real order enters on its own', () => {
-    const schedules = Object.values(schedulerTemplate().findResources('AWS::Scheduler::Schedule'));
-    const poller = schedules.find((s) => s.Properties.Name === 'sb-dev-poller')!;
-    expect(poller).toBeDefined();
-    expect(poller.Properties.State).toBe('DISABLED');
+  test('the real poll runs in dev only — Kai turned it on, 2026-09-29', () => {
+    // Real QTS orders enter the pipeline in dev. That is safe ONLY because the
+    // switches above hold everything they could touch outside it: OrderDesk,
+    // customers, facilities. Prod has nothing held yet, so it stays off.
+    const poller = (cfg: ReturnType<typeof getConfig>) =>
+      Object.values(schedulerTemplate(cfg).findResources('AWS::Scheduler::Schedule'))
+        .find((s) => s.Properties.Name === `${cfg.prefix}-poller`)!;
+    expect(poller(config).Properties.State).toBe('ENABLED');
+    expect(poller(getConfig('prod')).Properties.State).toBe('DISABLED');
   });
 
-  test('the schedules that ARE enabled cannot touch a real order', () => {
-    // The mirror is read-only and the demo feeder only makes DEMO-* orders, so
-    // both are safe to leave running — but only those two.
+  test('nothing else is scheduled to run', () => {
+    // The mirror is read-only and the demo feeder only makes DEMO-* orders.
     const schedules = Object.values(schedulerTemplate().findResources('AWS::Scheduler::Schedule'));
     const enabled = schedules
       .filter((s) => s.Properties.State === 'ENABLED')
       .map((s) => s.Properties.Name)
       .sort();
-    expect(enabled).toEqual(['sb-dev-demo-feed', 'sb-dev-mirror-sync']);
+    expect(enabled).toEqual(['sb-dev-demo-feed', 'sb-dev-mirror-sync', 'sb-dev-poller']);
   });
 
   test('prod inherits the same holds — a prod deploy is not a way around this', () => {

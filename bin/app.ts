@@ -220,15 +220,15 @@ const observabilityStack = new ObservabilityStack(app, `${config.prefix}-observa
   description: `StickersBanners observability (${config.env})`,
 });
 
-// Scheduling (Week 10): EventBridge Scheduler fallback poll. Ships DISABLED
-// (poller logic is still a skeleton); flip on after seeding credentials. $0.
+// Scheduling (Week 10): EventBridge Scheduler intake poll. On/off per
+// environment via `intakePollEnabled` (lib/config/environments.ts). $0.
 const schedulerStack = new SchedulerStack(app, `${config.prefix}-scheduler`, {
   env,
   config,
   pollerFn: computeStack.poller,
   intervalMinutes: 1, // primary intake — poll the QTS folder every minute (EventBridge floor);
   // at 5 min, Linh's program took 23 Shopify orders on 2026-10-02 before we saw them
-  // Demo feed is ENABLED (synthetic DEMO-* orders only); real poll stays OFF.
+  // Demo feed is ENABLED (synthetic DEMO-* orders only).
   demoFeederFn: computeStack.demoFeeder,
   demoIntervalMinutes: 10,
   mirrorIntervalMinutes: 1, // display-only real-order sync (EventBridge floor is 1 min)

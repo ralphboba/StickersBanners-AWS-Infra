@@ -49,6 +49,7 @@ describe('ApiStack', () => {
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
+      'POST /orders/{name}/size',
       'POST /proof/approve',
       'POST /webhook/orderdesk',
     ]);

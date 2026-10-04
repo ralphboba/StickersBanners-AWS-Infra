@@ -30,6 +30,11 @@ const environments: Record<DeployEnv, EnvironmentConfig> = {
       Environment: 'dev',
       ManagedBy: 'CDK',
     },
+    // Kai turned the poller on in the console on 2026-09-29 for image
+    // processing only, and on 2026-10-04 asked for the code to match, so a
+    // scheduler deploy no longer turns it back off. OrderDesk writes, Zendesk
+    // sends and production transfer stay held (test/safety-switches.test.ts).
+    intakePollEnabled: true,
   },
   prod: {
     env: 'prod',
