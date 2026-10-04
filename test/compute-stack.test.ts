@@ -5,7 +5,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { getConfig } from '../lib/config/environments';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string) {
+function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string, shippingChangeLive?: boolean) {
   const app = new cdk.App();
   const config = getConfig(envName);
   // Dependencies live in their own stack (mirrors the real app wiring).
@@ -26,6 +26,7 @@ function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: strin
     intakeQueue,
     notifyQueue,
     shippingChangeTestOrders,
+    shippingChangeLive,
   });
   return Template.fromStack(stack);
 }
@@ -83,6 +84,24 @@ describe('ComputeStack', () => {
       expect(fn.Properties.Environment?.Variables?.WRITE_ONLY_ORDERS).toBeUndefined();
     }
     expect(() => synth('dev', '*')).toThrow(/order names/);
+  });
+
+  test('live arms the shipping-change writes for every order, only explicitly, never with a test list', () => {
+    const fns = Object.values(synth('dev', undefined, true).findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+    expect(fns.length).toBe(3);
+    for (const fn of fns) {
+      const v = fn.Properties.Environment.Variables;
+      expect(v.SHOPIFY_WRITES).toBe('enabled');
+      expect(v.ORDERDESK_UPGRADE_WRITES).toBe('enabled');
+      expect(v.WRITE_ONLY_ORDERS).toBeUndefined();
+    }
+    // the other write switches and the read-only page are untouched
+    for (const fn of Object.values(synth('dev', undefined, true).findResources('AWS::Lambda::Function'))) {
+      expect(fn.Properties.Environment?.Variables?.ORDERDESK_WRITES ?? 'disabled').toBe('disabled');
+      if (fn.Properties.FunctionName === 'sb-dev-order-status-api') expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBeUndefined();
+    }
+    expect(() => synth('dev', 'S64262', true)).toThrow(/exclusive/);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {

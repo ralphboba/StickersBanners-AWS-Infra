@@ -33,6 +33,15 @@ export interface ComputeStackProps extends cdk.StackProps {
    * both switches off, which is the default and the only go-live-safe state.
    */
   readonly shippingChangeTestOrders?: string;
+  /**
+   * Customer shipping change LIVE for every order (Kai, 2026-10-04: "실제로
+   * 오더를 했을때 오더 정보 이메일 보내는거 빼고 다 켜놓고 싶어"): SHOPIFY_WRITES and
+   * ORDERDESK_UPGRADE_WRITES enabled with no order list. Only from
+   * `--context shippingChange=live`; never together with a test list. The
+   * entry point (the confirmation email's button) is a Shopify template, not
+   * this switch.
+   */
+  readonly shippingChangeLive?: boolean;
   /** Who gets the daily shipping-upgrade count by email (Kai only). */
   readonly upgradeReportEmail?: string;
 }
@@ -219,12 +228,18 @@ export class ComputeStack extends cdk.Stack {
     if (testOrders.some((o) => !/^S\d+$/.test(o))) {
       throw new Error(`shippingChangeTestOrders must be order names like S64262, got "${props.shippingChangeTestOrders}"`);
     }
+    const live = props.shippingChangeLive === true;
+    if (live && testOrders.length) {
+      throw new Error('shippingChangeLive and shippingChangeTestOrders are exclusive: live already covers every order');
+    }
+    const armed = live || testOrders.length > 0;
     const changeEnv: Record<string, string> = {
       JOBS_TABLE: jobsTable.tableName,
       SB_ENV: config.env,
-      // Armed only together with a non-empty test list, never on their own.
-      SHOPIFY_WRITES: testOrders.length ? 'enabled' : 'disabled',
-      ORDERDESK_UPGRADE_WRITES: testOrders.length ? 'enabled' : 'disabled',
+      // Armed by a test list (those orders only) or by the explicit live
+      // switch (every order); otherwise off.
+      SHOPIFY_WRITES: armed ? 'enabled' : 'disabled',
+      ORDERDESK_UPGRADE_WRITES: armed ? 'enabled' : 'disabled',
       ...(testOrders.length ? { WRITE_ONLY_ORDERS: testOrders.join(',') } : {}),
     };
     this.orderChangeRequest = new lambda.Function(this, 'OrderChangeRequest', {

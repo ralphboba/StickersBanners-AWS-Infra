@@ -49,6 +49,13 @@ authority: **Linh** (legacy author).
   - `ORDERDESK_UPGRADE_WRITES` — the customer shipping upgrade's `shipping_method`
     PUT. Runs only *after* the customer has paid.
   - `SHOPIFY_WRITES` — invoicing / order editing. **This one moves real money.**
+  - Customer shipping change (`ORDERDESK_UPGRADE_WRITES` + `SHOPIFY_WRITES` on
+    the change functions only): `--context testOrders=S64262` arms them for the
+    listed orders; `--context shippingChange=live` arms them for **every** order
+    (Kai approved, 2026-10-04: everything on except the confirmation email —
+    the "Manage my order" button in Shopify's template stays S64262-only, so
+    customers have no way in yet). Neither context = off. `ORDERDESK_WRITES`
+    is not affected by either.
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed
