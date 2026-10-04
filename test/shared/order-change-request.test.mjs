@@ -122,13 +122,23 @@ describe('Send me the invoice', () => {
 describe('Shopify payment page', () => {
   const PAY = 'https://stickersbanners.com/94758830375/order_payment/7504207282471?secret=x';
 
-  test('when Shopify gives a payment page, the customer is sent there and no invoice is emailed', async () => {
+  test('the customer is sent to the payment page AND emailed Shopify\'s invoice for the edited order', async () => {
     const { handler, log } = build({ commit: { committed: true, outstandingCents: 3621, paymentUrl: PAY } });
     const { status, body } = read(await post(handler, OK));
     assert.equal(status, 200);
-    assert.deepEqual(body, { requested: true, total: 36.21, paymentUrl: PAY });
-    assert.equal(log.invoices.length, 0);
+    assert.deepEqual(body, { requested: true, total: 36.21, paymentUrl: PAY, invoiceSent: true });
+    assert.equal(log.invoices.length, 1);
+    assert.equal(log.invoices[0].orderId, 'gid://shopify/Order/1');
+    assert.match(log.invoices[0].customMessage, /FedEx 1-Day/);
     assert.equal(log.saved.at(-1).paymentUrl, PAY);
+  });
+
+  test('a failed invoice email never stops the customer reaching the payment page', async () => {
+    const { handler } = build({ commit: { committed: true, outstandingCents: 3621, paymentUrl: PAY }, invoice: { sent: false, error: 'invoice_failed' } });
+    const { status, body } = read(await post(handler, OK));
+    assert.equal(status, 200);
+    assert.equal(body.paymentUrl, PAY);
+    assert.equal(body.invoiceSent, false);
   });
 
   test('a second click on a pending change goes back to the same payment page', async () => {
@@ -267,7 +277,7 @@ describe('an unpaid choice can still be changed', () => {
     const { handler, log } = build();
     const r = await post(handler, SWITCH);
     assert.equal(r.statusCode, 200);
-    assert.deepEqual(JSON.parse(r.body), { requested: true, total: 17.38, paymentUrl: PAY });
+    assert.deepEqual(JSON.parse(r.body), { requested: true, total: 17.38, paymentUrl: PAY, invoiceSent: true });
     assert.deepEqual(log.order, ['save', 'commit', 'save']);
     assert.equal(log.quotes[0].order.shippingLines[0].title, 'FedEx Ground');   // the order before the unpaid change
     assert.equal(log.quotes[0].expectedFrom, 'FedEx Ground');

@@ -481,16 +481,25 @@ async function requestChange(deps, authorised, event) {
       committedOutstandingCents: committed.outstandingCents, replaces: ref });
     return json(502, { error: 'commit_mismatch' });
   }
-  await save({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}), replaces: ref, confirmed: true });
+  // Shopify's invoice for the edited order goes to the customer now, while
+  // there is a balance (Shopify refuses one for a paid order): the new
+  // service, the amount and a Pay now link, in case they close the payment
+  // page (Kai, 2026-10-04). Sent alongside the record write; a failed email
+  // never stops the customer reaching the payment page.
+  const [, invoice] = await Promise.all([
+    save({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}), replaces: ref, confirmed: true }),
+    deps.sendInvoice({ orderName, orderId: q.edit.orderId,
+      customMessage: `Your shipping is changing to ${q.to}. Here is your updated invoice — pay the balance to confirm the change.` })
+      .catch((err) => ({ sent: false, error: String(err) })),
+  ]);
+  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
   t.done();
 
   // Shopify's own payment page for the balance: the customer pays exactly as
-  // they did at checkout, nothing of ours handles the card. Only if Shopify
-  // gave no such page do we fall back to emailing the invoice.
+  // they did at checkout, nothing of ours handles the card.
   if (committed.paymentUrl) {
-    return json(200, { requested: true, total: centsToDollars(q.totalCents), paymentUrl: committed.paymentUrl });
+    return json(200, { requested: true, total: centsToDollars(q.totalCents), paymentUrl: committed.paymentUrl,
+      invoiceSent: Boolean(invoice.sent) });
   }
-  const invoice = await deps.sendInvoice({ orderName, orderId: q.edit.orderId });
-  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
   return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent) });
 }
