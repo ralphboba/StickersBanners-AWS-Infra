@@ -64,7 +64,8 @@ const reply = (statusCode, body) => ({ statusCode, body: JSON.stringify(body) })
  *           markAttention: (orderName: string, ref: string, reason: string) => Promise<void>,
  *           stillAllowed: (change: object) => Promise<{ allowed: boolean, reason?: string, label?: string }>,
  *           applyOrderDesk: (change: object) => Promise<object>,
- *           notify: (orderName: string, text: string, where?: { facility?: string|null }) => Promise<object> }} deps
+ *           notify: (orderName: string, text: string, where?: { facility?: string|null }) => Promise<object>,
+ *           sendInvoice?: (orderName: string, change: object) => Promise<{ sent: boolean }> }} deps
  *
  * stillAllowed may also return `facility` (GA/NJ/TX/...) from the order's
  * current Order Desk folder; notify uses it to pick the facility's Chat space.
@@ -129,6 +130,15 @@ export function makePaidHandler(deps) {
         converted: Boolean(result.converted), test: Boolean(change.test),
       }), where);
     }
-    return reply(200, { written: Boolean(result.applied), duplicate: result.skipped === 'duplicate', chat: chat.sent });
+    // The customer gets Shopify's invoice for the order as it now stands (new
+    // service, new total, paid) — Kai, 2026-10-04. Once, for the write that
+    // happened now; it never fails the webhook (Order Desk is already right).
+    let invoice = { sent: false, skipped: result.applied ? 'not_configured' : 'duplicate' };
+    if (result.applied && deps.sendInvoice) {
+      try { invoice = await deps.sendInvoice(orderName, change); } catch (err) { invoice = { sent: false, error: String(err) }; }
+      if (!invoice.sent) console.warn(JSON.stringify({ msg: 'updated invoice not sent', orderName, ref: change.ref, invoice }));
+    }
+    return reply(200, { written: Boolean(result.applied), duplicate: result.skipped === 'duplicate', chat: chat.sent,
+      invoice: Boolean(invoice.sent) });
   };
 }

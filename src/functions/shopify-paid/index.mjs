@@ -21,11 +21,14 @@ import { notifyChat } from '../../shared/gchat.mjs';
 import { chatFacilityOf } from '../../shared/orderdesk-folders.mjs';
 import { centsToDollars } from '../../shared/money.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
+import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
+import { sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
 import { makePaidHandler } from './core.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const key = (orderName) => ({ PK: `ORDER#${orderName}`, SK: 'CHANGE' });
+const shopifyCreds = makeShopifyCredentials({ getSecret });
 
 export const handler = makePaidHandler({
   // Webhooks this app subscribes to are signed with the app's Client secret.
@@ -71,6 +74,12 @@ export const handler = makePaidHandler({
       invoiceRef: change.ref, deliverTo: change.deliverTo, storeId, apiKey,
     });
   },
+  // Shopify's own invoice email, to the order's email address; behind
+  // SHOPIFY_WRITES (and WRITE_ONLY_ORDERS) like every Shopify write.
+  sendInvoice: async (orderName, change) => sendBalanceInvoice({
+    ...(await shopifyCreds()), orderName, orderId: change.shopifyOrderId,
+    customMessage: `Your shipping has been upgraded to ${change.to}. Here is your updated invoice — thank you!`,
+  }),
   notify: async (orderName, text, where = {}) => {
     const r = await notifyChat({ getUrl: (k) => getSecret('gchat', k), orderName, text, facility: where.facility });
     console.log(JSON.stringify({ msg: 'chat', orderName, sent: r.sent, skipped: r.skipped, facility: r.facility }));

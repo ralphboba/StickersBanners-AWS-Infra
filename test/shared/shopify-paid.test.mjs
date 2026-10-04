@@ -14,7 +14,7 @@ const CHANGE = { orderName: 'S64262', ref: 'CHG-1', orderDeskId: '49', from: 'Fe
   shippingCents: 1738, taxCents: 104, status: 'pending' };
 
 function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground' }, allowed = { allowed: true } } = {}) {
-  const log = { applied: [], done: [], chat: [], attention: [], where: [] };
+  const log = { applied: [], done: [], chat: [], attention: [], where: [], invoices: [] };
   const handler = makePaidHandler({
     webhookSecret: async () => SECRET,
     loadPending: async (name) => (change && name === change.orderName ? change : null),
@@ -23,6 +23,7 @@ function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground
     stillAllowed: async () => allowed,
     applyOrderDesk: async (c) => { log.applied.push(c.ref); return apply; },
     notify: async (name, text, where) => { log.chat.push(text); log.where.push(where); return { sent: true }; },
+    sendInvoice: async (name, c) => { log.invoices.push([name, c.to]); return { sent: true }; },
   });
   return { handler, log };
 }
@@ -33,7 +34,7 @@ describe('orders/paid', () => {
     const { handler, log } = harness();
     const r = await handler(event({ name: '#S64262', financial_status: 'paid' }));
     assert.equal(r.statusCode, 200);
-    assert.deepEqual(body(r), { written: true, duplicate: false, chat: true });
+    assert.deepEqual(body(r), { written: true, duplicate: false, chat: true, invoice: true });
     assert.deepEqual(log.applied, ['CHG-1']);
     assert.deepEqual(log.done, [['S64262', 'CHG-1']]);
     assert.equal(log.doneChange.to, 'FedEx 3-Days');   // the daily count's row is built from it
@@ -145,5 +146,16 @@ describe('when is an order paid?', () => {
       assert.deepEqual(log.applied, []);
       assert.deepEqual(log.chat, []);
     }
+  });
+  test('the customer gets the updated invoice once, after the write; never for a duplicate or a refusal', async () => {
+    const ok = harness();
+    await ok.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(ok.log.invoices, [['S64262', 'FedEx 3-Days']]);
+    const dup = harness({ apply: { applied: false, skipped: 'duplicate' } });
+    await dup.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(dup.log.invoices, []);
+    const late = harness({ allowed: { allowed: false, reason: 'shipping', label: 'Completed' } });
+    await late.handler(event({ name: '#S64262', financial_status: 'paid' }));
+    assert.deepEqual(late.log.invoices, []);
   });
 });

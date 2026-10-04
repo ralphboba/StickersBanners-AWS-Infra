@@ -29,6 +29,10 @@ authority: **Linh** (legacy author).
   Exception (Kai, 2026-09-28): one Google Chat line per *paid* shipping change,
   sent after the Order Desk write succeeds (`src/shared/gchat.mjs`). Webhook URL
   is a secret — SSM, never committed.
+  Exception (Kai, 2026-10-04): after that same paid change, Shopify's own invoice
+  email (`orderInvoiceSend`) to the order's address with the updated order.
+  Behind `SHOPIFY_WRITES` (+ `WRITE_ONLY_ORDERS`), once per change, never for a
+  duplicate webhook (`src/functions/shopify-paid`).
 - Intake is by **polling** the OrderDesk QTS folder (no webhook).
 
 ## Safety
