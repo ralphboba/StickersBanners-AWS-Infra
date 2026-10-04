@@ -117,7 +117,6 @@
       </div>
 
       <form id="upgrade" hidden style="margin-top:18px">
-        <p class="fine" id="pendingNote" hidden style="margin:0 0 12px 0"></p>
         <fieldset>
           <legend>Faster shipping</legend>
           <label class="opt" id="keepRow">
@@ -224,8 +223,10 @@
     var sh = data.shipping || {};
     set('current', sh.current || '—');
 
-    // An upgrade chosen but not paid: the options stay open (Kai). The chosen
-    // one is preselected and pays on Shopify's page; another one replaces it.
+    // An upgrade chosen but not paid: the same option screen as a fresh order,
+    // nothing preselected (Kai). Picking the unpaid one again goes straight to
+    // its payment page; another one replaces it (the server restores the paid
+    // service first).
     var ap = sh.awaitingPayment || null;
     if (ap && !(sh.canUpgrade && sh.upgrade)) {
       set('awaitingWhat', 'Upgrade to ' + ap.to + ' — waiting for payment');
@@ -249,17 +250,9 @@
         var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
         b.appendChild(nm); b.appendChild(sub);
         var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
-        if (ap && u.to === ap.to) { input.checked = true; sub.textContent = 'Your choice — waiting for payment'; }
         label.appendChild(input); label.appendChild(b); label.appendChild(pr);
         box.appendChild(label);
       });
-      if (ap) {
-        // Nothing to "keep": the order already carries the unpaid choice.
-        $('keepRow').hidden = true;
-        $('keepRow').querySelector('input').checked = false;
-        set('pendingNote', 'You picked ' + ap.to + ' but haven’t paid yet. Pay for it below, or choose a different speed.');
-        $('pendingNote').hidden = false;
-      }
       $('upgrade').hidden = false;
 
       var chosen = function () {
@@ -271,9 +264,7 @@
         var u = chosen();
         set('total', money(u ? u.total : 0));
         $('send').disabled = !u;
-        if (u && ap && u.to === ap.to) set('send', 'Pay ' + money(u.total));
-        else if (u && ap) set('send', 'Switch to ' + u.to + ' — pay ' + money(u.total));
-        else set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
+        set('send', u ? 'Pay ' + money(u.total) + ' and upgrade' : 'Select an upgrade above');
       };
       Array.prototype.forEach.call(document.querySelectorAll('input[name="svc"]'), function (el) { el.addEventListener('change', update); });
       update();

@@ -83,13 +83,15 @@ describe('Send me the invoice', () => {
     assert.equal(log.invoices.length, 0);
   });
 
-  test('a second click is harmless; a different service while one is pending is refused', async () => {
+  test('a second click is harmless; a different service is a switch (covered below), never a silent second edit', async () => {
     const pending = { status: 'pending', to: 'FedEx 1-Day', shippingCents: 3396, taxCents: 225 };
     const same = build({ pending });
     assert.deepEqual(read(await post(same.handler, OK)).body, { requested: true, already: true, total: 36.21 });
     assert.equal(same.log.commits.length, 0);
+    // this harness has no stageEdit, so the switch cannot run: refused, nothing committed
     const other = build({ pending: { ...pending, to: 'FedEx 2-Days' } });
-    assert.equal((await post(other.handler, OK)).statusCode, 409);
+    assert.equal((await post(other.handler, OK)).statusCode, 503);
+    assert.equal(other.log.commits.length, 0);
   });
 
   test('a service the page does not offer is refused before Shopify is asked', async () => {
@@ -182,17 +184,20 @@ describe('every faster service', () => {
 describe('an unpaid choice can still be changed', () => {
   const GROUND_ROW = { ...ROW, shipping: { ...ROW.shipping, method: 'FedEx Ground' } };
   const PAY = 'https://stickersbanners.com/1/order_payment/2?secret=x';
-  // Shopify after the customer picked 1-Day and left the payment page.
-  const SHOPIFY = { name: 'S1', id: 'gid://shopify/Order/1', outstandingCents: 7355, currentTotalCents: 10000, paymentUrl: PAY,
+  // Shopify after the customer picked 1-Day and left the payment page (S64262's real figures).
+  const SHOPIFY = { name: 'S1', id: 'gid://shopify/Order/1', outstandingCents: 7355, currentTotalCents: 9642, paymentUrl: PAY,
     shippingLines: [{ id: 'gid://shopify/ShippingLine/9', title: 'FedEx 1-Day', originalCents: 8925, discountedCents: 8925 }] };
+  const RESTORED = { ...SHOPIFY, outstandingCents: 0, currentTotalCents: 2287,
+    shippingLines: [{ id: 'gid://shopify/ShippingLine/10', title: 'FedEx Ground', originalCents: 1570, discountedCents: 1570 }] };
   const PENDING = { status: 'pending', ref: 'CHG-S1-1', from: 'FedEx Ground', to: 'FedEx 1-Day', shippingCents: 7355, taxCents: 0,
     paymentUrl: PAY, restore: { title: 'FedEx Ground', priceCents: 1570 } };
   const priced = { 'FedEx 3-Days': 1738, 'FedEx 2-Days': 3386, 'FedEx 1-Day': 7355 };
-  const build = ({ shopify = SHOPIFY, pending = PENDING } = {}) => {
-    const log = { quotes: [], commits: [], saved: [] };
+  const build = ({ shopify = SHOPIFY, pending = PENDING, back = { ok: true, outstandingCents: 0, calculatedOrderId: 'calc-restore' } } = {}) => {
+    const log = { quotes: [], stages: [], commits: [], saved: [] };
+    let current = shopify;
     const deps = {
       loadRow: async () => GROUND_ROW,
-      loadShopifyOrder: async () => shopify,
+      loadShopifyOrder: async () => current,
       loadPending: async () => pending,
       quote: async (a) => {
         log.quotes.push(a);
@@ -201,7 +206,12 @@ describe('an unpaid choice can still be changed', () => {
           edit: { orderId: 'gid://shopify/Order/1', calculatedOrderId: `calc-${a.to}`, restore: { title: 'FedEx Ground', priceCents: 1570 } } };
       },
       estimates: async () => null,
-      commitEdit: async (a) => { log.commits.push(a); return { committed: true, outstandingCents: priced['FedEx 3-Days'], paymentUrl: PAY }; },
+      stageEdit: async (a) => { log.stages.push(a); return back; },
+      commitEdit: async (a) => {
+        log.commits.push(a);
+        if (a.calculatedOrderId === 'calc-restore') { current = RESTORED; return { committed: true, outstandingCents: 0 }; }
+        return { committed: true, outstandingCents: priced['FedEx 3-Days'], paymentUrl: PAY };
+      },
       savePending: async (c) => { log.saved.push(c); },
       sendInvoice: async () => ({ sent: true }),
       now: () => 1790000000000,
@@ -210,30 +220,31 @@ describe('an unpaid choice can still be changed', () => {
   };
   const get = (h) => h({ requestContext: { http: { method: 'GET', path: '/my-order' } }, rawPath: '/my-order', queryStringParameters: { o: 'S1', s: URL } });
 
-  test('the page shows every option again, priced from the order before the change, and the pending one to pay', async () => {
+  test('the page shows every option again, priced from the order before the change', async () => {
     const { handler, log } = build();
     const body = JSON.parse((await get(handler)).body);
     assert.deepEqual(body.shipping.upgrades.map((u) => [u.to, u.total]), [['FedEx 3-Days', 17.38], ['FedEx 2-Days', 33.86], ['FedEx 1-Day', 73.55]]);
     assert.equal(body.shipping.canUpgrade, true);
+    assert.equal(body.shipping.current, 'FedEx Ground');
     assert.deepEqual(body.shipping.awaitingPayment, { from: 'FedEx Ground', to: 'FedEx 1-Day', total: 73.55, paymentUrl: PAY });
-    // quoted on the order with Ground put back and the balance taken off
     const o = log.quotes[0].order;
     assert.equal(log.quotes[0].expectedFrom, 'FedEx Ground');
     assert.deepEqual([o.shippingLines[0].title, o.shippingLines[0].originalCents, o.shippingLines[0].id], ['FedEx Ground', 1570, 'gid://shopify/ShippingLine/9']);
     assert.equal(o.outstandingCents, 0);
-    assert.equal(o.currentTotalCents, 10000 - 7355);
+    assert.equal(o.currentTotalCents, 9642 - 7355);
   });
 
-  test('picking a different speed replaces the unpaid edit and goes to payment for the new amount', async () => {
+  test('picking a different speed: Ground restored first, unpaid record retired, then the normal upgrade', async () => {
     const { handler, log } = build();
     const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
     assert.equal(r.statusCode, 200);
     assert.deepEqual(JSON.parse(r.body), { requested: true, total: 17.38, paymentUrl: PAY });
-    assert.equal(log.commits[0].calculatedOrderId, 'calc-FedEx 3-Days');
-    assert.match(log.commits[0].staffNote, /replaces unpaid CHG-S1-1, FedEx 1-Day/);
-    const saved = log.saved[0];
-    assert.deepEqual([saved.from, saved.to, saved.shippingCents, saved.replaces, saved.status], ['FedEx Ground', 'FedEx 3-Days', 1738, 'CHG-S1-1', 'pending']);
-    assert.deepEqual(saved.restore, { title: 'FedEx Ground', priceCents: 1570 });
+    assert.deepEqual(log.stages[0], { orderId: 'gid://shopify/Order/1', removeLineId: 'gid://shopify/ShippingLine/9', title: 'FedEx Ground', priceCents: 1570 });
+    assert.deepEqual(log.commits.map((c) => c.calculatedOrderId), ['calc-restore', 'calc-FedEx 3-Days']);
+    assert.deepEqual([log.saved[0].status, log.saved[0].replaces], ['replaced', 'CHG-S1-1']);
+    assert.equal(log.quotes[0].order, RESTORED);   // priced on the clean, fully paid order
+    const saved = log.saved[1];
+    assert.deepEqual([saved.from, saved.to, saved.shippingCents, saved.status], ['FedEx Ground', 'FedEx 3-Days', 1738, 'pending']);
   });
 
   test('the same speed again just returns the payment page', async () => {
@@ -256,6 +267,14 @@ describe('an unpaid choice can still be changed', () => {
     const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
     assert.equal(r.statusCode, 422);
     assert.equal(log.commits.length, 0);
+  });
+
+  test('restoring would not clear the balance: nothing committed', async () => {
+    const { handler, log } = build({ back: { ok: true, outstandingCents: 5, calculatedOrderId: 'calc-restore' } });
+    const r = await post(handler, { o: 'S1', s: URL, service: 'FedEx 3-Days', expectedTotal: 17.38 });
+    assert.equal(r.statusCode, 502);
+    assert.equal(log.commits.length, 0);
+    assert.equal(log.saved.length, 0);
   });
 });
 

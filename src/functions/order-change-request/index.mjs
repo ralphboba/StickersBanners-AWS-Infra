@@ -12,7 +12,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
-import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
+import { commitShippingChange, sendBalanceInvoice, stageShippingChange } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
 
@@ -36,7 +36,7 @@ export const handler = makeHandler({
   // One open change per order: a second pending record is refused by the
   // table, not just by the route's earlier check.
   savePending: async (change) => {
-    // A switch replaces the unpaid record it was priced against, and only that
+    // Retiring an unpaid record (a switch) only if it is still that unpaid
     // one: if it was paid or replaced meanwhile, the put is refused.
     await ddb.send(new PutCommand({
       TableName: JOBS_TABLE,
@@ -55,6 +55,7 @@ export const handler = makeHandler({
         .catch((err) => console.warn(JSON.stringify({ msg: 'upgrade log failed', err: String(err) })));
     }
   },
+  stageEdit: async (args) => stageShippingChange({ ...(await creds()), ...args }),
   commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
