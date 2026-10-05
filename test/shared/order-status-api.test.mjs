@@ -61,33 +61,41 @@ const ADDRESS = { address1: '1 Peachtree St', city: 'Atlanta', province: 'ga', z
 beforeEach(() => fake(pickupRow()));
 
 describe('GET /my-order for a pickup order', () => {
-  // Kai: a pickup order gets the same option list as any order — the delivery
-  // services, each priced by Shopify on the address already on the order. No
-  // address form, no "plus tax" estimates.
-  test('lists the four delivery services as options, each priced by Shopify, tax included', async () => {
-    fake(pickupRow(), { quoteResult: undefined });
+  // Kai (2026-10-05): a pickup customer enters the delivery address first,
+  // then sees the services priced for it, like checkout. Nothing is priced
+  // before there is an address.
+  test('asks for the address first: the four services named, nothing priced, Shopify not asked', async () => {
     const { status, body } = read(await get('S70001'));
     assert.equal(status, 200);
-    assert.equal(body.shipping.canUpgrade, true);
     assert.equal(body.shipping.pickup, true);
-    assert.equal(body.shipping.delivery, null);
-    assert.equal(body.shipping.reason, null);
-    assert.deepEqual(body.shipping.upgrades.map((u) => u.to), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
-    for (const u of body.shipping.upgrades) assert.equal(u.final, true);
-  });
-
-  test('priced on the order (no typed address), never from estimates', async () => {
-    await get('S70001');
-    assert.equal(calls.quote.length, 4);
-    assert.ok(calls.quote.every((q) => q.deliverTo === undefined && q.expectedFrom === 'Georgia Warehouse'));
-    assert.equal(calls.estimates.length, 0);
-  });
-
-  test('no address on the Shopify order: nothing offered, a plain reason', async () => {
-    fake(pickupRow(), { quoteResult: { ok: false, reason: 'no_address' } });
-    const { body } = read(await get('S70001'));
+    assert.equal(body.shipping.needsAddress, true);
     assert.equal(body.shipping.canUpgrade, false);
-    assert.ok(body.shipping.reason);
+    assert.equal(body.shipping.reason, null);
+    assert.deepEqual(body.shipping.delivery.options.map((o) => o.service), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
+    assert.equal(calls.quote.length, 0);
+    assert.equal(calls.estimates.length, 0);
+    assert.equal(calls.shopify, 0);
+  });
+
+  test('with an address: every service priced at it by Shopify, tax included', async () => {
+    const { status, body } = read(await post({ o: 'S70001', s: URL, address: ADDRESS }));
+    assert.equal(status, 200);
+    assert.deepEqual(body.options.map((o) => o.to), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
+    for (const o of body.options) {
+      assert.equal(o.final, true);
+      assert.equal(o.total, o.shipping + o.tax);
+    }
+    assert.equal(calls.quote.length, 4);
+    assert.ok(calls.quote.every((q) => q.deliverTo.province === 'GA' && q.deliverTo.zip === '30303'));
+    assert.ok(calls.quote.every((q) => q.rateCache === calls.quote[0].rateCache));
+  });
+
+  test('an address it cannot ship to is refused before Shopify is asked', async () => {
+    const po = read(await post({ o: 'S70001', s: URL, address: { ...ADDRESS, address1: 'PO Box 12' } }));
+    assert.equal(po.status, 422);
+    const ak = read(await post({ o: 'S70001', s: URL, address: { ...ADDRESS, province: 'AK' } }));
+    assert.equal(ak.status, 422);
+    assert.equal(calls.quote.length, 0);
   });
 
   test('says nothing internal: no folder id, no facility', async () => {

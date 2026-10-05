@@ -164,3 +164,57 @@ export async function sendBalanceInvoice({ shop, token, orderName, orderId, to, 
   if ((r?.userErrors ?? []).length) return { sent: false, error: 'invoice_failed', userErrors: r.userErrors };
   return { sent: true };
 }
+
+const ORDER_NAMES = `
+  query OrderNames($id: ID!) {
+    order(id: $id) {
+      shippingAddress { firstName lastName company phone }
+      billingAddress { firstName lastName company phone }
+      customer { firstName lastName phone }
+    }
+  }
+`;
+
+const SET_SHIPPING_ADDRESS = `
+  mutation SetShippingAddress($input: OrderInput!) {
+    orderUpdate(input: $input) {
+      order { id shippingAddress { address1 city provinceCode zip countryCodeV2 } }
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * Put the delivery address the customer typed on a pickup order, so the order
+ * edit that follows taxes the shipping where it will be delivered (Shopify
+ * taxes an order at its shipping address). The customer's name, company and
+ * phone are kept from the order. SHOPIFY_WRITES only.
+ *
+ * @param {{ address1: string, address2?: string, city: string, province: string, zip: string, country?: string }} p.address
+ * @returns {Promise<{ updated: boolean, skipped?: string, error?: string }>}
+ */
+export async function setOrderShippingAddress({ shop, token, orderName, orderId, address, fetchImpl }) {
+  const blocked = blockedReason(orderName, shopifyWritesEnabled);
+  if (blocked) return { updated: false, ...blocked };
+  const names = (await shopifyGraphQL({ shop, token, fetchImpl, query: ORDER_NAMES, variables: { id: orderId } }))?.data?.order;
+  const who = names?.shippingAddress ?? names?.billingAddress ?? names?.customer ?? {};
+  const input = {
+    id: orderId,
+    shippingAddress: {
+      ...(who.firstName ? { firstName: who.firstName } : {}),
+      ...(who.lastName ? { lastName: who.lastName } : {}),
+      ...(who.company ? { company: who.company } : {}),
+      ...(who.phone ? { phone: who.phone } : {}),
+      address1: address.address1,
+      ...(address.address2 ? { address2: address.address2 } : {}),
+      city: address.city,
+      provinceCode: address.province,
+      zip: address.zip,
+      countryCode: address.country || 'US',
+    },
+  };
+  const res = await shopifyGraphQL({ shop, token, fetchImpl, write: true, query: SET_SHIPPING_ADDRESS, variables: { input } });
+  const r = res?.data?.orderUpdate;
+  if ((r?.userErrors ?? []).length || !r?.order) return { updated: false, error: 'address_update_failed', userErrors: r?.userErrors };
+  return { updated: true };
+}

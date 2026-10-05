@@ -392,3 +392,17 @@ describe('checkoutRates', () => {
     assert.equal(called, false);
   });
 });
+
+describe('setting a pickup order\'s delivery address', () => {
+  test('behind SHOPIFY_WRITES: switched off, Shopify is not called', async () => {
+    const { setOrderShippingAddress } = await import('../../src/shared/shopify-order-edit.mjs');
+    const before = process.env.SHOPIFY_WRITES;
+    process.env.SHOPIFY_WRITES = 'disabled';
+    let called = 0;
+    const r = await setOrderShippingAddress({ ...ARGS, orderName: 'S1', orderId: 'gid://shopify/Order/1',
+      address: { address1: '1 Main', city: 'Atlanta', province: 'GA', zip: '30303' }, fetchImpl: async () => { called += 1; } });
+    process.env.SHOPIFY_WRITES = before;
+    assert.equal(r.updated, false);
+    assert.equal(called, 0);
+  });
+});

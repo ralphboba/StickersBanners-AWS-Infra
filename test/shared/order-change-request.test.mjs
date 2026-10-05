@@ -10,11 +10,11 @@ const ROW = { orderName: 'S1', folderId: '73068', orderStatusUrl: URL, source: {
 const QUOTE = { ok: true, from: 'FedEx 2-Days', to: 'FedEx 1-Day', shippingCents: 3396, taxCents: 225, totalCents: 3621,
   edit: { orderId: 'gid://shopify/Order/1', calculatedOrderId: 'gid://shopify/CalculatedOrder/9', restore: { title: 'FedEx 2-Days', priceCents: 12811 } } };
 
-function build({ row = ROW, quote = QUOTE, pending = null, commit = { committed: true, outstandingCents: 3621 }, invoice = { sent: true }, writes = true } = {}) {
+function build({ extra = {}, row = ROW, quote = QUOTE, pending = null, commit = { committed: true, outstandingCents: 3621 }, invoice = { sent: true }, writes = true } = {}) {
   const log = { commits: [], saved: [], invoices: [] };
   const deps = {
     loadRow: async (n) => (n === 'S1' ? row : undefined),
-    loadShopifyOrder: async () => ({ name: 'S1' }),
+    loadShopifyOrder: async () => ({ name: 'S1', id: 'gid://shopify/Order/1' }),
     quote: async () => quote,
     estimates: async () => null,
     loadPending: async () => pending,
@@ -25,6 +25,7 @@ function build({ row = ROW, quote = QUOTE, pending = null, commit = { committed:
     savePending: async (c) => { log.saved.push(c); },
     sendInvoice: async (a) => { log.invoices.push(a); return invoice; },
   });
+  Object.assign(deps, extra);
   return { handler: makeHandler(deps), log };
 }
 const post = (h, b) => h({ requestContext: { http: { method: 'POST', path: '/my-order/request' } }, rawPath: '/my-order/request', body: JSON.stringify(b) });
@@ -55,14 +56,29 @@ describe('Send me the invoice', () => {
     assert.equal(t.log.saved[0].test, true);
   });
 
-  test('a pickup converted on the order address: the record carries where Order Desk must ship', async () => {
+  test('a pickup: the typed address goes on the Shopify order first, then the edit; the record carries it', async () => {
     const PICKUP_ROW = { ...ROW, shipping: { method: 'Georgia Warehouse', state: 'GA' } };
+    const TYPED = { address1: '1 Main', city: 'Atlanta', province: 'ga', zip: '30303' };
     const TO = { address1: '1 Main', address2: '', city: 'Atlanta', province: 'GA', zip: '30303', country: 'US' };
+    const sets = [];
     const { handler, log } = build({ row: PICKUP_ROW, quote: { ...QUOTE, from: 'Georgia Warehouse', to: 'FedEx Ground', deliverTo: TO },
-      commit: { committed: true, outstandingCents: 3621 } });
-    const r = await post(handler, { ...OK, service: 'FedEx Ground' });
+      commit: { committed: true, outstandingCents: 3621 }, extra: { setShippingAddress: async (a) => { sets.push(a); return { updated: true }; } } });
+    const r = await post(handler, { ...OK, service: 'FedEx Ground', address: TYPED });
     assert.equal(r.statusCode, 200);
+    assert.equal(sets.length, 1);
+    assert.deepEqual([sets[0].address.province, sets[0].address.zip, sets[0].orderId], ['GA', '30303', 'gid://shopify/Order/1']);
+    assert.equal(log.commits.length, 1);
     assert.deepEqual(log.saved[0].deliverTo, TO);
+  });
+
+  test('a pickup without an address, or with one it cannot ship to: nothing written', async () => {
+    const PICKUP_ROW = { ...ROW, shipping: { method: 'Georgia Warehouse', state: 'GA' } };
+    const sets = [];
+    const { handler, log } = build({ row: PICKUP_ROW, extra: { setShippingAddress: async (a) => { sets.push(a); return { updated: true }; } } });
+    assert.equal((await post(handler, { ...OK, service: 'FedEx Ground' })).statusCode, 400);
+    assert.equal((await post(handler, { ...OK, service: 'FedEx Ground', address: { address1: 'PO Box 9', city: 'Atlanta', province: 'GA', zip: '30303' } })).statusCode, 422);
+    assert.equal(sets.length, 0);
+    assert.equal(log.commits.length, 0);
   });
 
   test('the balance moved since the page loaded: nothing committed, the new figure returned', async () => {

@@ -188,7 +188,8 @@ async function status(deps, authorised, event) {
       shipping: {
         current: stage.currentService ?? currentMethod,
         lite: true,
-        optionNames: offeredServices(stage),
+        // Pickup orders are priced only once the address is entered.
+        optionNames: stage.canUpgrade ? offeredServices(stage) : [],
       },
       addOns: [],
     });
@@ -239,15 +240,14 @@ async function status(deps, authorised, event) {
   // page offers nothing rather than a number we might have to refund.
   let upgrade = null;
   let refusal = null;
-  const shopifyOrder = (stage.canUpgrade || stage.canConvert)
-    ? await deps.loadShopifyOrder(orderName)
-    : null;
+  const shopifyOrder = stage.canUpgrade ? await deps.loadShopifyOrder(orderName) : null;
 
-  // One option list for every order: faster services for a shipped order,
-  // delivery services for a pickup (on the address already on the order).
-  // No address form (Kai).
+  // A shipped order: every faster service, priced now. A pickup order: the
+  // customer enters the delivery address first and THEN sees the services
+  // priced for it, the way checkout does (Kai, 2026-10-05) — nothing is priced
+  // before there is an address (POST /my-order/quote).
   const upgrades = [];
-  const services = offeredServices(stage);
+  const services = stage.canUpgrade ? offeredServices(stage) : [];
   if (services.length) {
     t.mark('shopifyOrder');
     const priced = await quoteUpgrades(deps, orderName, services, shopifyOrder, currentMethod);
@@ -257,7 +257,7 @@ async function status(deps, authorised, event) {
     upgrade = upgrades[0] ?? null;
     if (upgrade) refusal = null;
   }
-  const delivery = null;
+  const delivery = stage.canConvert ? { needsAddress: true, options: stage.convertTo.map((service) => ({ service })) } : null;
 
   const offering = Boolean(upgrade || delivery);
   t.done();
@@ -274,6 +274,7 @@ async function status(deps, authorised, event) {
       upgrade,
       delivery,
       pickup: stage.canConvert === true,
+      needsAddress: Boolean(delivery),
     },
     addOns: [], // pending the item and price list
   });
@@ -284,6 +285,26 @@ async function status(deps, authorised, event) {
 // READ ONLY like everything else in this function: draftOrderCalculate prices
 // a draft without creating it, and nothing is written anywhere.
 const ADDRESS_FIELDS = ['address1', 'address2', 'city', 'province', 'zip', 'country'];
+
+// The delivery address a pickup customer typed: complete, US, not a PO box,
+// not a place the store does not ship to. Same rules and wording as for an
+// order already shipping.
+function checkDeliveryAddress(raw) {
+  const a = raw ?? {};
+  const address = Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, String(a[k] ?? '').trim()]));
+  address.province = address.province.toUpperCase();
+  address.country = (address.country || 'US').toUpperCase();
+  if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
+    return { response: json(400, { error: 'address_incomplete' }) };
+  }
+  // The store's rates cover one Domestic (US) zone. Nothing else has a price.
+  if (address.country !== 'US') return { response: json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us }) };
+  if (isNoShipDestination({ state: address.province, country: address.country })) {
+    return { response: json(422, { error: 'destination', reason: BLOCKED_COPY.destination }) };
+  }
+  if (isPoBox(address.address1, address.address2)) return { response: json(422, { error: 'po_box', reason: BLOCKED_COPY.po_box }) };
+  return { address };
+}
 
 async function quoteDelivery(deps, authorised, event) {
   let body;
@@ -304,28 +325,34 @@ async function quoteDelivery(deps, authorised, event) {
     return json(409, { error: 'not_convertible', reason: BLOCKED_COPY[stage.blockedBy] ?? null });
   }
 
-  const service = String(body.service ?? '');
-  if (!stage.convertTo.includes(service)) return json(400, { error: 'service_not_offered' });
+  const service = body.service === undefined ? null : String(body.service);
+  if (service !== null && !stage.convertTo.includes(service)) return json(400, { error: 'service_not_offered' });
 
-  const a = body.address ?? {};
-  const address = Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, String(a[k] ?? '').trim()]));
-  address.province = address.province.toUpperCase();
-  address.country = (address.country || 'US').toUpperCase();
-  if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
-    return json(400, { error: 'address_incomplete' });
-  }
-  // The store's rates cover one Domestic (US) zone. Nothing else has a price.
-  if (address.country !== 'US') {
-    return json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us });
-  }
+  const checked = checkDeliveryAddress(body.address);
+  if (checked.response) return checked.response;
+  const { address } = checked;
 
-  // The destination rules that could not be judged on a pickup order can be
-  // judged now. Same rules, same wording, as for an order already shipping.
-  if (isNoShipDestination({ state: address.province, country: address.country })) {
-    return json(422, { error: 'destination', reason: BLOCKED_COPY.destination });
-  }
-  if (isPoBox(address.address1, address.address2)) {
-    return json(422, { error: 'po_box', reason: BLOCKED_COPY.po_box });
+  // No service named: every delivery service, priced at this address with
+  // Shopify's tax — what checkout would have shown (Kai, 2026-10-05).
+  if (service === null) {
+    const order = await deps.loadShopifyOrder(orderName);
+    const rateCache = new Map();
+    const results = await Promise.all(stage.convertTo.map((to) => deps.quote({
+      order, to, expectedFrom: row.shipping?.method ?? null, deliverTo: address, rateCache })));
+    const options = [];
+    for (const q of results) {
+      if (q.ok) {
+        options.push({ to: q.to, shipping: centsToDollars(q.shippingCents), tax: centsToDollars(q.taxCents),
+          total: centsToDollars(q.totalCents), final: true });
+        continue;
+      }
+      logRefusal(orderName, q.reason);
+      if (q.reason !== 'service_unavailable') {
+        return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+      }
+    }
+    if (!options.length) return json(422, { error: 'service_unavailable', reason: SERVICE_UNAVAILABLE_COPY });
+    return json(200, { options });
   }
 
   const order = await deps.loadShopifyOrder(orderName);
@@ -392,7 +419,7 @@ async function requestChange(deps, authorised, event) {
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
 
   const t = timer('POST', orderName);
-  const order = await deps.loadShopifyOrder(orderName);
+  let order = await deps.loadShopifyOrder(orderName);
   t.mark('shopifyOrder');
   const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
   // A different speed while the first choice is unpaid: Shopify still carries
@@ -401,6 +428,23 @@ async function requestChange(deps, authorised, event) {
   // ONE commit and the balance becomes the one for the new choice. A pending
   // record Shopify never received (no balance, original line still there) is
   // simply superseded. Already paid (webhook not yet in) is not switchable.
+  // A pickup becoming a delivery: the customer typed the address on the page.
+  // It goes on the Shopify order first, so the order edit below taxes the
+  // shipping where it will be delivered; what the page showed came from the
+  // same address. (An unpaid pickup change already put it there.)
+  if (stage.canConvert && existing?.status !== 'pending') {
+    if (!deps.setShippingAddress) return json(503, { error: 'not_available' });
+    const checked = checkDeliveryAddress(body.address);
+    if (checked.response) return checked.response;
+    const set = await deps.setShippingAddress({ orderName, orderId: order?.id, address: checked.address });
+    if (!set.updated) {
+      if (set.skipped) return json(503, { error: 'not_available' });
+      console.error(JSON.stringify({ msg: 'shipping address not set', orderName, set }));
+      return json(502, { error: 'address_failed' });
+    }
+    order = await deps.loadShopifyOrder(orderName);
+  }
+
   let switching = false;
   if (existing?.status === 'pending') {
     if (line?.title === existing.to && order.outstandingCents > 0) switching = true;

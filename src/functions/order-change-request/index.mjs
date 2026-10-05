@@ -12,7 +12,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
-import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
+import { commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
 
@@ -58,6 +58,7 @@ const routes = makeHandler({
     }
   },
   commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
+  setShippingAddress: async (args) => setOrderShippingAddress({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
 });
