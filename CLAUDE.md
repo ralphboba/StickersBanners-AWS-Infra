@@ -40,10 +40,11 @@ authority: **Linh** (legacy author).
 - **Three write switches, all `disabled`** (`src/shared/write-gates.mjs`). Each is
   an exact match on `"enabled"`; `DEMO-*`/`ZZ-*` can never write regardless of any
   of them. Arming any one is a go-live action needing Kai's explicit approval.
-  - `ORDERDESK_WRITES` — the intake gate's folder/tag move
-    (`orderdesk-write.mjs`, ported from Linh's `updateOrderdeskDetails`). The gate
-    itself always runs and the dashboard shows what it *would* do; only the write
-    is held back. **Stays off** — routing still needs Linh's confirmation.
+  - `ORDERDESK_WRITES` — every OrderDesk folder/tag move (`orderdesk-write.mjs`,
+    ported from Linh's `updateOrderdeskDetails`): the intake gate's move in the
+    poller, and the pipeline's later moves in `orderdesk-move` (Processing →
+    Proofing → Pending Review → facility, Linh 2026-10-05). The decisions always
+    run and are recorded; only the write is held back. **Stays off.**
   - `ORDERDESK_UPGRADE_WRITES` — the customer shipping upgrade's `shipping_method`
     PUT. Runs only *after* the customer has paid.
   - `SHOPIFY_WRITES` — invoicing / order editing. **This one moves real money.**

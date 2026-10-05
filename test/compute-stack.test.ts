@@ -44,6 +44,7 @@ describe('ComputeStack', () => {
       'sb-dev-order-api',
       'sb-dev-order-change-request',
       'sb-dev-order-status-api',
+      'sb-dev-orderdesk-move',
       'sb-dev-poller',
       'sb-dev-proof-approval',
       'sb-dev-shipping-change-expiry',

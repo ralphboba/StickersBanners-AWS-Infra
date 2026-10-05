@@ -92,6 +92,12 @@ describe('go-live switches are all off', () => {
     const fns = Object.values(computeTemplate().findResources('AWS::Lambda::Function'));
     const poller = fns.find((f) => f.Properties.FunctionName === 'sb-dev-poller')!;
     expect(envOf(poller.Properties).ORDERDESK_WRITES).toBe('disabled');
+    // Every function that carries the switch, not just the ones we remember:
+    // the poller (intake move) and orderdesk-move (the moves after it).
+    const armed = fns.filter((f) => 'ORDERDESK_WRITES' in envOf(f.Properties))
+      .map((f) => [f.Properties.FunctionName, envOf(f.Properties).ORDERDESK_WRITES]);
+    expect(armed.map(([n]) => n)).toEqual(expect.arrayContaining(['sb-dev-poller', 'sb-dev-orderdesk-move']));
+    for (const [name, value] of armed) expect([name, value]).toEqual([name, 'disabled']);
   });
 
   test('ZENDESK_SENDS is disabled — no customer is emailed', () => {
@@ -153,7 +159,9 @@ describe('go-live switches are all off', () => {
     const fns = Object.values(Template.fromStack(stack).findResources('AWS::Lambda::Function'));
     const poller = fns.find((f) => f.Properties.FunctionName === 'sb-prod-poller')!;
     const notify = fns.find((f) => f.Properties.FunctionName === 'sb-prod-notify-consumer')!;
+    const mover = fns.find((f) => f.Properties.FunctionName === 'sb-prod-orderdesk-move')!;
     expect(envOf(poller.Properties).ORDERDESK_WRITES).toBe('disabled');
+    expect(envOf(mover.Properties).ORDERDESK_WRITES).toBe('disabled');
     expect(envOf(notify.Properties).ZENDESK_SENDS).toBe('disabled');
   });
 });

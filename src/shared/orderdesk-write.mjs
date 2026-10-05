@@ -48,7 +48,8 @@ export { orderDeskWritesEnabled };
  * @param {object} p
  * @param {object} p.order        the raw OrderDesk order (needed for the PUT body)
  * @param {string} p.orderName    source_id, for logging and the synthetic guard
- * @param {string} p.tag          colour name from ORDERDESK_TAGS, e.g. "Red"
+ * @param {string} [p.tag]        colour name from ORDERDESK_TAGS, e.g. "Red".
+ *                                Omitted: the order keeps the tag it has.
  * @param {string} p.folder       key from ORDERDESK_FOLDERS, e.g. "manual"
  * @param {string} p.storeId
  * @param {string} p.apiKey
@@ -59,8 +60,9 @@ export async function updateOrderDeskDetails({
   order, orderName, tag, folder, storeId, apiKey,
 }) {
   const folderId = folderIds()[folder];
-  const tagValue = ORDERDESK_TAGS[tag];
-  const intent = { folder, folderId, tag, tagValue };
+  const keepTag = tag === undefined;
+  const tagValue = keepTag ? undefined : ORDERDESK_TAGS[tag];
+  const intent = { folder, folderId, tag: keepTag ? '(unchanged)' : tag, tagValue };
 
   if (isSyntheticOrder(orderName)) {
     console.log(JSON.stringify({
@@ -78,13 +80,15 @@ export async function updateOrderDeskDetails({
   }
 
   const orderDeskId = String(order?.id ?? '');
-  if (!orderDeskId || !folderId || !tagValue) {
+  if (!orderDeskId || !folderId || (!keepTag && !tagValue)) {
     return { applied: false, error: 'missing order id, folder or tag', folderId, tagValue };
   }
 
   // Legacy keeps the existing value when the lookup misses; ours cannot miss
   // (guarded above), but the spread-then-override shape is the same.
-  const updated = { ...order, tag_name: tagValue, folder_id: folderId };
+  const updated = keepTag
+    ? { ...order, folder_id: folderId }
+    : { ...order, tag_name: tagValue, folder_id: folderId };
   const res = await orderDeskFetch(`${ORDERDESK_API}/orders/${orderDeskId}`, {
     method: 'PUT',
     headers: orderDeskHeaders(storeId, apiKey, { 'Content-Type': 'application/json' }),

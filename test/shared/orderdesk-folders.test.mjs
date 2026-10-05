@@ -28,7 +28,7 @@ describe('the registry reproduces the maps it replaced', () => {
   test('every folder the mirror showed before still maps to the same status', () => {
     const before = {
       665685: 'in_queue', 651474: 'proofing', 661019: 'needs_review',
-      653109: 'needs_review', 31358: 'awaiting_admin', 31301: 'pickup_ga',
+      653109: 'printing', 31358: 'awaiting_admin', 31301: 'pickup_ga',
       52437: 'pickup_nj', 52438: 'pickup_tx', 674908: 'pickup_nv', 82463: 'pickup_ca',
     };
     for (const [id, status] of Object.entries(before)) {
@@ -53,11 +53,12 @@ describe('integrity', () => {
   test('no duplicate keys, and no duplicate mirror statuses', () => {
     const keys = FOLDERS.filter((f) => f.key).map((f) => f.key);
     assert.equal(new Set(keys).size, keys.length);
-    // One status is shared on purpose: Missing/Corrupted File and Pending
-    // Review both show as "needs_review", as they did before the registry.
+    // Pending Review used to share "needs_review" with Missing/Corrupted File.
+    // Linh (2026-10-05): it holds APPROVED orders while the print file is made,
+    // so it shows as "printing" now and no status is shared.
     const mirrors = FOLDERS.filter((f) => f.mirror).map((f) => f.mirror);
     const shared = mirrors.filter((m, i) => mirrors.indexOf(m) !== i);
-    assert.deepEqual(shared, ['needs_review'], 'unexpected shared mirror status');
+    assert.deepEqual(shared, [], 'unexpected shared mirror status');
   });
 
   test('every row states its window explicitly, and only with a known value', () => {

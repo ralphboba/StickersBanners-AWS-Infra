@@ -207,6 +207,7 @@ const workflowStack = new WorkflowStack(app, `${config.prefix}-workflow`, {
   intakeQueue: queueStack.queues['intake'],
   ftpQueue: queueStack.queues['ftp'],
   notifyQueue: queueStack.queues['notify'],
+  orderDeskMoveFn: computeStack.orderDeskMove,
   description: `StickersBanners order pipeline (${config.env})`,
 });
 

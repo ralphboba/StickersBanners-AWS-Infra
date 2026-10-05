@@ -25,6 +25,12 @@ export interface WorkflowStackProps extends cdk.StackProps {
   readonly intakeQueue: sqs.IQueue;
   readonly ftpQueue: sqs.IQueue;
   readonly notifyQueue: sqs.IQueue;
+  /**
+   * Moves the order between OrderDesk folders as it advances (compute stack).
+   * Optional so the stack can be synthesized on its own; without it the
+   * pipeline runs exactly as before and OrderDesk never hears from it.
+   */
+  readonly orderDeskMoveFn?: lambda.IFunction;
 }
 
 /**
@@ -192,6 +198,23 @@ export class WorkflowStack extends cdk.Stack {
     const markPickup = updateStatus(this, 'MarkPickup', jobsTable, orderPk, '$.routing.pickupStatus');
     const markHeld = updateStatus(this, 'MarkHeld', jobsTable, orderPk, 'awaiting_admin');
 
+    // OrderDesk folder moves after intake (Linh, 2026-10-05): Processing ->
+    // Proofing when the proof goes out, -> Pending Review on approval, -> the
+    // facility folder once the files are there. Each one is optional to the
+    // print job: the Lambda records a failed move instead of throwing, and a
+    // crash is caught here and the order carries on. Whether anything reaches
+    // OrderDesk at all is ORDERDESK_WRITES, on the Lambda.
+    const moveTo = (id: string, step: 'proofing' | 'review' | 'facility', next: sfn.IChainable): sfn.IChainable => {
+      if (!props.orderDeskMoveFn) return next;
+      const t = new tasks.LambdaInvoke(this, id, {
+        lambdaFunction: props.orderDeskMoveFn,
+        payload: sfn.TaskInput.fromObject({ job: sfn.JsonPath.objectAt('$'), step }),
+        resultPath: sfn.JsonPath.DISCARD,
+      });
+      t.addCatch(next, { resultPath: sfn.JsonPath.DISCARD });
+      return t.next(next);
+    };
+
     // Route: only ship when a transport (facility) was resolved.
     const route = new sfn.Choice(this, 'RouteChoice')
       .when(
@@ -199,7 +222,7 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.isPresent('$.routing.transport'),
           sfn.Condition.isNotNull('$.routing.transport'),
         ),
-        transfer.next(notify).next(markPickup),
+        transfer.next(moveTo('MoveToFacility', 'facility', notify.next(markPickup))),
       )
       .otherwise(markHeld);
 
@@ -210,7 +233,9 @@ export class WorkflowStack extends cdk.Stack {
           sfn.Condition.booleanEquals('$.needsProof', true),
         ),
         // proof made -> "Proofing" folder -> ping reviewer -> wait for approval
-        proof.next(markProofing).next(notifyProofReady).next(waitForApproval).next(route),
+        proof.next(markProofing).next(notifyProofReady)
+          .next(moveTo('MoveToProofing', 'proofing', waitForApproval))
+          .next(moveTo('MoveToPendingReview', 'review', route)),
       )
       .otherwise(route);
 

@@ -228,3 +228,35 @@ a `file_redirect.aspx` URL).
   now matches Linh's file to the pixel, so the risk is low.
 - **The fold stroke** — his PPTO/PPTB samples carry no black line at the pocket
   boundary, while this code and the legacy repo both draw one. Asked, unanswered.
+
+## 2026-10-05 — where his program moves an order after intake
+
+Asked via Kai after the OrderDesk rule screens showed conditions but not
+actions. Quoted, then what we did.
+
+- **After the customer approves.** "It sent to Pending review and then the
+  python bot generate the final PR and then send those to productions
+  accordingly." → Proofing → **Pending Review** (653109) → the facility folder.
+  Pending Review holds *approved* orders while the print file is made; it is not
+  a "needs a person" folder. The dashboard mirror showed it as Needs Review and
+  now shows it as Printing.
+- **While the proof is out.** "The orders remain in proofing when the process
+  is going on." → Processing → **Proofing** (651474) when the proof email goes.
+- **The `Approved from the website` rules and folders 124482, 275415, 264136,
+  257277.** "Those are the old rules for the sales rep to mark approval in their
+  boxes." → legacy; nothing to port.
+- **"I have reviewed and approve my design" at checkout.** "It depends if the
+  order come through as no proof with that option or not. If it does then it
+  goes straight to production." → the proof decision is his `getProofOption`,
+  which `wantsProof` already ports as-is. No change.
+- **Montana.** "MT should go to NV" → matches `routing.mjs`. The OrderDesk
+  `Today/Tomorrow - TX` rules still list MT (and run before the NV rule), so an
+  order the office drops in Today/Tomorrow goes to TX — that is OrderDesk's
+  rule, not this code; remove MT there to match.
+- Not answered: the leading space in `" CA"` in `Today - NV (Copy)`.
+
+Built from this: `src/functions/orderdesk-move` (the three moves, wired into
+the pipeline after the proof email, after approval and after the transfer).
+Held by `ORDERDESK_WRITES` like the intake move. An order a person has already
+moved elsewhere is left alone, never pulled back. No tag is changed — Linh
+named none for these moves.

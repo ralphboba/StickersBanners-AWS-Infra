@@ -52,6 +52,7 @@ const SRC = path.join(SRC_ROOT, 'functions');
  */
 export class ComputeStack extends cdk.Stack {
   public readonly poller: lambda.Function;
+  public readonly orderDeskMove: lambda.Function;
   public readonly notifyConsumer: lambda.Function;
   public readonly orderApi: lambda.Function;
   public readonly orderStatusApi: lambda.Function;
@@ -110,6 +111,29 @@ export class ComputeStack extends cdk.Stack {
     intakeQueue.grantSendMessages(this.poller);
     jobsTable.grantReadWriteData(this.poller); // read for dedupe, write META
     this.grantSecretsRead(this.poller, config);
+
+    // --- orderdesk-move: the pipeline's OrderDesk folder moves after intake ---
+    // Processing -> Proofing -> Pending Review -> facility, as Linh's program
+    // does (src/functions/orderdesk-move/core.mjs). Invoked by the workflow.
+    // Same switch as the poller's intake move: held, it only records what it
+    // would have done and never even reads the OrderDesk credentials.
+    this.orderDeskMove = new lambda.Function(this, 'OrderDeskMove', {
+      ...base,
+      functionName: `${config.prefix}-orderdesk-move`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/orderdesk-move/index.handler',
+      // orderDeskFetch waits out a 429 for up to 60 s.
+      timeout: Duration.seconds(90),
+      environment: {
+        JOBS_TABLE: jobsTable.tableName,
+        SB_ENV: config.env,
+        ORDERDESK_WRITES: trial.orderDeskWrites,
+        ORDERDESK_FOLDER_IDS: trial.orderDeskFolderIds,
+      },
+      description: 'Move the order between OrderDesk folders as the pipeline advances',
+    });
+    jobsTable.grantWriteData(this.orderDeskMove); // META.orderDeskMoves
+    this.grantSecretsRead(this.orderDeskMove, config);
 
     // --- notify-consumer: drains notify queue, emails proof-ready via Zendesk ---
     this.notifyConsumer = new lambda.Function(this, 'NotifyConsumer', {

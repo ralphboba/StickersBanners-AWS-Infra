@@ -47,7 +47,10 @@ export const FOLDERS = [
   { id: '698334', name: 'QTS - Pay By Check', stage: 'received', window: 'closed' },
   { id: '650227', key: 'processing', name: 'Processing', stage: 'in_progress', window: 'open' },
   { id: '651474', key: 'proofing', name: 'Proofing', stage: 'proofing', mirror: 'proofing', window: 'open' },
-  { id: '653109', key: 'review', name: 'Pending Review', stage: 'in_progress', mirror: 'needs_review', window: 'open' },
+  // Not a "needs a person" folder despite the name. Linh (2026-10-05): an
+  // approved order "sent to Pending review and then the python bot generate
+  // the final PR and then send those to productions" — so it is mid-printing.
+  { id: '653109', key: 'review', name: 'Pending Review', stage: 'in_progress', mirror: 'printing', window: 'open' },
   { id: '661019', name: 'Missing/Corrupted File', stage: 'in_progress', mirror: 'needs_review', window: 'open' },
   { id: '652268', key: 'manual', name: 'Manual', stage: 'in_progress', window: 'open' },
   { id: '657836', key: 'sales', name: 'Sales', stage: 'in_progress', window: 'open' },
