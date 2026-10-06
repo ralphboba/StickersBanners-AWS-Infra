@@ -27,8 +27,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { isB2SignItem } from '../src/shared/sku-config.mjs';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync, mkdtempSync, existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
 const REGION = process.env.AWS_REGION || 'us-east-1';
@@ -39,9 +39,19 @@ const SUBNETS = ['subnet-018993d45375dd0cf', 'subnet-01fbb7cbf8829ee94'];
 const SECURITY_GROUP = 'sg-02e34e0c092c574a4';
 const TMP = mkdtempSync(join(tmpdir(), 'census-'));
 
-/** The shell's AWS_* vars are placeholders here; real creds are in ~/.aws. */
+/**
+ * Which AWS credentials to use. Sessions used to carry placeholder AWS_* vars
+ * with the real keys in ~/.aws/credentials, so the vars were dropped. Sessions
+ * now get the real keys in the AWS_* vars and no credentials file — dropping
+ * them there left the CLI with nothing, and the census failed every day. So:
+ * drop the vars only when a credentials file exists to fall back on.
+ */
+const AWS_CMD = existsSync(join(homedir(), '.aws', 'credentials'))
+  ? ['env', ['-u', 'AWS_ACCESS_KEY_ID', '-u', 'AWS_SECRET_ACCESS_KEY', 'aws']]
+  : ['aws', []];
+
 function aws(args) {
-  return execFileSync('env', ['-u', 'AWS_ACCESS_KEY_ID', '-u', 'AWS_SECRET_ACCESS_KEY', 'aws', ...args],
+  return execFileSync(AWS_CMD[0], [...AWS_CMD[1], ...args],
     { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 }
 
