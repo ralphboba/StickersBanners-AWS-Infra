@@ -110,14 +110,21 @@ def probe_raster(path):
     with Image.open(path) as img:
         width, height = img.size
         mode = img.mode
+        progressive = bool(img.info.get("progressive") or img.info.get("progression"))
     megapixels = width * height / 1e6
     info = {"sourcePixels": [width, height], "mode": mode,
             "megapixels": round(megapixels, 1)}
+    if progressive:
+        info["progressive"] = True
     # resize holds the decoded source and its resized copy at once; the task has
-    # 8 GB. 400 Mpx as RGBA is 1.6 GB before a single copy.
+    # 8 GB. 400 Mpx as RGBA is 1.6 GB before a single copy, and a progressive
+    # JPEG also buffers every coefficient (S66145: 847 Mpx, peaked at 9.8 GB).
+    # Survivable since 2026-10-06: a resize that dies re-runs on a 30 GB task.
     if megapixels > 400:
+        kind = "progressive JPEG, " if progressive else ""
         return {"verdict": "warn", "reason": "huge-source-image",
-                "detail": f"{megapixels:.0f} Mpx source", **info}
+                "detail": f"{megapixels:.0f} Mpx source ({kind}may need the 30 GB resize task)",
+                **info}
     return {"verdict": "ok", **info}
 
 

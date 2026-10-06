@@ -91,11 +91,19 @@ export class WorkflowStack extends cdk.Stack {
     const catchProps: sfn.CatchProps = { resultPath: '$.error' };
 
     // --- helper: an ECS RunTask step (sync), passing the job to the container ---
-    const runTask = (id: string, key: string): tasks.EcsRunTask => {
+    const runTask = (
+      id: string,
+      key: string,
+      opts: { cpu?: string; memoryMiB?: string; retries?: number; onFail?: sfn.IChainable } = {},
+    ): tasks.EcsRunTask => {
       const taskDef = taskDefinitions[key];
       const step = new tasks.EcsRunTask(this, id, {
         cluster,
         taskDefinition: taskDef,
+        // Task-level size override (Fargate). The containers set no memory
+        // limit of their own, so the whole task's memory is theirs.
+        ...(opts.cpu ? { cpu: opts.cpu } : {}),
+        ...(opts.memoryMiB ? { memoryMiB: opts.memoryMiB } : {}),
         launchTarget: new tasks.EcsFargateLaunchTarget(),
         integrationPattern: sfn.IntegrationPattern.RUN_JOB, // wait for completion
         // No-NAT ($0) layout: tasks run in PUBLIC subnets with a public IP for
@@ -124,8 +132,8 @@ export class WorkflowStack extends cdk.Stack {
         ],
         resultPath: sfn.JsonPath.DISCARD,
       });
-      step.addRetry({ maxAttempts: 3, interval: Duration.seconds(10), backoffRate: 2 });
-      step.addCatch(markFailed, catchProps);
+      step.addRetry({ maxAttempts: opts.retries ?? 3, interval: Duration.seconds(10), backoffRate: 2 });
+      step.addCatch(opts.onFail ?? markFailed, catchProps);
       return step;
     };
 
@@ -133,7 +141,18 @@ export class WorkflowStack extends cdk.Stack {
     const markPrinting = updateStatus(this, 'MarkPrinting', jobsTable, orderPk, 'printing');
     const markProofing = updateStatus(this, 'MarkProofing', jobsTable, orderPk, 'proofing');
 
-    const resize = runTask('Resize', 'resize');
+    // Resize decodes the customer's whole file, and some files need more than
+    // the task's 8 GB however they are read. S66145 (2026-10-05) is a 29100 px
+    // square progressive CMYK JPEG: a progressive JPEG cannot be decoded
+    // without buffering every coefficient of the image (6.8 GB here), and the
+    // resize as a whole peaked at 9.8 GB. It was killed four times and failed.
+    // So a resize that fails runs once more on a 30 GB task before the order
+    // is given up. Same code, same output -- only the machine is bigger -- and
+    // at ~$0.30/hour it costs about two cents on the rare file that needs it.
+    // One retry at the normal size first, for the transient failures (an image
+    // pull that timed out) that have nothing to do with the file.
+    const resizeLarge = runTask('ResizeLarge', 'resize', { cpu: '4096', memoryMiB: '30720', retries: 1 });
+    const resize = runTask('Resize', 'resize', { retries: 1, onFail: resizeLarge });
     const finish = runTask('Finish', 'finish');
     const proof = runTask('Proof', 'proof');
 
@@ -265,6 +284,7 @@ export class WorkflowStack extends cdk.Stack {
       .otherwise(finish.next(needsProof));
 
     // Pipeline picks the order up from "In Queue" -> "Printing" while it runs.
+    resizeLarge.next(checkHeld);
     const definition = markPrinting.next(resize).next(checkHeld).next(afterResize);
 
     this.stateMachine = new sfn.StateMachine(this, 'Pipeline', {

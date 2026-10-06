@@ -123,4 +123,18 @@ describe('WorkflowStack', () => {
       }
     });
   });
+
+  test('a resize that fails runs once more on a 30 GB task before the order fails', () => {
+    // S66145 (2026-10-05): a progressive CMYK JPEG that needs 9.8 GB to resize
+    // was killed four times on the 8 GB task and the order failed.
+    const sm = Object.values(build().findResources('AWS::StepFunctions::StateMachine'))[0];
+    const s = JSON.parse(sm.Properties.DefinitionString['Fn::Join'][1]
+      .map((p: unknown) => (typeof p === 'string' ? p : 'X')).join('')).States;
+    expect(s.Resize.Catch[0].Next).toBe('ResizeLarge');
+    expect(s.Resize.Retry[0].MaxAttempts).toBe(1);
+    expect(s.Resize.Parameters.Overrides.Cpu).toBeUndefined();
+    expect(s.ResizeLarge.Parameters.Overrides).toMatchObject({ Cpu: '4096', Memory: '30720' });
+    expect(s.ResizeLarge.Next).toBe('CheckHeld');
+    expect(s.ResizeLarge.Catch[0].Next).toBe('MarkFailed');
+  });
 });
