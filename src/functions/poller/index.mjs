@@ -18,7 +18,7 @@ import { intakeGate } from '../../shared/intake-gate.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { writeGateStatus } from '../../shared/write-gates.mjs';
 import { fetchOrderByName } from '../../shared/shopify-orders.mjs';
-import { MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
+import { FOLDERS, MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
 import {
   isClaimed, isConditionFailure,
   CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
@@ -50,6 +50,17 @@ const MAX_PER_FOLDER = 400; // safety cap per folder per sync
 // Shopify order-status lookups per mirror run. One per order for its lifetime,
 // so this is only a backlog limit; the rest are picked up on later runs.
 const MAX_SHOPIFY_LOOKUPS = Number(process.env.MAX_SHOPIFY_LOOKUPS ?? 25);
+// Folders in the registry's order — QTS first, where new orders (and the
+// customers clicking "Manage my order" in their confirmation email) are.
+// Object.entries(MIRROR_FOLDERS) would NOT keep that order: the ids are
+// integer-like, so JS sorts them numerically and QTS (665685) came 17th of 20,
+// after the per-run Shopify lookup budget was already spent (S66306).
+const MIRROR_FOLDER_LIST = FOLDERS.filter((f) => f.mirror).map((f) => [f.id, f.mirror]);
+// Orders Shopify had no link for (not Shopify orders, or not found). Kept for
+// the life of the warm container so they don't take the lookup budget from new
+// orders every minute; retried after an hour.
+const NO_LINK_RETRY_MS = 60 * 60 * 1000;
+const noLinkSince = new Map(); // orderName -> ms
 
 // Some real orders (non-banner products) have no WIDTH/HEIGHT -> NaN fields,
 // which DynamoDB rejects. Drop NaN (and undefined) deeply for display-only rows.
@@ -194,7 +205,7 @@ export async function handler(event = {}) {
     //    can't fully handle are pulled aside into "needs_review": an unknown SKU
     //    (product not set up) or an intake order we can't route to a facility.
     const current = new Map(); // orderName -> { job, status, folderId }
-    for (const [fid, folderStatus] of Object.entries(MIRROR_FOLDERS)) {
+    for (const [fid, folderStatus] of MIRROR_FOLDER_LIST) {
       const page = await fetchFolder(storeId, apiKey, fid, MAX_PER_FOLDER);
       for (const order of page) {
         const job = sanitize(cleanOrder(order));
@@ -263,12 +274,18 @@ export async function handler(event = {}) {
     let wrote = 0;
     let linked = 0;
     let shopifyLookups = 0;
+    let linksFound = 0;
+    const unlinked = []; // claimed orders still without a link (first 10), for the log
     const lookupLink = async (name) => {
       if (shopifyLookups >= MAX_SHOPIFY_LOOKUPS || !shopify) return undefined;
+      const failedAt = noLinkSince.get(name);
+      if (failedAt && Date.now() - failedAt < NO_LINK_RETRY_MS) return undefined;
       shopifyLookups += 1;
       try {
         const found = await fetchOrderByName({ ...shopify, orderName: name });
-        return found?.statusPageUrl ?? undefined;
+        const url = found?.statusPageUrl ?? undefined;
+        if (url) { linksFound += 1; noLinkSince.delete(name); } else noLinkSince.set(name, Date.now());
+        return url;
       } catch (err) {
         // Never let a Shopify problem stop the board from updating.
         console.warn(JSON.stringify({ msg: 'Shopify lookup failed', name, err: String(err) }));
@@ -282,6 +299,7 @@ export async function handler(event = {}) {
       if (owned) {
         if (owned.orderStatusUrl && owned.folderId === String(folderId)) continue;
         const orderStatusUrl = owned.orderStatusUrl ?? await lookupLink(name);
+        if (!orderStatusUrl && unlinked.length < 10) unlinked.push(name);
         if (!orderStatusUrl && owned.folderId === String(folderId)) continue; // nothing new to add
         await ddb.send(new UpdateCommand({
           TableName: JOBS_TABLE,
@@ -348,7 +366,7 @@ export async function handler(event = {}) {
     }
     if (unknown.length) console.warn(JSON.stringify({ msg: 'UNKNOWN SKU — needs review', count: unknown.length, unknown }));
 
-    const summary = { mirror: true, folders: Object.keys(MIRROR_FOLDERS).length, total: current.size, wrote, linked, pruned, unknownSku: unknown.length };
+    const summary = { mirror: true, folders: Object.keys(MIRROR_FOLDERS).length, total: current.size, wrote, linked, shopifyLookups, linksFound, unlinked, pruned, unknownSku: unknown.length };
     console.log(JSON.stringify({ msg: 'mirror sync (display-only, multi-folder)', ...summary }));
     return summary;
   }
