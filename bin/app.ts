@@ -210,7 +210,11 @@ const workflowStack = new WorkflowStack(app, `${config.prefix}-workflow`, {
   intakeQueue: queueStack.queues['intake'],
   ftpQueue: queueStack.queues['ftp'],
   notifyQueue: queueStack.queues['notify'],
-  orderDeskMoveFn: computeStack.orderDeskMove,
+  // `-c orderDeskMove=off` leaves the OrderDesk folder-move steps out of the
+  // pipeline, so the workflow can be deployed on its own before sb-dev-compute
+  // has the orderdesk-move Lambda (2026-10-06: the 30 GB resize fallback went
+  // out ahead of a compute deploy). An ordinary deploy wires them in.
+  orderDeskMoveFn: app.node.tryGetContext('orderDeskMove') === 'off' ? undefined : computeStack.orderDeskMove,
   description: `StickersBanners order pipeline (${config.env})`,
 });
 
