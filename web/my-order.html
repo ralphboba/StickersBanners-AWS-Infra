@@ -98,6 +98,14 @@
         <span class="v" id="current"></span>
       </div>
 
+      <div id="pricing" hidden style="margin-top:18px">
+        <fieldset>
+          <legend>Faster shipping</legend>
+          <div id="pricingOpts"></div>
+        </fieldset>
+        <p class="fine">Getting today’s prices from our checkout…</p>
+      </div>
+
       <div id="locked" hidden style="margin-top:14px">
         <div class="notice">
           <b id="lockedTitle">This order can no longer be changed</b>
@@ -119,7 +127,7 @@
       <form id="upgrade" hidden style="margin-top:18px">
         <fieldset>
           <legend>Faster shipping</legend>
-          <label class="opt">
+          <label class="opt" id="keepRow">
             <input type="radio" name="svc" value="0" checked>
             <span class="b">
               <span class="nm" id="keepName"></span>
@@ -145,12 +153,7 @@
            and only then is there a total the customer could be billed. -->
       <form id="deliver" hidden style="margin-top:18px" novalidate>
         <fieldset>
-          <legend>Have it delivered instead</legend>
-          <div id="deliverOpts"></div>
-        </fieldset>
-
-        <fieldset style="margin-top:14px">
-          <legend>Delivery address</legend>
+          <legend>Have it shipped instead</legend>
           <div class="grid">
             <div class="field full"><label for="a1">Street address</label>
               <input id="a1" autocomplete="address-line1" required></div>
@@ -167,17 +170,21 @@
             We can’t ship to PO boxes, Alaska, Hawaii, Puerto Rico or the Virgin Islands.</p>
         </fieldset>
 
-        <button class="secondary" id="quoteBtn" type="button" disabled>Choose a service above</button>
+        <button class="secondary" id="quoteBtn" type="button" disabled>Enter your address</button>
         <p class="err" id="quoteErr" hidden></p>
 
-        <div class="total">
+        <fieldset id="dOptsBox" hidden style="margin-top:14px">
+          <legend>Shipping options</legend>
+          <div id="deliverOpts"></div>
+        </fieldset>
+
+        <div class="total" id="dTotalRow" hidden>
           <span>Amount to pay</span>
           <span class="v" id="dTotal">—</span>
         </div>
-        <p class="fine" id="dBreakdown" hidden></p>
-        <button class="cta" id="dSend" type="submit" disabled>Get your total first</button>
-        <p class="fine">Nothing changes until you pay the invoice — if you close this page,
-          your order stays a pickup order.</p>
+        <button class="cta" id="dSend" type="submit" hidden disabled>Select a shipping option</button>
+        <p class="fine">The amount shown is the total you'll be charged, tax included. Nothing changes
+          until you pay — if you leave the payment page, your order stays a pickup order.</p>
       </form>
     </div>
   </main>
@@ -201,17 +208,27 @@
 
   if (!o || !s) { fail(); return; }
 
-  fetch('/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s), {
-    headers: { accept: 'application/json' },
-  })
-    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
-    .then(render)
+  var api = '/api/my-order?o=' + encodeURIComponent(o) + '&s=' + encodeURIComponent(s);
+  var getJson = function (url) {
+    return fetch(url, { headers: { accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+  };
+  // First the quick view (no Shopify call: order, progress, option names),
+  // then the priced one. Pricing takes Shopify a few seconds; the customer
+  // sees their order meanwhile instead of "Loading…". One after the other so
+  // both land on the same warm function.
+  var rendered = false;
+  getJson(api + '&lite=1')
+    .then(function (d) { if (!rendered) quick(d); })
+    .catch(function () {})
+    .then(function () { return getJson(api); })
+    .then(function (d) { rendered = true; render(d); })
     .catch(fail);
 
-  function render(data) {
+  function drawHeader(data) {
     set('orderName', data.orderName || '');
-
     var steps = $('steps');
+    steps.textContent = '';
     (data.stage.steps || []).forEach(function (label, i) {
       var li = document.createElement('li');
       li.textContent = label;
@@ -219,12 +236,41 @@
       else if (i === data.stage.step) li.className = 'now';
       steps.appendChild(li);
     });
+    set('current', (data.shipping || {}).current || '—');
+  }
+
+  function quick(data) {
+    drawHeader(data);
+    var names = (data.shipping || {}).optionNames || [];
+    var box = $('pricingOpts');
+    names.forEach(function (name) {
+      var label = document.createElement('div');
+      label.className = 'opt';
+      var b = document.createElement('span'); b.className = 'b';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = name;
+      var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Calculating…';
+      b.appendChild(nm); b.appendChild(sub);
+      var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '…';
+      label.appendChild(b); label.appendChild(pr);
+      box.appendChild(label);
+    });
+    $('pricing').hidden = names.length === 0;
+    $('loading').hidden = true;
+    $('view').hidden = false;
+  }
+
+  function render(data) {
+    $('pricing').hidden = true;
+    drawHeader(data);
 
     var sh = data.shipping || {};
-    set('current', sh.current || '—');
 
-    if (sh.awaitingPayment) {
-      var ap = sh.awaitingPayment;
+    // An upgrade chosen but not paid: the same option screen as a fresh order,
+    // nothing preselected (Kai). Picking the unpaid one again goes straight to
+    // its payment page; another one replaces it (the server restores the paid
+    // service first).
+    var ap = sh.awaitingPayment || null;
+    if (ap && !(sh.canUpgrade && sh.upgrade)) {
       set('awaitingWhat', 'Upgrade to ' + ap.to + ' — waiting for payment');
       set('awaitingTotal', money(ap.total));
       set('awaitingPay', 'Pay ' + money(ap.total));
@@ -243,7 +289,8 @@
         input.type = 'radio'; input.name = 'svc'; input.value = String(i + 1);
         var b = document.createElement('span'); b.className = 'b';
         var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = u.to;
-        var sub = document.createElement('span'); sub.className = 'sub'; sub.textContent = 'Arrives sooner — includes tax';
+        var sub = document.createElement('span'); sub.className = 'sub';
+        sub.textContent = sh.pickup ? 'Shipped to the address on your order — includes tax' : 'Arrives sooner — includes tax';
         b.appendChild(nm); b.appendChild(sub);
         var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = '+' + money(u.total);
         label.appendChild(input); label.appendChild(b); label.appendChild(pr);
@@ -271,6 +318,8 @@
         if (!u) return;
         $('send').disabled = true;
         set('send', 'Opening secure checkout…');
+        // Same choice as the unpaid one: straight to its payment page.
+        if (ap && u.to === ap.to) { window.location.href = ap.paymentUrl; return; }
         // The server re-prices from Shopify and commits only if the amount is
         // still exactly the one shown here.
         fetch('/api/my-order/request', {
@@ -304,12 +353,16 @@
               set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
               return;
             }
+            if (res.status === 409 && res.b.error === 'already_paid') {
+              set('send', 'Your payment is already in — refresh in a minute');
+              return;
+            }
             set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
           })
           .catch(function () { set('send', 'We couldn’t reach our system — please try again'); $('send').disabled = false; });
       });
     } else if (sh.canConvert && sh.delivery) {
-      renderDelivery(sh.delivery);
+      renderDelivery();
     } else {
       set('lockedWhy', sh.reason || '');
       $('locked').hidden = false;
@@ -332,27 +385,10 @@
     service_not_offered: 'Please choose one of the services above.',
   };
 
-  function renderDelivery(delivery) {
-    var box = $('deliverOpts');
-    delivery.options.forEach(function (opt, i) {
-      var label = document.createElement('label');
-      label.className = 'opt';
-      var input = document.createElement('input');
-      input.type = 'radio'; input.name = 'dsvc'; input.value = opt.service;
-      var b = document.createElement('span'); b.className = 'b';
-      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = opt.service;
-      var priced = typeof opt.shipping === 'number';
-      var sub = document.createElement('span'); sub.className = 'sub';
-      sub.textContent = priced ? 'Plus tax, if any, for your address' : 'Priced once you enter your address';
-      b.appendChild(nm); b.appendChild(sub);
-      var pr = document.createElement('span'); pr.className = 'pr';
-      // The card price, never labelled as the amount due. The total below is
-      // the only figure presented as what the customer pays.
-      pr.textContent = priced ? money(opt.shipping) : '—';
-      label.appendChild(input); label.appendChild(b); label.appendChild(pr);
-      box.appendChild(label);
-    });
-
+  // A pickup order (Kai, 2026-10-05): the delivery address first, then the
+  // services checkout would offer at that address, each with Shopify's price
+  // and tax, then pay — the same Shopify payment page as an upgrade.
+  function renderDelivery() {
     var sel = $('state');
     var blank = document.createElement('option');
     blank.value = ''; blank.textContent = 'Select';
@@ -363,13 +399,9 @@
       sel.appendChild(el);
     });
 
-    var quoted = null;   // the last total Shopify stood behind, for these inputs
-    var inFlight = 0;    // ignore answers to questions the customer has since changed
+    var options = [];    // what Shopify priced for the address below
+    var inFlight = 0;    // ignore answers to an address the customer has since changed
 
-    function picked() {
-      var el = document.querySelector('input[name="dsvc"]:checked');
-      return el ? el.value : '';
-    }
     function address() {
       return {
         address1: $('a1').value, address2: $('a2').value, city: $('city').value,
@@ -378,60 +410,87 @@
     }
     function complete() {
       var a = address();
-      return picked() && a.address1.trim() && a.city.trim() && a.province && a.zip.trim();
+      return a.address1.trim() && a.city.trim() && a.province && a.zip.trim();
+    }
+    function chosen() {
+      var el = document.querySelector('input[name="dsvc"]:checked');
+      return el ? options[parseInt(el.value, 10)] : null;
+    }
+    function update() {
+      var o = chosen();
+      set('dTotal', o ? money(o.total) : '—');
+      $('dSend').disabled = !o;
+      set('dSend', o ? 'Pay ' + money(o.total) + ' and ship it' : 'Select a shipping option');
     }
 
-    // Any change invalidates the total: it was for a different service or place.
+    // A changed address means new prices: clear the options.
     function reset() {
-      quoted = null; inFlight++;
-      set('dTotal', '—');
-      $('dBreakdown').hidden = true;
+      options = []; inFlight++;
+      $('deliverOpts').textContent = '';
+      $('dOptsBox').hidden = true;
+      $('dTotalRow').hidden = true;
+      $('dSend').hidden = true;
       $('quoteErr').hidden = true;
-      $('dSend').disabled = true;
-      set('dSend', 'Get your total first');
       $('quoteBtn').disabled = !complete();
-      set('quoteBtn', picked() ? (complete() ? 'Get my total' : 'Enter your address') : 'Choose a service above');
+      set('quoteBtn', complete() ? 'Show shipping options' : 'Enter your address');
     }
-    $('deliver').addEventListener('input', reset);
-    $('deliver').addEventListener('change', reset);
+    ['a1', 'a2', 'city', 'state', 'zip'].forEach(function (id) {
+      $(id).addEventListener('input', reset);
+      $(id).addEventListener('change', reset);
+    });
     reset();
+
+    function showOptions(list) {
+      options = list;
+      var box = $('deliverOpts');
+      box.textContent = '';
+      list.forEach(function (opt, i) {
+        var label = document.createElement('label');
+        label.className = 'opt';
+        var input = document.createElement('input');
+        input.type = 'radio'; input.name = 'dsvc'; input.value = String(i);
+        input.addEventListener('change', update);
+        var b = document.createElement('span'); b.className = 'b';
+        var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = opt.to;
+        var sub = document.createElement('span'); sub.className = 'sub';
+        sub.textContent = money(opt.shipping) + ' shipping + ' + money(opt.tax) + ' tax';
+        b.appendChild(nm); b.appendChild(sub);
+        var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = money(opt.total);
+        label.appendChild(input); label.appendChild(b); label.appendChild(pr);
+        box.appendChild(label);
+      });
+      $('dOptsBox').hidden = false;
+      $('dTotalRow').hidden = false;
+      $('dSend').hidden = false;
+      update();
+    }
 
     $('quoteBtn').addEventListener('click', function () {
       if (!complete()) return;
       var ticket = ++inFlight;
       $('quoteBtn').disabled = true;
-      set('quoteBtn', 'Getting your total…');
+      set('quoteBtn', 'Getting prices…');
       fetch('/api/my-order/quote', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ o: o, s: s, service: picked(), address: address() }),
+        body: JSON.stringify({ o: o, s: s, address: address() }),
       })
-        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+        .then(function (r) { return r.text().then(function (t) { var b = {}; try { b = JSON.parse(t); } catch (e) { b = {}; } return { ok: r.ok, b: b }; }); })
         .then(function (res) {
-          if (ticket !== inFlight) return;   // the inputs changed while we waited
+          if (ticket !== inFlight) return;
           $('quoteBtn').disabled = false;
-          set('quoteBtn', 'Get my total');
-          if (!res.ok) {
-            set('quoteErr', res.b.reason || QUOTE_ERRORS[res.b.error] || 'We couldn’t price that. Please try again.');
+          set('quoteBtn', 'Show shipping options');
+          if (!res.ok || !res.b.options) {
+            set('quoteErr', res.b.reason || QUOTE_ERRORS[res.b.error] || 'We couldn’t price that address. Please try again.');
             $('quoteErr').hidden = false;
             return;
           }
-          if (!res.b.final) {
-            set('quoteErr', 'We can’t calculate the tax right now. Please try again shortly.');
-            $('quoteErr').hidden = false;
-            return;
-          }
-          quoted = res.b;
-          set('dTotal', money(quoted.total));
-          set('dBreakdown', res.b.service + ' ' + money(quoted.shipping) + ' + tax ' + money(quoted.tax));
-          $('dBreakdown').hidden = false;
-          $('dSend').disabled = false;
-          set('dSend', 'Send me the invoice — ' + money(quoted.total));
+          showOptions(res.b.options);
         })
         .catch(function () {
           if (ticket !== inFlight) return;
           $('quoteBtn').disabled = false;
-          set('quoteBtn', 'Get my total');
+          set('quoteBtn', 'Show shipping options');
           set('quoteErr', 'We couldn’t reach our system. Please try again.');
           $('quoteErr').hidden = false;
         });
@@ -439,10 +498,33 @@
 
     $('deliver').addEventListener('submit', function (e) {
       e.preventDefault();
-      // As with the upgrade: requesting the invoice is a write, and the
-      // switches that would arm it are off. Inert rather than pretending.
+      var opt = chosen();
+      if (!opt) return;
       $('dSend').disabled = true;
-      set('dSend', 'Not available yet');
+      set('dSend', 'Opening secure checkout…');
+      // The server puts the address on the order, re-prices with Shopify and
+      // commits only if the amount is still exactly the one shown.
+      fetch('/api/my-order/request', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ o: o, s: s, service: opt.to, expectedTotal: opt.total, address: address() }),
+      })
+        .then(function (r) { return r.text().then(function (t) { var b = {}; try { b = JSON.parse(t); } catch (e) { b = {}; } return { status: r.status, b: b }; }); })
+        .then(function (res) {
+          if (res.status === 200 && res.b.paymentUrl) { window.location.href = res.b.paymentUrl; return; }
+          if (res.status === 200) { set('dSend', 'Invoice sent — check your email'); return; }
+          if (res.status === 409 && res.b.error === 'price_changed') {
+            opt.total = res.b.total;
+            var i = options.indexOf(opt);
+            showOptions(options);
+            document.querySelectorAll('input[name="dsvc"]')[i].checked = true;
+            update();
+            set('dSend', 'The amount changed — pay ' + money(opt.total) + ' and ship it');
+            return;
+          }
+          set('dSend', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+        })
+        .catch(function () { set('dSend', 'We couldn’t reach our system — please try again'); $('dSend').disabled = false; });
     });
 
     $('deliver').hidden = false;

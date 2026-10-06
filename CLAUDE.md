@@ -29,6 +29,16 @@ authority: **Linh** (legacy author).
   Exception (Kai, 2026-09-28): one Google Chat line per *paid* shipping change,
   sent after the Order Desk write succeeds (`src/shared/gchat.mjs`). Webhook URL
   is a secret — SSM, never committed.
+  Exception (Kai, 2026-10-06): the reconciler (`shipping-change-reconcile`,
+  every 5 min) posts to the "shipping upgrade" space
+  (SSM `gchat/webhook-url-alerts`, falls back to `gchat/webhook-url`) when a
+  PAID change is still not in Order Desk after 30 min, or a change is flagged
+  for a person. It also settles paid changes the webhook missed (same code).
+  Exception (Kai, 2026-10-04): when the customer picks a shipping change and the
+  order edit is committed, Shopify's own invoice email (`orderInvoiceSend`) to
+  the order's address — updated order, balance, Pay now. Only while there is a
+  balance (Shopify refuses one for a paid order). Behind `SHOPIFY_WRITES`
+  (+ `WRITE_ONLY_ORDERS`) (`order-status-api/routes.mjs` requestChange).
 - Intake is by **polling** the OrderDesk QTS folder (no webhook).
 
 ## Safety
@@ -48,6 +58,13 @@ authority: **Linh** (legacy author).
   - `ORDERDESK_UPGRADE_WRITES` — the customer shipping upgrade's `shipping_method`
     PUT. Runs only *after* the customer has paid.
   - `SHOPIFY_WRITES` — invoicing / order editing. **This one moves real money.**
+  - Customer shipping change (`ORDERDESK_UPGRADE_WRITES` + `SHOPIFY_WRITES` on
+    the change functions only): `--context testOrders=S64262` arms them for the
+    listed orders; `--context shippingChange=live` arms them for **every** order
+    (Kai approved, 2026-10-04: everything on except the confirmation email —
+    the "Manage my order" button in Shopify's template stays S64262-only, so
+    customers have no way in yet). Neither context = off. `ORDERDESK_WRITES`
+    is not affected by either.
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed

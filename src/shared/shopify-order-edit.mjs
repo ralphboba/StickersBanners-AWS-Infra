@@ -77,14 +77,23 @@ const tail = (gid) => String(gid ?? '').split('/').pop();
  * @param {string} p.title         the new service, e.g. "FedEx 3-Days"
  * @param {number} p.priceCents    its full price
  * @param {number} p.totalBeforeCents  the order's current total, to check the arithmetic
+ * @param {Promise} [p.begun]     result of beginOrderEdit started earlier (optional)
  * @returns {Promise<{ ok: true, calculatedOrderId: string, outstandingCents: number,
  *                     totalCents: number } | { ok: false, reason: string }>}
  */
+/** Open an order edit (uncommitted; it simply expires if never used). */
+export function beginOrderEdit({ shop, token, orderId, fetchImpl }) {
+  return shopifyGraphQL({ shop, token, fetchImpl, query: BEGIN, variables: { id: orderId } });
+}
+
 export async function stageShippingChange({
-  shop, token, orderId, removeLineId, title, priceCents, totalBeforeCents, fetchImpl,
+  shop, token, orderId, removeLineId, title, priceCents, totalBeforeCents, begun: begunEarly, fetchImpl,
 }) {
-  if (!Number.isSafeInteger(priceCents) || priceCents <= 0) return { ok: false, reason: 'bad_price' };
-  const begun = await shopifyGraphQL({ shop, token, fetchImpl, query: BEGIN, variables: { id: orderId } });
+  // 0 is a free line (a pickup put back by set-test-shipping.mjs); never negative.
+  if (!Number.isSafeInteger(priceCents) || priceCents < 0) return { ok: false, reason: 'bad_price' };
+  // `begun`: an edit the caller opened earlier, while it was still looking up
+  // rates — saves one Shopify round trip on the customer's page.
+  const begun = await (begunEarly ?? beginOrderEdit({ shop, token, orderId, fetchImpl }));
   const b = begun?.data?.orderEditBegin;
   if ((b?.userErrors ?? []).length || !b?.calculatedOrder?.id) return { ok: false, reason: 'edit_begin_failed' };
 
@@ -154,4 +163,58 @@ export async function sendBalanceInvoice({ shop, token, orderName, orderId, to, 
   const r = res?.data?.orderInvoiceSend;
   if ((r?.userErrors ?? []).length) return { sent: false, error: 'invoice_failed', userErrors: r.userErrors };
   return { sent: true };
+}
+
+const ORDER_NAMES = `
+  query OrderNames($id: ID!) {
+    order(id: $id) {
+      shippingAddress { firstName lastName company phone }
+      billingAddress { firstName lastName company phone }
+      customer { firstName lastName phone }
+    }
+  }
+`;
+
+const SET_SHIPPING_ADDRESS = `
+  mutation SetShippingAddress($input: OrderInput!) {
+    orderUpdate(input: $input) {
+      order { id shippingAddress { address1 city provinceCode zip countryCodeV2 } }
+      userErrors { field message }
+    }
+  }
+`;
+
+/**
+ * Put the delivery address the customer typed on a pickup order, so the order
+ * edit that follows taxes the shipping where it will be delivered (Shopify
+ * taxes an order at its shipping address). The customer's name, company and
+ * phone are kept from the order. SHOPIFY_WRITES only.
+ *
+ * @param {{ address1: string, address2?: string, city: string, province: string, zip: string, country?: string }} p.address
+ * @returns {Promise<{ updated: boolean, skipped?: string, error?: string }>}
+ */
+export async function setOrderShippingAddress({ shop, token, orderName, orderId, address, fetchImpl }) {
+  const blocked = blockedReason(orderName, shopifyWritesEnabled);
+  if (blocked) return { updated: false, ...blocked };
+  const names = (await shopifyGraphQL({ shop, token, fetchImpl, query: ORDER_NAMES, variables: { id: orderId } }))?.data?.order;
+  const who = names?.shippingAddress ?? names?.billingAddress ?? names?.customer ?? {};
+  const input = {
+    id: orderId,
+    shippingAddress: {
+      ...(who.firstName ? { firstName: who.firstName } : {}),
+      ...(who.lastName ? { lastName: who.lastName } : {}),
+      ...(who.company ? { company: who.company } : {}),
+      ...(who.phone ? { phone: who.phone } : {}),
+      address1: address.address1,
+      ...(address.address2 ? { address2: address.address2 } : {}),
+      city: address.city,
+      provinceCode: address.province,
+      zip: address.zip,
+      countryCode: address.country || 'US',
+    },
+  };
+  const res = await shopifyGraphQL({ shop, token, fetchImpl, write: true, query: SET_SHIPPING_ADDRESS, variables: { input } });
+  const r = res?.data?.orderUpdate;
+  if ((r?.userErrors ?? []).length || !r?.order) return { updated: false, error: 'address_update_failed', userErrors: r?.userErrors };
+  return { updated: true };
 }

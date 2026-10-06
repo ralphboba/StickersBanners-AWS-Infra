@@ -7,6 +7,10 @@ import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as targets from 'aws-cdk-lib/aws-scheduler-targets';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { EnvironmentConfig } from '../config/types';
 import { secretsArnPattern, secretsPrefix } from '../config/secrets';
 import { trialConfig } from '../config/trial';
@@ -29,6 +33,17 @@ export interface ComputeStackProps extends cdk.StackProps {
    * both switches off, which is the default and the only go-live-safe state.
    */
   readonly shippingChangeTestOrders?: string;
+  /**
+   * Customer shipping change LIVE for every order (Kai, 2026-10-04: "실제로
+   * 오더를 했을때 오더 정보 이메일 보내는거 빼고 다 켜놓고 싶어"): SHOPIFY_WRITES and
+   * ORDERDESK_UPGRADE_WRITES enabled with no order list. Only from
+   * `--context shippingChange=live`; never together with a test list. The
+   * entry point (the confirmation email's button) is a Shopify template, not
+   * this switch.
+   */
+  readonly shippingChangeLive?: boolean;
+  /** Who gets the daily shipping-upgrade count by email (Kai only). */
+  readonly upgradeReportEmail?: string;
 }
 
 const SRC_ROOT = path.join(__dirname, '..', '..', 'src');
@@ -58,7 +73,9 @@ export class ComputeStack extends cdk.Stack {
   public readonly orderStatusApi: lambda.Function;
   public readonly orderChangeRequest: lambda.Function;
   public readonly shopifyPaid: lambda.Function;
+  public readonly upgradeReport: lambda.Function;
   public readonly shippingChangeExpiry: lambda.Function;
+  public readonly shippingChangeReconcile: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
   public readonly proofApproval: lambda.Function;
@@ -208,6 +225,9 @@ export class ComputeStack extends cdk.Stack {
       functionName: `${config.prefix}-order-status-api`,
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-status-api/index.handler',
+      // The customer waits on this one: more memory = more CPU = faster cold
+      // start and TLS. Still free-tier at this volume.
+      memorySize: 1024,
       environment: {
         JOBS_TABLE: jobsTable.tableName,
         SB_ENV: config.env,
@@ -233,12 +253,18 @@ export class ComputeStack extends cdk.Stack {
     if (testOrders.some((o) => !/^S\d+$/.test(o))) {
       throw new Error(`shippingChangeTestOrders must be order names like S64262, got "${props.shippingChangeTestOrders}"`);
     }
+    const live = props.shippingChangeLive === true;
+    if (live && testOrders.length) {
+      throw new Error('shippingChangeLive and shippingChangeTestOrders are exclusive: live already covers every order');
+    }
+    const armed = live || testOrders.length > 0;
     const changeEnv: Record<string, string> = {
       JOBS_TABLE: jobsTable.tableName,
       SB_ENV: config.env,
-      // Armed only together with a non-empty test list, never on their own.
-      SHOPIFY_WRITES: testOrders.length ? 'enabled' : 'disabled',
-      ORDERDESK_UPGRADE_WRITES: testOrders.length ? 'enabled' : 'disabled',
+      // Armed by a test list (those orders only) or by the explicit live
+      // switch (every order); otherwise off.
+      SHOPIFY_WRITES: armed ? 'enabled' : 'disabled',
+      ORDERDESK_UPGRADE_WRITES: armed ? 'enabled' : 'disabled',
       ...(testOrders.length ? { WRITE_ONLY_ORDERS: testOrders.join(',') } : {}),
     };
     this.orderChangeRequest = new lambda.Function(this, 'OrderChangeRequest', {
@@ -246,6 +272,10 @@ export class ComputeStack extends cdk.Stack {
       functionName: `${config.prefix}-order-change-request`,
       code: lambda.Code.fromAsset(SRC_ROOT),
       handler: 'functions/order-change-request/index.handler',
+      memorySize: 1024,
+      // Shopify edits can be slow; the customer's page gives up at ~30s but
+      // the function must still finish writing its record.
+      timeout: Duration.seconds(60),
       environment: changeEnv,
       description: 'Customer "send me the invoice": commit the order edit, email the balance invoice',
     });
@@ -266,10 +296,70 @@ export class ComputeStack extends cdk.Stack {
       environment: changeEnv,
       description: 'Undo shipping changes left unpaid past their deadline',
     });
-    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry]) {
+    // The webhook's safety net (Kai, 2026-10-06: "반영이 똑바로 되야되는데"):
+    // every 5 minutes, ask Shopify which open changes are paid and settle any
+    // the webhook missed, through the same code; post to Chat what still
+    // cannot be applied. Same switches as shopify-paid — it writes Order Desk
+    // only where the webhook would.
+    this.shippingChangeReconcile = new lambda.Function(this, 'ShippingChangeReconcile', {
+      ...base,
+      functionName: `${config.prefix}-shipping-change-reconcile`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shipping-change-reconcile/index.handler',
+      timeout: Duration.minutes(2),
+      environment: changeEnv,
+      description: 'Settle paid shipping changes the webhook missed; alert Chat on any not applied',
+    });
+    new scheduler.Schedule(this, 'ShippingChangeReconcileEvery5', {
+      scheduleName: `${config.prefix}-shipping-change-reconcile`,
+      description: 'Settle paid shipping changes the webhook missed (every 5 min)',
+      schedule: scheduler.ScheduleExpression.rate(Duration.minutes(5)),
+      target: new targets.LambdaInvoke(this.shippingChangeReconcile, { retryAttempts: 0 }),
+    });
+    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry, this.shippingChangeReconcile]) {
       jobsTable.grantReadWriteData(fn);
       this.grantSecretsRead(fn, config);
     }
+
+    // Keep the two functions a customer waits on warm (Kai, 2026-10-04: the
+    // page and the Pay button were slow). Every 5 minutes each gets
+    // { warmup: true }, which only loads its Shopify token and returns — no
+    // order is read or written. ~17k tiny invocations a month: free tier.
+    for (const [id, fn] of [['OrderStatusApiWarm', this.orderStatusApi], ['OrderChangeRequestWarm', this.orderChangeRequest]] as const) {
+      new scheduler.Schedule(this, id, {
+        scheduleName: `${fn === this.orderStatusApi ? `${config.prefix}-order-status-api` : `${config.prefix}-order-change-request`}-warm`,
+        description: 'Keep the customer-facing function warm (no-op invocation)',
+        schedule: scheduler.ScheduleExpression.rate(Duration.minutes(5)),
+        target: new targets.LambdaInvoke(fn, { input: scheduler.ScheduleTargetInput.fromObject({ warmup: true }), retryAttempts: 0 }),
+      });
+    }
+
+    // Daily shipping-upgrade count (Kai, 2026-10-04): yesterday's requests and
+    // payments, emailed to Kai only — "그냥 나한테만 … 구글 채트 말고". SNS email
+    // (free tier); the subscription must be confirmed once from the inbox.
+    // Read-only on the table; lives here rather than in the scheduler stack,
+    // which also holds the mirror and the real poller.
+    const reportTopic = new sns.Topic(this, 'UpgradeReportTopic', {
+      topicName: `${config.prefix}-upgrade-report`,
+      displayName: 'SB shipping upgrades',
+    });
+    reportTopic.addSubscription(new subs.EmailSubscription(props.upgradeReportEmail ?? 'kai@stickersbanners.com'));
+    this.upgradeReport = new lambda.Function(this, 'UpgradeReport', {
+      ...base,
+      functionName: `${config.prefix}-upgrade-report`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/upgrade-report/index.handler',
+      environment: { JOBS_TABLE: jobsTable.tableName, REPORT_TOPIC_ARN: reportTopic.topicArn },
+      description: 'Daily count of customer shipping upgrades -> email to Kai',
+    });
+    jobsTable.grantReadData(this.upgradeReport);
+    reportTopic.grantPublish(this.upgradeReport);
+    new scheduler.Schedule(this, 'UpgradeReportDaily', {
+      scheduleName: `${config.prefix}-upgrade-report`,
+      description: "Yesterday's shipping upgrades by email, 8:52 New York time",
+      schedule: scheduler.ScheduleExpression.cron({ minute: '52', hour: '8', timeZone: cdk.TimeZone.AMERICA_NEW_YORK }),
+      target: new targets.LambdaInvoke(this.upgradeReport, { retryAttempts: 1 }),
+    });
 
     // --- webhook: OrderDesk push receiver (validates secret, enqueues intake) ---
     // Bundles src/shared (secrets + routing helpers), so its asset is src root.

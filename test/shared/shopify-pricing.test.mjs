@@ -115,6 +115,46 @@ async function quote(fake, extra = {}) {
 }
 
 describe('an upgrade priced from the live store', () => {
+  test('a pickup with no typed address: priced on the order like an upgrade, ships to the order address', async () => {
+    const pickup = shopifyOrder({
+      currentTotalPriceSet: { shopMoney: { amount: '150.00' } },
+      shippingLines: { nodes: [{ id: 'gid://shopify/ShippingLine/77', title: 'Georgia Warehouse', isRemoved: false,
+        originalPriceSet: { shopMoney: { amount: '0.00' } }, discountedPriceSet: { shopMoney: { amount: '0.00' } } }] },
+    });
+    const fake = fakeShopify({ order: pickup });
+    const order = await fetchOrderForPricing({ ...ARGS, orderName: 'S64201', fetchImpl: fake.fetchImpl });
+    const q = await quoteShippingChange({ ...ARGS, order, to: 'FedEx Ground', expectedFrom: 'Georgia Warehouse', fetchImpl: fake.fetchImpl });
+    assert.equal(q.ok, true);
+    assert.equal(q.mode, 'convert');
+    assert.equal(q.shippingCents, 2567);             // the full Ground rate: pickup was free
+    assert.equal(q.totalCents, 2567);                // + Shopify's tax (0 in this fake)
+    assert.equal(fake.stage().variables.add.price.amount, '25.67');
+    assert.deepEqual(q.edit.restore, { title: 'Georgia Warehouse', priceCents: 0 });
+    assert.deepEqual(q.deliverTo, { address1: '115 Powelton Avenue', address2: '', city: 'Oaklyn', province: 'NJ', zip: '08107', country: 'US' });
+    assert.equal(fake.sent.filter((b) => b.query.includes('ChargeQuote')).length, 0);   // no draft
+  });
+
+  test('the order edit is opened alongside the rate lookup, not after it', async () => {
+    const fake = fakeShopify();
+    const q = await quote(fake);
+    assert.equal(q.ok, true);
+    const kinds = fake.sent.map((b) => (b.query.includes('EditBegin') ? 'begin' : b.query.includes('RateCheck') ? 'rates' : null)).filter(Boolean);
+    assert.equal(kinds[0], 'begin');
+    assert.equal(kinds.filter((k) => k === 'begin').length, 1);
+  });
+
+  test('options priced with one rate cache share a single rate lookup', async () => {
+    const fake = fakeShopify();
+    const order = await fetchOrderForPricing({ ...ARGS, orderName: 'S64201', fetchImpl: fake.fetchImpl });
+    const rateCache = new Map();
+    const [a, b] = await Promise.all([
+      quoteShippingChange({ ...ARGS, order, to: 'FedEx 3-Days', rateCache, fetchImpl: fake.fetchImpl }),
+      quoteShippingChange({ ...ARGS, order, to: 'FedEx 3-Days', rateCache, fetchImpl: fake.fetchImpl }),
+    ]);
+    assert.equal(a.ok && b.ok, true);
+    assert.equal(fake.sent.filter((q) => q.query.includes('RateCheck')).length, 1);
+  });
+
   test('difference of checkout rates, tax from Shopify, all in cents', async () => {
     // NJ taxes shipping at 6.625%: 61.06 * 0.06625 = 4.045 -> Shopify says 4.05.
     const fake = fakeShopify({ tax: () => '4.05' });
@@ -350,5 +390,19 @@ describe('checkoutRates', () => {
     assert.equal(await checkoutRates({ ...ARGS, fetchImpl, subtotalCents: 15000, address: null }), null);
     assert.equal(await checkoutRates({ ...ARGS, fetchImpl, subtotalCents: 1.5, address: {} }), null);
     assert.equal(called, false);
+  });
+});
+
+describe('setting a pickup order\'s delivery address', () => {
+  test('behind SHOPIFY_WRITES: switched off, Shopify is not called', async () => {
+    const { setOrderShippingAddress } = await import('../../src/shared/shopify-order-edit.mjs');
+    const before = process.env.SHOPIFY_WRITES;
+    process.env.SHOPIFY_WRITES = 'disabled';
+    let called = 0;
+    const r = await setOrderShippingAddress({ ...ARGS, orderName: 'S1', orderId: 'gid://shopify/Order/1',
+      address: { address1: '1 Main', city: 'Atlanta', province: 'GA', zip: '30303' }, fetchImpl: async () => { called += 1; } });
+    process.env.SHOPIFY_WRITES = before;
+    assert.equal(r.updated, false);
+    assert.equal(called, 0);
   });
 });

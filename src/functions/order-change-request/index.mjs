@@ -12,16 +12,23 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
-import { commitShippingChange, sendBalanceInvoice } from '../../shared/shopify-order-edit.mjs';
+import { commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
+import { makeOrderRowLoader } from '../../shared/order-row.mjs';
+import { logItem } from '../../shared/upgrade-log.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const creds = makeShopifyCredentials({ getSecret });
 
-export const handler = makeHandler({
-  loadRow: async (orderName) => (await ddb.send(new GetCommand({
-    TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
+const routes = makeHandler({
+  // Any folder: the stored row when it can authorise, otherwise read live.
+  loadRow: makeOrderRowLoader({
+    readRow: async (orderName) => (await ddb.send(new GetCommand({
+      TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
+    shopifyCreds: creds,
+    getSecret,
+  }),
   loadShopifyOrder: async (orderName) => fetchOrderForPricing({ ...(await creds()), orderName }),
   quote: async (args) => {
     try { return await quoteShippingChange({ ...(await creds()), ...args }); } catch (err) {
@@ -34,14 +41,40 @@ export const handler = makeHandler({
     TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'CHANGE' } })))?.Item ?? null,
   // One open change per order: a second pending record is refused by the
   // table, not just by the route's earlier check.
-  savePending: async (change) => ddb.send(new PutCommand({
-    TableName: JOBS_TABLE,
-    Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
-    ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
-    ExpressionAttributeNames: { '#s': 'status' },
-    ExpressionAttributeValues: { ':pending': 'pending' },
-  })),
+  savePending: async (change) => {
+    // `replaces`: overwrite only the pending record with that ref (a switch
+    // replacing the unpaid one, or this request updating its own record after
+    // the commit); if it was paid or replaced meanwhile, the put is refused.
+    await ddb.send(new PutCommand({
+      TableName: JOBS_TABLE,
+      Item: { PK: `ORDER#${change.orderName}`, SK: 'CHANGE', ...change },
+      ...(change.replaces
+        ? { ConditionExpression: '#s = :pending AND #r = :old',
+          ExpressionAttributeNames: { '#s': 'status', '#r': 'ref' },
+          ExpressionAttributeValues: { ':pending': 'pending', ':old': change.replaces } }
+        : { ConditionExpression: 'attribute_not_exists(PK) OR #s <> :pending',
+          ExpressionAttributeNames: { '#s': 'status' },
+          ExpressionAttributeValues: { ':pending': 'pending' } }),
+    }));
+    // Daily count (upgrade-log.mjs), once the commit is confirmed. Never fails
+    // the customer's request.
+    if (change.status === 'pending' && change.confirmed) {
+      await ddb.send(new PutCommand({ TableName: JOBS_TABLE, Item: logItem('requested', change, Date.now()) }))
+        .catch((err) => console.warn(JSON.stringify({ msg: 'upgrade log failed', err: String(err) })));
+    }
+  },
   commitEdit: async (args) => commitShippingChange({ ...(await creds()), ...args }),
+  setShippingAddress: async (args) => setOrderShippingAddress({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
 });
+
+// { warmup: true } from the 5-minute schedule: load the Shopify token so the
+// next customer does not wait for it, and return. Nothing else is touched.
+export async function handler(event = {}) {
+  if (event?.warmup === true) {
+    try { await creds(); } catch (err) { console.warn(JSON.stringify({ msg: 'warmup token failed', err: String(err) })); }
+    return { warm: true };
+  }
+  return routes(event);
+}

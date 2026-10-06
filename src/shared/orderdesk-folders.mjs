@@ -44,21 +44,21 @@
 export const FOLDERS = [
   // ── intake ────────────────────────────────────────────────────────────────
   { id: '665685', name: 'QTS', stage: 'received', mirror: 'in_queue', window: 'open' },
-  { id: '698334', name: 'QTS - Pay By Check', stage: 'received', window: 'closed' },
-  { id: '650227', key: 'processing', name: 'Processing', stage: 'in_progress', window: 'open' },
+  { id: '698334', name: 'QTS - Pay By Check', stage: 'received', mirror: 'in_progress', window: 'closed' },
+  { id: '650227', key: 'processing', name: 'Processing', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
   { id: '651474', key: 'proofing', name: 'Proofing', stage: 'proofing', mirror: 'proofing', window: 'open' },
   // Not a "needs a person" folder despite the name. Linh (2026-10-05): an
   // approved order "sent to Pending review and then the python bot generate
   // the final PR and then send those to productions" — so it is mid-printing.
   { id: '653109', key: 'review', name: 'Pending Review', stage: 'in_progress', mirror: 'printing', window: 'open' },
   { id: '661019', name: 'Missing/Corrupted File', stage: 'in_progress', mirror: 'needs_review', window: 'open' },
-  { id: '652268', key: 'manual', name: 'Manual', stage: 'in_progress', window: 'open' },
-  { id: '657836', key: 'sales', name: 'Sales', stage: 'in_progress', window: 'open' },
+  { id: '652268', key: 'manual', name: 'Manual', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
+  { id: '657836', key: 'sales', name: 'Sales', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
   { id: '31358', name: 'Awaiting Admin', stage: 'in_progress', mirror: 'awaiting_admin', window: 'open' },
 
   // ── scheduling: the office drops orders here to start the routing cascade ─
-  { id: '73066', name: 'Today', stage: 'in_progress', window: 'open' },
-  { id: '73067', name: 'Tomorrow', stage: 'in_progress', window: 'open' },
+  { id: '73066', name: 'Today', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
+  { id: '73067', name: 'Tomorrow', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
 
   // ── production ────────────────────────────────────────────────────────────
   { id: '73068', key: 'GA', name: 'GA', stage: 'in_production', mirror: 'production_ga', facility: 'GA', window: 'open' },
@@ -104,7 +104,15 @@ export const ORDERDESK_FOLDERS = Object.freeze(
   Object.fromEntries(FOLDERS.filter((f) => f.key).map((f) => [f.key, f.id])),
 );
 
-/** Display-only mirror: folder id -> dashboard status. */
+/**
+ * Display-only mirror: folder id -> dashboard status.
+ *
+ * 'in_progress' is not a dashboard lane, so those rows don't show on the board.
+ * They exist for the customer's "Manage my order" page, which needs the order's
+ * row (and its Shopify link) wherever the order sits — Linh's program moves
+ * orders out of QTS into Manual, Processing and the rest within minutes
+ * (S66306, 2026-10-06: moved to Manual, page refused it).
+ */
 export const MIRROR_STATUS_BY_ID = Object.freeze(
   Object.fromEntries(FOLDERS.filter((f) => f.mirror).map((f) => [f.id, f.mirror])),
 );

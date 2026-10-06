@@ -36,6 +36,13 @@ describe('the registry reproduces the maps it replaced', () => {
     }
   });
 
+  test('every open working folder is mirrored, so the customer page can find the order', () => {
+    // Kai's test folder is the one deliberate exception (seed-test-row.mjs).
+    for (const f of FOLDERS.filter((x) => x.window === 'open' && x.id !== '711436')) {
+      assert.ok(MIRROR_STATUS_BY_ID[f.id], `${f.name} (${f.id}) is not mirrored`);
+    }
+  });
+
   test('and the production and Awaiting Shipment folders are now covered too', () => {
     for (const fac of ['ga', 'nj', 'tx', 'nv', 'ca']) {
       assert.ok(Object.values(MIRROR_STATUS_BY_ID).includes(`production_${fac}`));
@@ -55,10 +62,11 @@ describe('integrity', () => {
     assert.equal(new Set(keys).size, keys.length);
     // Pending Review used to share "needs_review" with Missing/Corrupted File.
     // Linh (2026-10-05): it holds APPROVED orders while the print file is made,
-    // so it shows as "printing" now and no status is shared.
+    // so it shows as "printing" now. The working folders off the board share
+    // "in_progress" on purpose (customer page only).
     const mirrors = FOLDERS.filter((f) => f.mirror).map((f) => f.mirror);
-    const shared = mirrors.filter((m, i) => mirrors.indexOf(m) !== i);
-    assert.deepEqual(shared, [], 'unexpected shared mirror status');
+    const shared = [...new Set(mirrors.filter((m, i) => mirrors.indexOf(m) !== i))];
+    assert.deepEqual(shared.sort(), ['in_progress'], 'unexpected shared mirror status');
   });
 
   test('every row states its window explicitly, and only with a known value', () => {

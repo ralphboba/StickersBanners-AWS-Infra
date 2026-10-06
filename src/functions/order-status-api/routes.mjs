@@ -7,6 +7,7 @@ import { orderStage, STEPS } from '../../shared/order-stage.mjs';
 import { authorisesOrder } from '../../shared/order-token.mjs';
 import { centsToDollars, toCents } from '../../shared/money.mjs';
 import { isNoShipDestination, isPoBox } from '../../shared/upgrade-eligibility.mjs';
+import { orderBeforeChange } from '../../shared/shopify-pricing.mjs';
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -62,7 +63,7 @@ async function authorised(deps, orderName, presentedUrl) {
 
   let row;
   try {
-    row = await deps.loadRow(orderName);
+    row = await deps.loadRow(orderName, presentedUrl);
   } catch (err) {
     console.error(JSON.stringify({ msg: 'order lookup failed', orderName, err: String(err) }));
     return { response: json(502, { error: 'lookup_failed' }) };
@@ -92,7 +93,7 @@ function stageFor(row) {
  * Shopify. index.mjs supplies the real ones; the tests supply fakes, which is
  * why this file imports nothing from AWS.
  *
- * @param {{ loadRow: (orderName: string) => Promise<object|undefined>,
+ * @param {{ loadRow: (orderName: string, presentedUrl?: string) => Promise<object|undefined>,
  *           loadShopifyOrder: (orderName: string) => Promise<object|null>,
  *           quote: (p: object) => Promise<object>,
  *           estimates: (p: object) => Promise<Array<object>|null> }} deps
@@ -110,8 +111,58 @@ export function makeHandler(deps) {
   };
 }
 
+// Where the customer's wait goes: ms since the request started, per step.
+function timer(route, orderName) {
+  const t0 = Date.now();
+  const marks = {};
+  return {
+    mark: (k) => { marks[k] = Date.now() - t0; },
+    done: (k = 'total') => { marks[k] = Date.now() - t0; console.log(JSON.stringify({ msg: 'timing', route, orderName, ...marks })); },
+  };
+}
+
 function logRefusal(orderName, reason) {
   console.log(JSON.stringify({ msg: 'shipping change not priced', orderName, reason }));
+}
+
+// Every faster service, each priced by Shopify on its own staged edit. The
+// options are priced at the same time and share one rate lookup — one by one
+// they took ~9 Shopify calls in a row. Results are read in order: a refusal
+// about the ORDER (price not verifiable, balance due, …) applies to every
+// option and ends the list there; "service not sold at this subtotal" is per
+// option.
+async function quoteUpgrades(deps, orderName, options, order, expectedFrom) {
+  const upgrades = [];
+  let refusal = null;
+  const rateCache = new Map();
+  const results = await Promise.all(options.map((to) => deps.quote({ order, to, expectedFrom, rateCache })));
+  for (const q of results) {
+    if (q.ok) {
+      upgrades.push({
+        to: q.to,
+        shipping: centsToDollars(q.shippingCents),
+        tax: centsToDollars(q.taxCents),
+        total: centsToDollars(q.totalCents),
+        final: true,
+        currentPrice: centsToDollars(q.fromCents),
+        newPrice: centsToDollars(q.toCents),
+      });
+      continue;
+    }
+    logRefusal(orderName, q.reason);
+    if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
+    refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
+  }
+  return { upgrades, refusal };
+}
+
+// The services a customer may move to: faster ones for a shipped order, all
+// four for a pickup (delivered to the address on the order). One list, one
+// screen, one way to pay.
+function offeredServices(stage) {
+  if (stage.canUpgrade) return stage.upgradeOptions ?? [stage.upgradeTo];
+  if (stage.canConvert) return stage.convertTo ?? [];
+  return [];
 }
 
 // ── GET /my-order ──────────────────────────────────────────────────────────
@@ -125,20 +176,56 @@ async function status(deps, authorised, event) {
   const currentMethod = row.shipping?.method ?? null;
   const stage = stageFor(row);
 
+  // ── the quick view (?lite=1) ───────────────────────────────────────────
+  // No Shopify call: the order, its progress and the names of the faster
+  // services, so the page shows something at once while the priced view
+  // (below, a few seconds of Shopify) is on its way. Nothing here is more
+  // than the full view already says.
+  if (q.lite === '1') {
+    return json(200, {
+      orderName: row.orderName,
+      stage: { label: stage.label, step: stage.step, steps: STEPS },
+      shipping: {
+        current: stage.currentService ?? currentMethod,
+        lite: true,
+        // Pickup orders are priced only once the address is entered.
+        optionNames: stage.canUpgrade ? offeredServices(stage) : [],
+      },
+      addOns: [],
+    });
+  }
+
+  const t = timer('GET', orderName);
+
   // ── an upgrade already chosen and waiting for payment ─────────────────
   // The customer clicked, the order was edited, they have not paid yet (closed
-  // the payment page, or came back from the email). Send them back to the same
-  // Shopify payment page rather than offering anything new.
+  // the payment page, or came back from the email). They can still pay for
+  // it — or pick a different speed (Kai: "옵션 고를 수 있게 해야된다니까"), so
+  // every option is priced again from the order as it was before the change.
   const pending = deps.loadPending ? await deps.loadPending(orderName) : null;
   if (pending?.status === 'pending') {
     const order = await deps.loadShopifyOrder(orderName);
+    t.mark('shopifyOrder');
     const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
     if (paymentUrl && order?.outstandingCents > 0) {
+      const before = offeredServices(stage).length ? orderBeforeChange(order, pending) : null;
+      const { upgrades } = before
+        ? await quoteUpgrades(deps, orderName, offeredServices(stage), before, pending.from)
+        : { upgrades: [] };
+      if (!upgrades.length) {
+        // Options could not be re-priced: say why in the log (no secrets).
+        console.warn(JSON.stringify({ msg: 'pending options not repriced', orderName, canUpgrade: stage.canUpgrade,
+          blockedBy: stage.blockedBy ?? null, before: Boolean(before), shopifyLine: order.shippingLines?.[0]?.title ?? null,
+          pendingTo: pending.to, hasRestore: Boolean(pending.restore), outstandingCents: order.outstandingCents }));
+      }
+      t.done();
       return json(200, {
         orderName: row.orderName,
         stage: { label: stage.label, step: stage.step, steps: STEPS },
         shipping: {
-          current: pending.from, canUpgrade: false, canConvert: false, reason: null,
+          current: pending.from, canUpgrade: upgrades.length > 0, canConvert: false, reason: null,
+          pickup: stage.canConvert === true,
+          upgrades, upgrade: upgrades[0] ?? null,
           awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl },
         },
         addOns: [],
@@ -153,59 +240,27 @@ async function status(deps, authorised, event) {
   // page offers nothing rather than a number we might have to refund.
   let upgrade = null;
   let refusal = null;
-  const shopifyOrder = (stage.canUpgrade || stage.canConvert)
-    ? await deps.loadShopifyOrder(orderName)
-    : null;
+  const shopifyOrder = stage.canUpgrade ? await deps.loadShopifyOrder(orderName) : null;
 
-  // Every faster service, each priced by Shopify on its own staged edit.
-  // One at a time (the Shopify client never fans out). A refusal that is about
-  // the ORDER (price not verifiable, balance due, …) applies to every option,
-  // so the loop stops there; "service not sold at this subtotal" is per option.
+  // A shipped order: every faster service, priced now. A pickup order: the
+  // customer enters the delivery address first and THEN sees the services
+  // priced for it, the way checkout does (Kai, 2026-10-05) — nothing is priced
+  // before there is an address (POST /my-order/quote).
   const upgrades = [];
-  if (stage.canUpgrade) {
-    for (const to of stage.upgradeOptions ?? [stage.upgradeTo]) {
-      const q = await deps.quote({ order: shopifyOrder, to, expectedFrom: currentMethod });
-      if (q.ok) {
-        upgrades.push({
-          to: q.to,
-          shipping: centsToDollars(q.shippingCents),
-          tax: centsToDollars(q.taxCents),
-          total: centsToDollars(q.totalCents),
-          final: true,
-          currentPrice: centsToDollars(q.fromCents),
-          newPrice: centsToDollars(q.toCents),
-        });
-        continue;
-      }
-      logRefusal(orderName, q.reason);
-      if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
-      refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
-    }
+  const services = stage.canUpgrade ? offeredServices(stage) : [];
+  if (services.length) {
+    t.mark('shopifyOrder');
+    const priced = await quoteUpgrades(deps, orderName, services, shopifyOrder, currentMethod);
+    t.mark('quotes');
+    upgrades.push(...priced.upgrades);
+    refusal = priced.refusal;
     upgrade = upgrades[0] ?? null;
     if (upgrade) refusal = null;
   }
-
-  // ── the delivery conversion ───────────────────────────────────────────
-  // No delivery address yet, so no tax yet. Each option shows the rate
-  // checkout would charge, marked "plus tax"; the amount due is produced by
-  // POST once the customer has typed an address. A rate we could not fetch is
-  // shown as a name without a price, never as a guess.
-  let delivery = null;
-  if (stage.canConvert) {
-    const est = await deps.estimates({ order: shopifyOrder, services: stage.convertTo });
-    const byService = new Map((est ?? []).map((e) => [e.service, e.shippingCents]));
-    const options = stage.convertTo
-      // With estimates, list only what checkout actually offers at this
-      // subtotal; without them, list the services and price them at quote time.
-      .filter((service) => !est || byService.has(service))
-      .map((service) => ({
-        service,
-        shipping: byService.has(service) ? centsToDollars(byService.get(service)) : null,
-      }));
-    if (options.length) delivery = { options, needsAddress: true, final: false };
-  }
+  const delivery = stage.canConvert ? { needsAddress: true, options: stage.convertTo.map((service) => ({ service })) } : null;
 
   const offering = Boolean(upgrade || delivery);
+  t.done();
   return json(200, {
     orderName: row.orderName,
     stage: { label: stage.label, step: stage.step, steps: STEPS },
@@ -218,6 +273,8 @@ async function status(deps, authorised, event) {
         : (refusal ?? BLOCKED_COPY[stage.blockedBy] ?? BLOCKED_COPY.unknown_folder),
       upgrade,
       delivery,
+      pickup: stage.canConvert === true,
+      needsAddress: Boolean(delivery),
     },
     addOns: [], // pending the item and price list
   });
@@ -228,6 +285,26 @@ async function status(deps, authorised, event) {
 // READ ONLY like everything else in this function: draftOrderCalculate prices
 // a draft without creating it, and nothing is written anywhere.
 const ADDRESS_FIELDS = ['address1', 'address2', 'city', 'province', 'zip', 'country'];
+
+// The delivery address a pickup customer typed: complete, US, not a PO box,
+// not a place the store does not ship to. Same rules and wording as for an
+// order already shipping.
+function checkDeliveryAddress(raw) {
+  const a = raw ?? {};
+  const address = Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, String(a[k] ?? '').trim()]));
+  address.province = address.province.toUpperCase();
+  address.country = (address.country || 'US').toUpperCase();
+  if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
+    return { response: json(400, { error: 'address_incomplete' }) };
+  }
+  // The store's rates cover one Domestic (US) zone. Nothing else has a price.
+  if (address.country !== 'US') return { response: json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us }) };
+  if (isNoShipDestination({ state: address.province, country: address.country })) {
+    return { response: json(422, { error: 'destination', reason: BLOCKED_COPY.destination }) };
+  }
+  if (isPoBox(address.address1, address.address2)) return { response: json(422, { error: 'po_box', reason: BLOCKED_COPY.po_box }) };
+  return { address };
+}
 
 async function quoteDelivery(deps, authorised, event) {
   let body;
@@ -248,28 +325,34 @@ async function quoteDelivery(deps, authorised, event) {
     return json(409, { error: 'not_convertible', reason: BLOCKED_COPY[stage.blockedBy] ?? null });
   }
 
-  const service = String(body.service ?? '');
-  if (!stage.convertTo.includes(service)) return json(400, { error: 'service_not_offered' });
+  const service = body.service === undefined ? null : String(body.service);
+  if (service !== null && !stage.convertTo.includes(service)) return json(400, { error: 'service_not_offered' });
 
-  const a = body.address ?? {};
-  const address = Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, String(a[k] ?? '').trim()]));
-  address.province = address.province.toUpperCase();
-  address.country = (address.country || 'US').toUpperCase();
-  if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
-    return json(400, { error: 'address_incomplete' });
-  }
-  // The store's rates cover one Domestic (US) zone. Nothing else has a price.
-  if (address.country !== 'US') {
-    return json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us });
-  }
+  const checked = checkDeliveryAddress(body.address);
+  if (checked.response) return checked.response;
+  const { address } = checked;
 
-  // The destination rules that could not be judged on a pickup order can be
-  // judged now. Same rules, same wording, as for an order already shipping.
-  if (isNoShipDestination({ state: address.province, country: address.country })) {
-    return json(422, { error: 'destination', reason: BLOCKED_COPY.destination });
-  }
-  if (isPoBox(address.address1, address.address2)) {
-    return json(422, { error: 'po_box', reason: BLOCKED_COPY.po_box });
+  // No service named: every delivery service, priced at this address with
+  // Shopify's tax — what checkout would have shown (Kai, 2026-10-05).
+  if (service === null) {
+    const order = await deps.loadShopifyOrder(orderName);
+    const rateCache = new Map();
+    const results = await Promise.all(stage.convertTo.map((to) => deps.quote({
+      order, to, expectedFrom: row.shipping?.method ?? null, deliverTo: address, rateCache })));
+    const options = [];
+    for (const q of results) {
+      if (q.ok) {
+        options.push({ to: q.to, shipping: centsToDollars(q.shippingCents), tax: centsToDollars(q.taxCents),
+          total: centsToDollars(q.totalCents), final: true });
+        continue;
+      }
+      logRefusal(orderName, q.reason);
+      if (q.reason !== 'service_unavailable') {
+        return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+      }
+    }
+    if (!options.length) return json(422, { error: 'service_unavailable', reason: SERVICE_UNAVAILABLE_COPY });
+    return json(200, { options });
   }
 
   const order = await deps.loadShopifyOrder(orderName);
@@ -324,21 +407,63 @@ async function requestChange(deps, authorised, event) {
   if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
 
   const stage = stageFor(row);
-  if (!stage.canUpgrade || !(stage.upgradeOptions ?? [stage.upgradeTo]).includes(service)) {
+  if (!offeredServices(stage).includes(service)) {
     return json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY });
   }
 
   const existing = await deps.loadPending(orderName);
-  if (existing?.status === 'pending') {
-    return existing.to === service
-      ? json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
-        ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) })
-      : json(409, { error: 'already_pending' });
+  if (existing?.status === 'pending' && existing.to === service) {
+    return json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
+      ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) });
   }
   if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
 
-  const order = await deps.loadShopifyOrder(orderName);
-  const q = await deps.quote({ order, to: service, expectedFrom: row.shipping?.method ?? null });
+  const t = timer('POST', orderName);
+  let order = await deps.loadShopifyOrder(orderName);
+  t.mark('shopifyOrder');
+  const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
+  // A different speed while the first choice is unpaid: Shopify still carries
+  // that choice and its balance. Priced exactly as the page prices it (the
+  // order as it was before the change); the edit replaces the unpaid line in
+  // ONE commit and the balance becomes the one for the new choice. A pending
+  // record Shopify never received (no balance, original line still there) is
+  // simply superseded. Already paid (webhook not yet in) is not switchable.
+  // A pickup becoming a delivery: the customer typed the address on the page.
+  // It goes on the Shopify order first, so the order edit below taxes the
+  // shipping where it will be delivered; what the page showed came from the
+  // same address. (An unpaid pickup change already put it there.)
+  if (stage.canConvert && existing?.status !== 'pending') {
+    if (!deps.setShippingAddress) return json(503, { error: 'not_available' });
+    const checked = checkDeliveryAddress(body.address);
+    if (checked.response) return checked.response;
+    const set = await deps.setShippingAddress({ orderName, orderId: order?.id, address: checked.address });
+    if (!set.updated) {
+      if (set.skipped) return json(503, { error: 'not_available' });
+      console.error(JSON.stringify({ msg: 'shipping address not set', orderName, set }));
+      return json(502, { error: 'address_failed' });
+    }
+    order = await deps.loadShopifyOrder(orderName);
+  }
+
+  let switching = false;
+  if (existing?.status === 'pending') {
+    if (line?.title === existing.to && order.outstandingCents > 0) switching = true;
+    else if (order?.outstandingCents > 0) {
+      // A balance for something other than the recorded choice: changed by hand.
+      logRefusal(orderName, 'switch_line_mismatch');
+      return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+    } else if (line?.title !== (row.shipping?.method ?? null)) {
+      return json(409, { error: 'already_paid' });
+    }
+  }
+  const pricedOn = switching ? orderBeforeChange(order, existing) : order;
+  if (!pricedOn) {
+    logRefusal(orderName, 'switch_unpriceable');
+    return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+  }
+  const q = await deps.quote({ order: pricedOn, to: service,
+    expectedFrom: switching ? existing.from : (row.shipping?.method ?? null) });
+  t.mark('quote');
   if (!q.ok || !q.edit) {
     logRefusal(orderName, q.reason ?? 'no_edit');
     return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
@@ -350,41 +475,75 @@ async function requestChange(deps, authorised, event) {
 
   const now = deps.now();
   const ref = `CHG-${orderName}-${now}`;
-  const committed = await deps.commitEdit({
-    orderName, calculatedOrderId: q.edit.calculatedOrderId,
-    staffNote: `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
-  });
-  if (!committed.committed) {
-    if (committed.skipped) return json(503, { error: 'not_available' });
-    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
-    return json(502, { error: 'commit_failed' });
-  }
-
   const change = {
     orderName, ref, status: 'pending',
     orderDeskId: row.source?.orderDeskId ?? null,
     shopifyOrderId: q.edit.orderId,
     from: q.from, to: q.to, shippingCents: q.shippingCents, taxCents: q.taxCents,
     restore: q.edit.restore,
+    // A pickup converted to delivery: the address Order Desk must ship to.
+    ...(q.deliverTo ? { deliverTo: q.deliverTo } : {}),
     committedAt: new Date(now).toISOString(),
     revertAfter: new Date(now + REVERT_AFTER_MS).toISOString(),
+    // A staff test order (seed-test-row.mjs) — marked "(TEST)" in Chat, left
+    // out of the daily count.
+    ...(row.testOrder ? { test: true } : {}),
   };
+
+  // The record goes in BEFORE Shopify is touched, replacing the unpaid one
+  // only if it is still that one. If this function is cut off after the
+  // commit, the record already says what Shopify now carries, so the payment
+  // webhook can still write Order Desk; if it is cut off before, the record
+  // points at a change Shopify never got, which the next request supersedes.
+  const save = (c) => deps.savePending(c);
+  try {
+    await save(existing?.status === 'pending' ? { ...change, replaces: existing.ref } : change);
+  } catch {
+    return json(409, { error: 'changed_meanwhile' });
+  }
+
+  const committed = await deps.commitEdit({
+    orderName, calculatedOrderId: q.edit.calculatedOrderId,
+    staffNote: switching
+      ? `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online (replaces unpaid ${existing.ref}, ${existing.to})`
+      : `Shipping change ${ref}: ${q.from} -> ${q.to}, requested by the customer online`,
+  });
+  t.mark('commit');
+  if (!committed.committed) {
+    // Nothing changed in Shopify: put the record back the way it was.
+    await save(existing?.status === 'pending' ? { ...existing, replaces: ref } : { ...change, status: 'failed', replaces: ref })
+      .catch((err) => console.error(JSON.stringify({ msg: 'record rollback failed', orderName, ref, err: String(err) })));
+    if (committed.skipped) return json(503, { error: 'not_available' });
+    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
+    return json(502, { error: 'commit_failed' });
+  }
+
   // Shopify is the authority on what is owed. If the committed balance is not
-  // the one quoted, the team looks before any invoice goes out.
+  // the one quoted, the team looks before anyone pays.
   if (committed.outstandingCents !== q.totalCents) {
-    await deps.savePending({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
-      committedOutstandingCents: committed.outstandingCents });
+    await save({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
+      committedOutstandingCents: committed.outstandingCents, replaces: ref });
     return json(502, { error: 'commit_mismatch' });
   }
-  await deps.savePending({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}) });
+  // Shopify's invoice for the edited order goes to the customer now, while
+  // there is a balance (Shopify refuses one for a paid order): the new
+  // service, the amount and a Pay now link, in case they close the payment
+  // page (Kai, 2026-10-04). Sent alongside the record write; a failed email
+  // never stops the customer reaching the payment page.
+  const [, invoice] = await Promise.all([
+    save({ ...change, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}), replaces: ref, confirmed: true }),
+    deps.sendInvoice({ orderName, orderId: q.edit.orderId,
+      customMessage: `Your shipping is changing to ${q.to}. Here is your updated invoice — pay the balance to confirm the change.` })
+      .catch((err) => ({ sent: false, error: String(err) })),
+  ]);
+  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
+  t.done();
 
   // Shopify's own payment page for the balance: the customer pays exactly as
-  // they did at checkout, nothing of ours handles the card. Only if Shopify
-  // gave no such page do we fall back to emailing the invoice.
+  // they did at checkout, nothing of ours handles the card.
   if (committed.paymentUrl) {
-    return json(200, { requested: true, total: centsToDollars(q.totalCents), paymentUrl: committed.paymentUrl });
+    return json(200, { requested: true, total: centsToDollars(q.totalCents), paymentUrl: committed.paymentUrl,
+      invoiceSent: Boolean(invoice.sent) });
   }
-  const invoice = await deps.sendInvoice({ orderName, orderId: q.edit.orderId });
-  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
   return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent) });
 }

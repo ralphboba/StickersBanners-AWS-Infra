@@ -5,7 +5,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { getConfig } from '../lib/config/environments';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string) {
+function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string, shippingChangeLive?: boolean) {
   const app = new cdk.App();
   const config = getConfig(envName);
   // Dependencies live in their own stack (mirrors the real app wiring).
@@ -26,6 +26,7 @@ function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: strin
     intakeQueue,
     notifyQueue,
     shippingChangeTestOrders,
+    shippingChangeLive,
   });
   return Template.fromStack(stack);
 }
@@ -48,15 +49,17 @@ describe('ComputeStack', () => {
       'sb-dev-poller',
       'sb-dev-proof-approval',
       'sb-dev-shipping-change-expiry',
+      'sb-dev-shipping-change-reconcile',
       'sb-dev-shopify-paid',
+      'sb-dev-upgrade-report',
       'sb-dev-webhook',
     ]);
   });
 
   test('the shipping-change functions ship with both write switches off', () => {
     const fns = Object.values(synth().findResources('AWS::Lambda::Function'))
-      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
-    expect(fns).toHaveLength(3);
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
+    expect(fns).toHaveLength(4);
     for (const fn of fns) {
       expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBe('disabled');
       expect(fn.Properties.Environment.Variables.ORDERDESK_UPGRADE_WRITES).toBe('disabled');
@@ -65,7 +68,7 @@ describe('ComputeStack', () => {
 
   test('a test list arms the writes for those orders only', () => {
     const fns = Object.values(synth('dev', 's64262').findResources('AWS::Lambda::Function'))
-      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
     for (const fn of fns) {
       const v = fn.Properties.Environment.Variables;
       expect(v.SHOPIFY_WRITES).toBe('enabled');
@@ -83,6 +86,24 @@ describe('ComputeStack', () => {
       expect(fn.Properties.Environment?.Variables?.WRITE_ONLY_ORDERS).toBeUndefined();
     }
     expect(() => synth('dev', '*')).toThrow(/order names/);
+  });
+
+  test('live arms the shipping-change writes for every order, only explicitly, never with a test list', () => {
+    const fns = Object.values(synth('dev', undefined, true).findResources('AWS::Lambda::Function'))
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
+    expect(fns.length).toBe(4);
+    for (const fn of fns) {
+      const v = fn.Properties.Environment.Variables;
+      expect(v.SHOPIFY_WRITES).toBe('enabled');
+      expect(v.ORDERDESK_UPGRADE_WRITES).toBe('enabled');
+      expect(v.WRITE_ONLY_ORDERS).toBeUndefined();
+    }
+    // the other write switches and the read-only page are untouched
+    for (const fn of Object.values(synth('dev', undefined, true).findResources('AWS::Lambda::Function'))) {
+      expect(fn.Properties.Environment?.Variables?.ORDERDESK_WRITES ?? 'disabled').toBe('disabled');
+      if (fn.Properties.FunctionName === 'sb-dev-order-status-api') expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBeUndefined();
+    }
+    expect(() => synth('dev', 'S64262', true)).toThrow(/exclusive/);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {
@@ -180,5 +201,34 @@ describe('ComputeStack', () => {
       .flatMap((p: any) => p.Properties.PolicyDocument.Statement.flatMap((st: any) =>
         (Array.isArray(st.Action) ? st.Action : [st.Action]) as string[]));
     expect(actions).toEqual(expect.arrayContaining(['ssm:GetParameter']));
+  });
+
+  test('the daily upgrade report runs every morning, New York time, emails Kai only, read-only on the table', () => {
+    const t = synth();
+    t.resourceCountIs('AWS::SNS::Subscription', 1);
+    t.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'kai@stickersbanners.com' });
+    t.hasResourceProperties('AWS::Scheduler::Schedule', {
+      Name: 'sb-dev-upgrade-report',
+      ScheduleExpression: 'cron(52 8 * * ? *)',
+      ScheduleExpressionTimezone: 'America/New_York',
+      State: 'ENABLED',
+    });
+    const env = Object.values(t.findResources('AWS::Lambda::Function'))
+      .find((fn) => fn.Properties.FunctionName === 'sb-dev-upgrade-report')!.Properties.Environment.Variables;
+    expect(env.REPORT_TOPIC_ARN).toBeDefined();
+    expect(env.SHOPIFY_WRITES).toBeUndefined();
+    expect(env.ORDERDESK_UPGRADE_WRITES).toBeUndefined();
+  });
+
+  test('the two customer-facing functions get 1 GB and a 5-minute no-op warm-up', () => {
+    const t = synth();
+    const fns = Object.values(t.findResources('AWS::Lambda::Function'));
+    for (const name of ['sb-dev-order-status-api', 'sb-dev-order-change-request']) {
+      expect(fns.find((f) => f.Properties.FunctionName === name)!.Properties.MemorySize).toBe(1024);
+      t.hasResourceProperties('AWS::Scheduler::Schedule', {
+        Name: `${name}-warm`, ScheduleExpression: 'rate(5 minutes)', State: 'ENABLED',
+        Target: Match.objectLike({ Input: JSON.stringify({ warmup: true }) }),
+      });
+    }
   });
 });

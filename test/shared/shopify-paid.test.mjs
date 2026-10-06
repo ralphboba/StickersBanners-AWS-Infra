@@ -14,11 +14,11 @@ const CHANGE = { orderName: 'S64262', ref: 'CHG-1', orderDeskId: '49', from: 'Fe
   shippingCents: 1738, taxCents: 104, status: 'pending' };
 
 function harness({ change = CHANGE, apply = { applied: true, from: 'FedEx Ground' }, allowed = { allowed: true } } = {}) {
-  const log = { applied: [], done: [], chat: [], attention: [], where: [] };
+  const log = { applied: [], done: [], chat: [], attention: [], where: [], invoices: [] };
   const handler = makePaidHandler({
     webhookSecret: async () => SECRET,
     loadPending: async (name) => (change && name === change.orderName ? change : null),
-    markDone: async (name, ref) => { log.done.push([name, ref]); },
+    markDone: async (name, ref, result, c) => { log.done.push([name, ref]); log.doneChange = c; },
     markAttention: async (name, ref, why) => { log.attention.push([name, ref, why]); },
     stillAllowed: async () => allowed,
     applyOrderDesk: async (c) => { log.applied.push(c.ref); return apply; },
@@ -36,6 +36,7 @@ describe('orders/paid', () => {
     assert.deepEqual(body(r), { written: true, duplicate: false, chat: true });
     assert.deepEqual(log.applied, ['CHG-1']);
     assert.deepEqual(log.done, [['S64262', 'CHG-1']]);
+    assert.equal(log.doneChange.to, 'FedEx 3-Days');   // the daily count's row is built from it
     assert.deepEqual(log.chat, ['S64262 upgraded FedEx Ground → FedEx 3-Days · +$17.38 + $1.04 tax']);
   });
 
@@ -135,5 +136,47 @@ describe('when is an order paid?', () => {
     h = harness();
     await h.handler(event({ name: '#S64262', financial_status: 'paid' }));
     assert.deepEqual(h.log.where, [{ facility: null }]);
+  });
+  test('a retired or failed record is never treated as payable', async () => {
+    for (const status of ['replaced', 'failed']) {
+      const { handler, log } = harness({ change: { ...CHANGE, status } });
+      const r = await handler(event({ name: '#S64262', financial_status: 'paid' }));
+      assert.equal(JSON.parse(r.body).ignored, 'not_pending');
+      assert.deepEqual(log.applied, []);
+      assert.deepEqual(log.chat, []);
+    }
+  });
+
+  test('the edit must be on the order: a paid order still at its old shipping is not the payment', async () => {
+    const { handler, log } = harness();
+    const old = body(await handler(event({ name: 'S64262', financial_status: 'paid',
+      shipping_lines: [{ title: 'FedEx Ground' }] }, { topic: 'orders/updated' })));
+    assert.equal(old.ignored, 'edit_not_on_order');
+    assert.equal(log.applied.length, 0);
+    const paid = body(await handler(event({ name: 'S64262', financial_status: 'paid', total_outstanding: '0.00',
+      shipping_lines: [{ title: 'FedEx 3-Days' }] })));
+    assert.equal(paid.written, true);
+  });
+});
+
+describe('orders/paid and orders/updated together', () => {
+  test('the second settler finds the claim taken: 200, nothing written twice', async () => {
+    let held = false;
+    const applied = [];
+    const handler = makePaidHandler({
+      webhookSecret: async () => SECRET,
+      loadPending: async () => CHANGE,
+      claim: async () => { if (held) return false; held = true; return true; },
+      release: async () => { held = false; },
+      markDone: async () => {}, markAttention: async () => {},
+      stillAllowed: async () => { await new Promise((r) => setTimeout(r, 5)); return { allowed: true }; },
+      applyOrderDesk: async (c) => { applied.push(c.ref); return { applied: true, from: 'FedEx Ground' }; },
+      notify: async () => ({ sent: true }),
+    });
+    const p = { name: 'S64262', financial_status: 'paid', shipping_lines: [{ title: 'FedEx 3-Days' }] };
+    const [a, b] = await Promise.all([handler(event(p)), handler(event(p, { topic: 'orders/updated' }))]);
+    assert.deepEqual([a.statusCode, b.statusCode], [200, 200]);
+    assert.equal(applied.length, 1);
+    assert.ok([body(a).ignored, body(b).ignored].includes('in_progress'));
   });
 });

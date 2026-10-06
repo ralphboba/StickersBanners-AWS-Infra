@@ -36,7 +36,7 @@ import { shopifyGraphQL } from './shopify-fetch.mjs';
 import { toMailingAddress } from './shopify-orders.mjs';
 import { toCents, centsToAmount } from './money.mjs';
 import { isPickup } from './order-stage.mjs';
-import { stageShippingChange } from './shopify-order-edit.mjs';
+import { stageShippingChange, beginOrderEdit } from './shopify-order-edit.mjs';
 
 const ORDER_FOR_PRICING = `
   query OrderForPricing($q: String!) {
@@ -234,6 +234,33 @@ async function priceCharge({ shop, token, input, amountCents, fetchImpl }) {
 }
 
 /**
+ * The order as it was before an UNPAID shipping change, for re-pricing while
+ * the customer is still choosing (Kai, 2026-10-04: "옵션 고를 수 있게 해야된다니까").
+ *
+ * Shopify's order already carries the chosen service and the balance. Put
+ * back the original line (the change's `restore`) and take the balance off the
+ * total, and quoteShippingChange prices every option exactly as it did the
+ * first time: the staged edit still removes the order's real line, and the
+ * balance it reports is what the customer owes for the NEW choice.
+ *
+ * @param {object} order   from fetchOrderForPricing
+ * @param {{ to: string, restore: { title: string, priceCents: number } }} change  the pending record
+ * @returns {object|null}  null when the order is not in the state the change left it in
+ */
+export function orderBeforeChange(order, change) {
+  const r = change?.restore;
+  if (!order || !r?.title || !Number.isSafeInteger(r.priceCents)) return null;
+  if (order.shippingLines?.length !== 1 || order.shippingLines[0].title !== change.to) return null;
+  if (!(order.outstandingCents > 0) || !Number.isSafeInteger(order.currentTotalCents)) return null;
+  return {
+    ...order,
+    shippingLines: [{ ...order.shippingLines[0], title: r.title, originalCents: r.priceCents, discountedCents: r.priceCents }],
+    outstandingCents: 0,
+    currentTotalCents: order.currentTotalCents - order.outstandingCents,
+  };
+}
+
+/**
  * Price a change of service on one order: an upgrade (Ground -> 3-Days …) or a
  * pickup converted to delivery.
  *
@@ -241,6 +268,7 @@ async function priceCharge({ shop, token, input, amountCents, fetchImpl }) {
  * @param {object} p.order      from fetchOrderForPricing
  * @param {string} p.to         the service, exactly as checkout titles it
  * @param {object} [p.deliverTo] the typed address — conversions only
+ * @param {Map} [p.rateCache]   per-request cache of rate lookups (see lookup)
  * @param {string} [p.expectedFrom] the service OrderDesk says the order is on;
  *        if Shopify's line says otherwise, someone has changed it by hand
  * @returns {Promise<{ ok: true, mode: 'upgrade'|'convert', from: string, to: string,
@@ -248,7 +276,7 @@ async function priceCharge({ shop, token, input, amountCents, fetchImpl }) {
  *                     taxCents: number, totalCents: number, draftInput: object }
  *                  | { ok: false, reason: string }>}
  */
-export async function quoteShippingChange({ shop, token, order, to, deliverTo, expectedFrom, fetchImpl }) {
+export async function quoteShippingChange({ shop, token, order, to, deliverTo, expectedFrom, rateCache, fetchImpl }) {
   const no = (reason) => ({ ok: false, reason });
   if (!order) return no('order_not_found');
   if (order.currency !== USD) return no('not_usd');
@@ -272,12 +300,30 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   }
 
   const mode = isPickup(line.title) ? 'convert' : 'upgrade';
-  const address = mode === 'convert' ? toMailingAddress(deliverTo) : order.shippingAddress;
+  // A pickup with no typed address is priced like an upgrade (Kai: the page
+  // shows the delivery options, no address form): on the address already on
+  // the Shopify order, through an order edit that replaces the free pickup line.
+  const onOrderAddress = mode === 'convert' && !deliverTo;
+  const address = mode === 'convert' && deliverTo ? toMailingAddress(deliverTo) : order.shippingAddress;
   if (!address) return no('no_address');
+  const byEdit = mode === 'upgrade' || onOrderAddress;
 
-  const lookup = (subtotalCents) => checkoutRates({
-    shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId,
-  });
+  // One rate lookup per subtotal per request: the options on one page all ask
+  // the same question (rateCache, a Map the caller creates per request; the
+  // promise is cached so options priced at the same time share one call).
+  const lookup = (subtotalCents) => {
+    const key = `${subtotalCents}|${mode}|${JSON.stringify(address)}`;
+    if (rateCache?.has(key)) return rateCache.get(key);
+    const p = checkoutRates({ shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId });
+    rateCache?.set(key, p);
+    return p;
+  };
+  // An upgrade is priced on an order edit; open it now, alongside the rate
+  // lookup, instead of after it (one Shopify round trip less per page). If
+  // the quote stops early the uncommitted edit just expires.
+  const begun = byEdit && order.outstandingCents === 0 && order.id
+    ? beginOrderEdit({ shop, token, orderId: order.id, fetchImpl }).catch(() => null)
+    : null;
   const atCheckout = await lookup(order.subtotalCents);
   if (!atCheckout) return no('rates_unavailable');
   const now = edited ? await lookup(order.currentSubtotalCents) : atCheckout;
@@ -301,7 +347,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
   const shippingCents = toCentsRate - fromCents;
   if (shippingCents <= 0) return no('not_an_upgrade');
 
-  if (mode === 'upgrade') {
+  if (byEdit) {
     // Priced on the customer's own order (Order Edit): remove the paid line,
     // add the new service, read the balance Shopify would invoice. The new
     // line is priced so the balance's shipping part is exactly shippingCents:
@@ -313,6 +359,7 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
       shop, token, fetchImpl,
       orderId: order.id, removeLineId: line.id, title: to,
       priceCents: newLineCents, totalBeforeCents: order.currentTotalCents,
+      ...(begun ? { begun } : {}),
     });
     if (!edit.ok) return no(edit.reason);
     const taxCents = edit.outstandingCents - shippingCents;
@@ -327,6 +374,12 @@ export async function quoteShippingChange({ shop, token, order, to, deliverTo, e
       edit: { orderId: order.id, removeLineId: line.id, title: to, priceCents: newLineCents,
         expectedOutstandingCents: edit.outstandingCents, calculatedOrderId: edit.calculatedOrderId,
         restore: { title: line.title, priceCents: line.originalCents } },
+      // A pickup converted on the order's own address: where Order Desk must
+      // now ship it (orderdesk-write.mjs needs it for a conversion).
+      ...(onOrderAddress ? { deliverTo: {
+        address1: address.address1 ?? '', address2: address.address2 ?? '', city: address.city ?? '',
+        province: address.provinceCode, zip: address.zip, country: address.countryCode,
+      } } : {}),
     };
   }
 

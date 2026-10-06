@@ -61,30 +61,41 @@ const ADDRESS = { address1: '1 Peachtree St', city: 'Atlanta', province: 'ga', z
 beforeEach(() => fake(pickupRow()));
 
 describe('GET /my-order for a pickup order', () => {
-  test('offers delivery, at card price, not final', async () => {
+  // Kai (2026-10-05): a pickup customer enters the delivery address first,
+  // then sees the services priced for it, like checkout. Nothing is priced
+  // before there is an address.
+  test('asks for the address first: the four services named, nothing priced, Shopify not asked', async () => {
     const { status, body } = read(await get('S70001'));
     assert.equal(status, 200);
-    assert.equal(body.shipping.canConvert, true);
+    assert.equal(body.shipping.pickup, true);
+    assert.equal(body.shipping.needsAddress, true);
     assert.equal(body.shipping.canUpgrade, false);
     assert.equal(body.shipping.reason, null);
-    assert.equal(body.shipping.delivery.needsAddress, true);
-    assert.equal(body.shipping.delivery.final, false);
-    assert.deepEqual(body.shipping.delivery.options.map((o) => o.service),
-      ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
-    for (const o of body.shipping.delivery.options) assert.equal(o.shipping, RATE[o.service] / 100);
-  });
-
-  test('asks for no tax: there is no address to tax yet', async () => {
-    await get('S70001');
+    assert.deepEqual(body.shipping.delivery.options.map((o) => o.service), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
     assert.equal(calls.quote.length, 0);
-    assert.equal(calls.estimates.length, 1);
+    assert.equal(calls.estimates.length, 0);
+    assert.equal(calls.shopify, 0);
   });
 
-  test('without estimates the services are listed unpriced, never guessed', async () => {
-    fake(pickupRow(), { estimates: false });
-    const { body } = read(await get('S70001'));
-    assert.equal(body.shipping.canConvert, true);
-    for (const o of body.shipping.delivery.options) assert.equal(o.shipping, null);
+  test('with an address: every service priced at it by Shopify, tax included', async () => {
+    const { status, body } = read(await post({ o: 'S70001', s: URL, address: ADDRESS }));
+    assert.equal(status, 200);
+    assert.deepEqual(body.options.map((o) => o.to), ['FedEx Ground', 'FedEx 3-Days', 'FedEx 2-Days', 'FedEx 1-Day']);
+    for (const o of body.options) {
+      assert.equal(o.final, true);
+      assert.equal(o.total, o.shipping + o.tax);
+    }
+    assert.equal(calls.quote.length, 4);
+    assert.ok(calls.quote.every((q) => q.deliverTo.province === 'GA' && q.deliverTo.zip === '30303'));
+    assert.ok(calls.quote.every((q) => q.rateCache === calls.quote[0].rateCache));
+  });
+
+  test('an address it cannot ship to is refused before Shopify is asked', async () => {
+    const po = read(await post({ o: 'S70001', s: URL, address: { ...ADDRESS, address1: 'PO Box 12' } }));
+    assert.equal(po.status, 422);
+    const ak = read(await post({ o: 'S70001', s: URL, address: { ...ADDRESS, province: 'AK' } }));
+    assert.equal(ak.status, 422);
+    assert.equal(calls.quote.length, 0);
   });
 
   test('says nothing internal: no folder id, no facility', async () => {
