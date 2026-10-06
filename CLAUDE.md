@@ -29,6 +29,11 @@ authority: **Linh** (legacy author).
   Exception (Kai, 2026-09-28): one Google Chat line per *paid* shipping change,
   sent after the Order Desk write succeeds (`src/shared/gchat.mjs`). Webhook URL
   is a secret — SSM, never committed.
+  Exception (Kai, 2026-10-06): the reconciler (`shipping-change-reconcile`,
+  every 5 min) posts to the "shipping upgrade" space
+  (SSM `gchat/webhook-url-alerts`, falls back to `gchat/webhook-url`) when a
+  PAID change is still not in Order Desk after 30 min, or a change is flagged
+  for a person. It also settles paid changes the webhook missed (same code).
   Exception (Kai, 2026-10-04): when the customer picks a shipping change and the
   order edit is committed, Shopify's own invoice email (`orderInvoiceSend`) to
   the order's address — updated order, balance, Pay now. Only while there is a

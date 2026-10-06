@@ -74,6 +74,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly shopifyPaid: lambda.Function;
   public readonly upgradeReport: lambda.Function;
   public readonly shippingChangeExpiry: lambda.Function;
+  public readonly shippingChangeReconcile: lambda.Function;
   public readonly webhook: lambda.Function;
   public readonly approval: lambda.Function;
   public readonly proofApproval: lambda.Function;
@@ -271,7 +272,27 @@ export class ComputeStack extends cdk.Stack {
       environment: changeEnv,
       description: 'Undo shipping changes left unpaid past their deadline',
     });
-    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry]) {
+    // The webhook's safety net (Kai, 2026-10-06: "반영이 똑바로 되야되는데"):
+    // every 5 minutes, ask Shopify which open changes are paid and settle any
+    // the webhook missed, through the same code; post to Chat what still
+    // cannot be applied. Same switches as shopify-paid — it writes Order Desk
+    // only where the webhook would.
+    this.shippingChangeReconcile = new lambda.Function(this, 'ShippingChangeReconcile', {
+      ...base,
+      functionName: `${config.prefix}-shipping-change-reconcile`,
+      code: lambda.Code.fromAsset(SRC_ROOT),
+      handler: 'functions/shipping-change-reconcile/index.handler',
+      timeout: Duration.minutes(2),
+      environment: changeEnv,
+      description: 'Settle paid shipping changes the webhook missed; alert Chat on any not applied',
+    });
+    new scheduler.Schedule(this, 'ShippingChangeReconcileEvery5', {
+      scheduleName: `${config.prefix}-shipping-change-reconcile`,
+      description: 'Settle paid shipping changes the webhook missed (every 5 min)',
+      schedule: scheduler.ScheduleExpression.rate(Duration.minutes(5)),
+      target: new targets.LambdaInvoke(this.shippingChangeReconcile, { retryAttempts: 0 }),
+    });
+    for (const fn of [this.orderChangeRequest, this.shopifyPaid, this.shippingChangeExpiry, this.shippingChangeReconcile]) {
       jobsTable.grantReadWriteData(fn);
       this.grantSecretsRead(fn, config);
     }

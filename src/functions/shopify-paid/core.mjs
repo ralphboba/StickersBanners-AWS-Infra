@@ -91,6 +91,51 @@ export function makePaidHandler(deps) {
     // failed commit ('replaced', 'failed') never writes Order Desk.
     if (change.status !== 'pending') return reply(200, { ignored: 'not_pending', ref: change.ref, status: change.status });
 
+    // The edit must actually be on the order. A record is saved just BEFORE
+    // the commit, so for a second it exists while the order is still fully
+    // paid at its old shipping — an unrelated orders/updated in that second
+    // (the pickup address being set, a staff edit) must not be taken for the
+    // payment.
+    if (Array.isArray(order.shipping_lines)
+      && !order.shipping_lines.some((l) => String(l?.title ?? '') === change.to)) {
+      return reply(200, { ignored: 'edit_not_on_order', ref: change.ref });
+    }
+
+    const r = await settleChange(deps, orderName, change);
+    // Another settler (the other topic's webhook, or the reconciler) has it.
+    if (r.reason === 'in_progress') return reply(200, { ignored: 'in_progress', ref: change.ref });
+    if (r.reason === 'too_late') return reply(200, { written: false, reason: 'too_late', detail: r.detail });
+    if (!r.written && !r.duplicate) {
+      // Not written (switch off, or Order Desk failed). A 500 makes Shopify
+      // retry; the reference keeps the retry from doubling anything — and the
+      // reconciler (shipping-change-reconcile) retries too, whatever Shopify does.
+      return reply(r.reason === 'disabled' || r.reason === 'synthetic' ? 200 : 500, { written: false, reason: r.reason });
+    }
+    return reply(200, { written: r.written, duplicate: r.duplicate, chat: r.chat });
+  };
+}
+
+/**
+ * Apply a PAID change: re-check the folder, write Order Desk, mark the record,
+ * tell Chat. Shared by the payment webhook and the reconciler, so a payment is
+ * handled the same way whichever of them sees it first; the Order Desk write is
+ * idempotent on change.ref, so both seeing it is harmless.
+ *
+ * @returns {Promise<{ written: boolean, duplicate?: boolean, chat?: boolean,
+ *                     reason?: string, detail?: string }>}
+ */
+export async function settleChange(deps, orderName, change) {
+  if (deps.claim && !(await deps.claim(orderName, change.ref))) return { written: false, reason: 'in_progress' };
+  try {
+    return await settle(deps, orderName, change);
+  } finally {
+    // Done and attention clear the claim themselves; anything else (not
+    // written, or thrown) frees it for the next try.
+    if (deps.release) await deps.release(orderName, change.ref);
+  }
+}
+
+async function settle(deps, orderName, change) {
     // ── paid too late? ─────────────────────────────────────────────────
     // The quote was right when it was given; the customer may pay days later.
     // By then the order may have gone to Awaiting Shipment (Ground can no
@@ -105,16 +150,13 @@ export function makePaidHandler(deps) {
         + `(+$${centsToDollars((change.shippingCents ?? 0) + (change.taxCents ?? 0)).toFixed(2)}) but the order is now `
         + `${late.label ?? 'past the point of change'} — NOT applied. Refund or handle by hand.`
         + (change.test ? ' (TEST)' : ''), where);
-      return reply(200, { written: false, reason: 'too_late', detail: late.reason });
+      return { written: false, reason: 'too_late', detail: late.reason };
     }
 
     const result = await deps.applyOrderDesk(change);
     if (!result.applied && result.skipped !== 'duplicate') {
-      // Not written (switch off, or Order Desk failed). A 500 makes Shopify
-      // retry; the reference keeps the retry from doubling anything.
       console.log(JSON.stringify({ msg: 'paid change not written', orderName, ref: change.ref, result }));
-      return reply(result.skipped === 'disabled' || result.skipped === 'synthetic' ? 200 : 500,
-        { written: false, reason: result.skipped ?? result.error });
+      return { written: false, reason: result.skipped ?? result.error };
     }
 
     await deps.markDone(orderName, change.ref, result, change);
@@ -129,6 +171,5 @@ export function makePaidHandler(deps) {
         converted: Boolean(result.converted), test: Boolean(change.test),
       }), where);
     }
-    return reply(200, { written: Boolean(result.applied), duplicate: result.skipped === 'duplicate', chat: chat.sent });
-  };
+    return { written: Boolean(result.applied), duplicate: result.skipped === 'duplicate', chat: Boolean(chat.sent) };
 }

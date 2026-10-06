@@ -48,6 +48,7 @@ describe('ComputeStack', () => {
       'sb-dev-poller',
       'sb-dev-proof-approval',
       'sb-dev-shipping-change-expiry',
+      'sb-dev-shipping-change-reconcile',
       'sb-dev-shopify-paid',
       'sb-dev-upgrade-report',
       'sb-dev-webhook',
@@ -56,8 +57,8 @@ describe('ComputeStack', () => {
 
   test('the shipping-change functions ship with both write switches off', () => {
     const fns = Object.values(synth().findResources('AWS::Lambda::Function'))
-      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
-    expect(fns).toHaveLength(3);
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
+    expect(fns).toHaveLength(4);
     for (const fn of fns) {
       expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBe('disabled');
       expect(fn.Properties.Environment.Variables.ORDERDESK_UPGRADE_WRITES).toBe('disabled');
@@ -66,7 +67,7 @@ describe('ComputeStack', () => {
 
   test('a test list arms the writes for those orders only', () => {
     const fns = Object.values(synth('dev', 's64262').findResources('AWS::Lambda::Function'))
-      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
     for (const fn of fns) {
       const v = fn.Properties.Environment.Variables;
       expect(v.SHOPIFY_WRITES).toBe('enabled');
@@ -88,8 +89,8 @@ describe('ComputeStack', () => {
 
   test('live arms the shipping-change writes for every order, only explicitly, never with a test list', () => {
     const fns = Object.values(synth('dev', undefined, true).findResources('AWS::Lambda::Function'))
-      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry/.test(fn.Properties.FunctionName));
-    expect(fns.length).toBe(3);
+      .filter((fn) => /order-change-request|shopify-paid|shipping-change-expiry|shipping-change-reconcile/.test(fn.Properties.FunctionName));
+    expect(fns.length).toBe(4);
     for (const fn of fns) {
       const v = fn.Properties.Environment.Variables;
       expect(v.SHOPIFY_WRITES).toBe('enabled');
