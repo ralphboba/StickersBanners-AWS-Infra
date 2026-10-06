@@ -24,11 +24,12 @@ import { fetchOrderForPricing, quoteShippingChange, deliveryEstimates } from '..
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { makeHandler } from './routes.mjs';
+import { makeOrderRowLoader } from '../../shared/order-row.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const JOBS_TABLE = process.env.JOBS_TABLE;
 
-async function loadRow(orderName) {
+async function readRow(orderName) {
   const res = await ddb.send(new GetCommand({
     TableName: JOBS_TABLE,
     Key: { PK: `ORDER#${orderName}`, SK: 'META' },
@@ -37,6 +38,9 @@ async function loadRow(orderName) {
 }
 
 const shopifyCreds = makeShopifyCredentials({ getSecret });
+// Any folder: the stored row when it can authorise, otherwise read live
+// (order-row.mjs).
+const loadRow = makeOrderRowLoader({ readRow, shopifyCreds, getSecret });
 
 // Every Shopify failure becomes "no price", never an error page and never a
 // guess: a page that shows nothing is a nuisance; a number we cannot bill is

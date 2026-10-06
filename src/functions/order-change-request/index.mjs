@@ -14,6 +14,7 @@ import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
 import { commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
+import { makeOrderRowLoader } from '../../shared/order-row.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -21,8 +22,13 @@ const JOBS_TABLE = process.env.JOBS_TABLE;
 const creds = makeShopifyCredentials({ getSecret });
 
 const routes = makeHandler({
-  loadRow: async (orderName) => (await ddb.send(new GetCommand({
-    TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
+  // Any folder: the stored row when it can authorise, otherwise read live.
+  loadRow: makeOrderRowLoader({
+    readRow: async (orderName) => (await ddb.send(new GetCommand({
+      TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } })))?.Item,
+    shopifyCreds: creds,
+    getSecret,
+  }),
   loadShopifyOrder: async (orderName) => fetchOrderForPricing({ ...(await creds()), orderName }),
   quote: async (args) => {
     try { return await quoteShippingChange({ ...(await creds()), ...args }); } catch (err) {

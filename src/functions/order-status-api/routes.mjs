@@ -63,7 +63,7 @@ async function authorised(deps, orderName, presentedUrl) {
 
   let row;
   try {
-    row = await deps.loadRow(orderName);
+    row = await deps.loadRow(orderName, presentedUrl);
   } catch (err) {
     console.error(JSON.stringify({ msg: 'order lookup failed', orderName, err: String(err) }));
     return { response: json(502, { error: 'lookup_failed' }) };
@@ -93,7 +93,7 @@ function stageFor(row) {
  * Shopify. index.mjs supplies the real ones; the tests supply fakes, which is
  * why this file imports nothing from AWS.
  *
- * @param {{ loadRow: (orderName: string) => Promise<object|undefined>,
+ * @param {{ loadRow: (orderName: string, presentedUrl?: string) => Promise<object|undefined>,
  *           loadShopifyOrder: (orderName: string) => Promise<object|null>,
  *           quote: (p: object) => Promise<object>,
  *           estimates: (p: object) => Promise<Array<object>|null> }} deps
