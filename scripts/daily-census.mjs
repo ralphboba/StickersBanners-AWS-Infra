@@ -168,7 +168,10 @@ function main() {
   const day = args.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) ?? yesterdayEastern();
   const withArtwork = !args.includes('--no-artwork');
   const maxFilesArg = args.indexOf('--max-files');
-  const maxFiles = maxFilesArg === -1 ? 500 : Number(args[maxFilesArg + 1]);
+  // 500 covered September (~350 files a day). 2026-10-05 had 643 and the cap
+  // turned an ordinary day into complete: false. The probe runs ~1.6 s a file
+  // (500 in 13.5 min), so 1500 is ~40 min — inside the hour the wait allows.
+  const maxFiles = maxFilesArg === -1 ? 1500 : Number(args[maxFilesArg + 1]);
 
   const { polled, inspected } = census(day);
 
