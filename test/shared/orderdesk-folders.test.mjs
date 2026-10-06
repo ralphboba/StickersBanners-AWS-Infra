@@ -36,6 +36,13 @@ describe('the registry reproduces the maps it replaced', () => {
     }
   });
 
+  test('every open working folder is mirrored, so the customer page can find the order', () => {
+    // Kai's test folder is the one deliberate exception (seed-test-row.mjs).
+    for (const f of FOLDERS.filter((x) => x.window === 'open' && x.id !== '711436')) {
+      assert.ok(MIRROR_STATUS_BY_ID[f.id], `${f.name} (${f.id}) is not mirrored`);
+    }
+  });
+
   test('and the production and Awaiting Shipment folders are now covered too', () => {
     for (const fac of ['ga', 'nj', 'tx', 'nv', 'ca']) {
       assert.ok(Object.values(MIRROR_STATUS_BY_ID).includes(`production_${fac}`));
@@ -53,11 +60,12 @@ describe('integrity', () => {
   test('no duplicate keys, and no duplicate mirror statuses', () => {
     const keys = FOLDERS.filter((f) => f.key).map((f) => f.key);
     assert.equal(new Set(keys).size, keys.length);
-    // One status is shared on purpose: Missing/Corrupted File and Pending
-    // Review both show as "needs_review", as they did before the registry.
+    // Two statuses are shared on purpose: Missing/Corrupted File and Pending
+    // Review both show as "needs_review", as they did before the registry; and
+    // the working folders off the board share "in_progress" (customer page only).
     const mirrors = FOLDERS.filter((f) => f.mirror).map((f) => f.mirror);
-    const shared = mirrors.filter((m, i) => mirrors.indexOf(m) !== i);
-    assert.deepEqual(shared, ['needs_review'], 'unexpected shared mirror status');
+    const shared = [...new Set(mirrors.filter((m, i) => mirrors.indexOf(m) !== i))];
+    assert.deepEqual(shared.sort(), ['in_progress', 'needs_review'], 'unexpected shared mirror status');
   });
 
   test('every row states its window explicitly, and only with a known value', () => {
