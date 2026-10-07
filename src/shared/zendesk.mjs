@@ -22,6 +22,8 @@
 
 import { getGroup } from './secrets.mjs';
 
+import { testLaneEnabled } from './test-lane.mjs';
+
 const PROOF_VIEWER_URL = 'https://proof.stickersbanners.com/proof-viewer';
 const SALES_EMAIL = 'sales@stickersbanners.com';
 
@@ -94,11 +96,15 @@ export function proofEmailHtml(orderName, proofUrl = PROOF_VIEWER_URL) {
  * in `pending` (waiting on the customer), and tagged with the order number in
  * the custom field so it can be found by order.
  *
+ * `testLane`: Kai's test order (shared/test-lane.mjs). Sent to the order's own
+ * address even with ZENDESK_SENDS held, subject marked [TEST] — only where
+ * TEST_LANE is enabled on the function.
+ *
  * @param {{ orderName: string, customerEmail: string, customerName?: string,
- *           proofUrl?: string }} p
+ *           proofUrl?: string, testLane?: boolean }} p
  */
 export async function sendProofReadyEmail(
-  { orderName, customerEmail, customerName, proofUrl },
+  { orderName, customerEmail, customerName, proofUrl, testLane = false },
   // The Zendesk credentials come from SSM. Injectable so the redirect can be
   // tested without one: the promise made to Linh is about what goes on the
   // wire, and a test that cannot reach the wire cannot check it.
@@ -112,9 +118,10 @@ export async function sendProofReadyEmail(
   // When a redirect is set, the customer's address must not reach Zendesk at
   // all -- not as requester, not as a CC. It stays in the log line as
   // `intendedFor` so the run is still auditable.
+  const test = testLane === true && testLaneEnabled();
   const redirect = proofEmailRedirect();
   const recipient = redirect || customerEmail;
-  const subject = (redirect ? '[TEST] ' : '')
+  const subject = (redirect || test ? '[TEST] ' : '')
     + `Proof for Order ${orderName} is ready to be reviewed`;
   const htmlBody = proofEmailHtml(orderName, proofUrl || PROOF_VIEWER_URL);
   const preview = {
@@ -122,6 +129,7 @@ export async function sendProofReadyEmail(
     subject,
     proofUrl: proofUrl || PROOF_VIEWER_URL,
     ...(redirect ? { redirected: true, intendedFor: customerEmail } : {}),
+    ...(test ? { testLane: true } : {}),
   };
 
   if (isSyntheticOrder(orderName)) {
@@ -129,7 +137,7 @@ export async function sendProofReadyEmail(
     return { sent: false, skipped: 'synthetic', preview };
   }
 
-  if (!zendeskSendsEnabled()) {
+  if (!test && !zendeskSendsEnabled()) {
     // The prototype path: say exactly who would have been emailed and with
     // what, contact nobody, and read no credentials.
     console.log(JSON.stringify({

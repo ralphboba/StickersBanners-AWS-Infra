@@ -82,6 +82,13 @@ authority: **Linh** (legacy author).
   ⚠️ The guard lives in a CONTAINER, not a Lambda — it only exists in ECR after
   `build-images.yml` runs, which is restricted to the working branch. Verify the
   running image has it before trusting the switch.
+- **Test lane** (Kai, 2026-10-07, `src/shared/test-lane.mjs`, dev only via
+  `testLaneEnabled`): an order Kai moves by hand to OrderDesk **Kai-TEST-QTS**
+  (715303) runs for real despite the held switches — but only into test
+  destinations: Kai-TEST-* folders, the proof email to the order's own address
+  ([TEST] subject), FTP `/AWS-TEST/...`, CA Drive `AWS-TEST` folder. The poller
+  takes over (and stops) the real lane's run of that order. Real orders never
+  carry `testLane`; prod has `TEST_LANE=disabled` (safety test).
 - Demo sandbox: synthetic `DEMO-*` orders + display-only mirror of real orders.
   `DEMO-*`/`ZZ-*` orders never send real email or transfer (hard guard).
 - **The customer approval path is off until `approval/link-secret` +

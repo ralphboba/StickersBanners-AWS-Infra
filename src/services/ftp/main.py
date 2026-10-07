@@ -24,9 +24,10 @@ import boto3
 from jobload import load_job
 import ftputil
 
-from guards import (is_demo_order, is_transferable, remote_path, transfer_destination,
+from guards import (TEST_BASE_PATH, is_demo_order, is_test_lane_job, is_transferable,
+                    remote_path, test_lane_destination, transfer_destination,
                     transfers_enabled)
-from drive_helper import upload_print_folder
+from drive_helper import find_or_create_folder, get_drive, upload_print_folder
 
 
 # The invoice-proof folder on the facility FTP. Capital P: that is the folder
@@ -148,7 +149,16 @@ def main():
     # Where these files go, and whether they may go at all, is decided in one
     # place for every transport -- see guards.transfer_destination. Resolved
     # before anything is downloaded, so a held order costs nothing.
-    dest = transfer_destination(facility, order_name)
+    #
+    # Kai's test lane (guards.is_test_lane_job): a test location, never the
+    # real one, and not held by PRODUCTION_TRANSFER. FTP_BASE_PATH is set for
+    # this run so the invoice proofs go under /AWS-TEST/Proof too.
+    test = is_test_lane_job(job)
+    if test:
+        os.environ["FTP_BASE_PATH"] = TEST_BASE_PATH
+        dest = test_lane_destination(facility, order_name)
+    else:
+        dest = transfer_destination(facility, order_name)
 
     # A transport the review path cannot divert. Held rather than sent to the
     # real destination -- somebody chose the review path, and the point of that
@@ -171,7 +181,7 @@ def main():
     #
     # Arming it is a go-live action needing Kai's explicit approval
     # (see CLAUDE.md "Safety" and docs/go-live.md).
-    if not transfers_enabled():
+    if not test and not transfers_enabled():
         detail = (f"WOULD HAVE TRANSFERRED to {facility} "
                   f"({len(rename_dict)} invoice image(s)) -- PRODUCTION_TRANSFER disabled")
         record_step(order_name, "done", detail=detail)
@@ -191,10 +201,14 @@ def main():
                 f.write(sa_json)
             # Each upload worker builds its own Drive service from this file
             # (the client is not thread-safe).
-            result = upload_print_folder(sa_path, local_dir, ca_drive_id, max_workers=4)
+            parent = ca_drive_id
+            if dest.get("subfolder"):
+                parent = find_or_create_folder(get_drive(sa_path), dest["subfolder"], ca_drive_id)
+            result = upload_print_folder(sa_path, local_dir, parent, max_workers=4)
             if result["failed"]:
                 raise RuntimeError(f"CA Drive upload incomplete: {result}")
-            detail = f"CA Drive folder {result['folder_id']} ({result['successful']} files)"
+            where = f"{dest['subfolder']}/" if dest.get("subfolder") else ""
+            detail = f"CA Drive folder {where}{result['folder_id']} ({result['successful']} files)"
         else:
             host = get_secret("ftp", "host")
             user = get_secret("ftp", "user")
@@ -203,6 +217,8 @@ def main():
             upload_invoice_images(local_dir, invoice_images, host, user, passwd)
             upload_folder_ftp(local_dir, dest["path"], host, user, passwd)
             detail = f"FTP {dest['path']}"
+        if test:
+            detail = f"TEST LANE -- {detail}"
 
     record_step(order_name, "done", detail=detail)
     print(json.dumps({"orderName": order_name, "facility": facility,

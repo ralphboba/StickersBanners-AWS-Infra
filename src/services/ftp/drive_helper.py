@@ -52,6 +52,23 @@ def create_drive_folder(drive, name, parent_folder_id):
     return folder.get("id")
 
 
+def find_or_create_folder(drive, name, parent_folder_id):
+    """The folder `name` directly under the parent, created if it is missing.
+
+    Used for the test lane's "AWS-TEST" folder, so repeated test runs share one
+    folder instead of making a new one each time.
+    """
+    q = (f"name = '{name}' and '{parent_folder_id}' in parents and "
+         "mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+    found = drive.files().list(
+        q=q, fields="files(id)", corpora="allDrives",
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ).execute().get("files", [])
+    if found:
+        return found[0]["id"]
+    return create_drive_folder(drive, name, parent_folder_id)
+
+
 def _upload_single_file(service_account_file, local_path, file_name, drive_root_id):
     """Upload one file with its own Drive service, retrying transient failures."""
     mime_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"

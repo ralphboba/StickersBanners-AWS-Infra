@@ -18,6 +18,7 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { updateOrderDeskDetails } from '../../shared/orderdesk-write.mjs';
 import { isSyntheticOrder, orderDeskWritesEnabled } from '../../shared/write-gates.mjs';
+import { TEST_FOLDERS, isTestLaneJob } from '../../shared/test-lane.mjs';
 import { planMove, checkFrom } from './core.mjs';
 
 // A skipped move has no tag value (and, held, no OrderDesk response): drop the
@@ -38,11 +39,15 @@ async function record(orderName, entry) {
 
 async function move(job, step) {
   const orderName = job?.orderName;
-  const plan = planMove(job, step);
+  // Kai's test lane: the same moves between the Kai-TEST-* folders, not held
+  // by ORDERDESK_WRITES (shared/test-lane.mjs). checkFrom below still insists
+  // the order is in the test folder the step expects.
+  const testLane = isTestLaneJob(job);
+  const plan = planMove(job, step, testLane ? TEST_FOLDERS : undefined);
   if (plan.skip) return { step, applied: false, skipped: plan.skip };
 
-  const intent = { step, folder: plan.folder, folderId: plan.folderId };
-  if (isSyntheticOrder(orderName) || !orderDeskWritesEnabled()) {
+  const intent = { step, folder: plan.folder, folderId: plan.folderId, ...(testLane ? { testLane: true } : {}) };
+  if (isSyntheticOrder(orderName) || (!testLane && !orderDeskWritesEnabled())) {
     // updateOrderDeskDetails logs and returns without touching OrderDesk.
     const r = await updateOrderDeskDetails({ order: null, orderName, folder: plan.folder });
     return { ...intent, ...r };
@@ -62,7 +67,7 @@ async function move(job, step) {
     console.log(JSON.stringify({ msg: `orderdesk move skipped (${where})`, orderName, ...intent, folderNow: order?.folder_id }));
     return { ...intent, applied: false, skipped: where, folderNow: String(order?.folder_id ?? '') };
   }
-  const r = await updateOrderDeskDetails({ order, orderName, folder: plan.folder, storeId, apiKey });
+  const r = await updateOrderDeskDetails({ order, orderName, folder: plan.folder, storeId, apiKey, testLane });
   return { ...intent, ...r };
 }
 

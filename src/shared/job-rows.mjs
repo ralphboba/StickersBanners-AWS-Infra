@@ -55,3 +55,17 @@ export const MIRROR_VALUES = { ':mirrorTrue': true };
 export function isConditionFailure(err) {
   return err?.name === 'ConditionalCheckFailedException';
 }
+
+/**
+ * Condition for a test-lane claim (shared/test-lane.mjs): as CLAIM_CONDITION,
+ * and it may also take over a row the real lane made. Kai's test order lands
+ * in QTS first, so the real poll usually takes it — with every switch held —
+ * before he moves it to Kai-TEST-QTS. Fails only on a row that is already a
+ * test-lane row, which is the test lane's own dedupe guard.
+ */
+export const TEST_CLAIM_CONDITION = `${CLAIM_CONDITION} OR attribute_not_exists(testLane)`;
+
+/** Has the test lane already taken this order? */
+export function isTestClaimed(item) {
+  return isClaimed(item) && item.testLane === true;
+}

@@ -30,6 +30,7 @@
 import { folderIds, ORDERDESK_TAGS } from './intake-gate.mjs';
 import { isPickup } from './order-stage.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from './orderdesk-fetch.mjs';
+import { TEST_FOLDERS, testLaneEnabled, isTestFolder } from './test-lane.mjs';
 import {
   isSyntheticOrder, orderDeskWritesEnabled,
   orderDeskUpgradeWritesEnabled, blockedReason,
@@ -53,16 +54,21 @@ export { orderDeskWritesEnabled };
  * @param {string} p.folder       key from ORDERDESK_FOLDERS, e.g. "manual"
  * @param {string} p.storeId
  * @param {string} p.apiKey
+ * @param {boolean} [p.testLane]  Kai's test lane (shared/test-lane.mjs): the
+ *                                order goes to the Kai-TEST-* folder instead,
+ *                                and ORDERDESK_WRITES does not hold it. Only
+ *                                with TEST_LANE enabled on the function.
  * @returns {Promise<{ applied: boolean, skipped?: 'disabled'|'synthetic',
  *                     folderId?: string, tagValue?: string, error?: string }>}
  */
 export async function updateOrderDeskDetails({
-  order, orderName, tag, folder, storeId, apiKey,
+  order, orderName, tag, folder, storeId, apiKey, testLane = false,
 }) {
-  const folderId = folderIds()[folder];
+  const test = testLane === true && testLaneEnabled();
+  const folderId = test ? TEST_FOLDERS[folder] : folderIds()[folder];
   const keepTag = tag === undefined;
   const tagValue = keepTag ? undefined : ORDERDESK_TAGS[tag];
-  const intent = { folder, folderId, tag: keepTag ? '(unchanged)' : tag, tagValue };
+  const intent = { folder, folderId, tag: keepTag ? '(unchanged)' : tag, tagValue, ...(test ? { testLane: true } : {}) };
 
   if (isSyntheticOrder(orderName)) {
     console.log(JSON.stringify({
@@ -71,7 +77,12 @@ export async function updateOrderDeskDetails({
     return { applied: false, skipped: 'synthetic', folderId, tagValue };
   }
 
-  if (!orderDeskWritesEnabled()) {
+  // A test-lane move may only ever land in a Kai-TEST-* folder.
+  if (test && !isTestFolder(folderId)) {
+    return { applied: false, error: `no test folder for ${folder}`, folderId, tagValue };
+  }
+
+  if (!test && !orderDeskWritesEnabled()) {
     // The prototype path: say exactly what would have happened, change nothing.
     console.log(JSON.stringify({
       msg: 'orderdesk move WOULD HAVE RUN (writes disabled)', orderName, ...intent,

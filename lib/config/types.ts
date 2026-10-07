@@ -38,4 +38,12 @@ export interface EnvironmentConfig {
    * touch outside it is still decided by the switches in `trial.ts`.
    */
   readonly intakePollEnabled?: boolean;
+  /**
+   * Kai's test lane (src/shared/test-lane.mjs): orders Kai moves to the
+   * Kai-TEST-QTS folder run for real — OrderDesk moves between the Kai-TEST-*
+   * folders, the proof email to the order's own address, print files to FTP
+   * /AWS-TEST and the CA Drive "AWS-TEST" folder — while every write switch
+   * keeps holding real orders. Off unless set; never set for prod.
+   */
+  readonly testLaneEnabled?: boolean;
 }

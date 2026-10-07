@@ -126,6 +126,10 @@ export class EcsStack extends cdk.Stack {
           // layout; a value sends the same run to a folder a person reviews
           // before anything reaches production.
           FTP_BASE_PATH: trial.ftpBasePath,
+          // Kai's test lane: a job with testLane is transferred for real, but
+          // only to FTP /AWS-TEST and the CA Drive "AWS-TEST" folder
+          // (src/services/ftp/guards.py). Never set for prod.
+          TEST_LANE: config.testLaneEnabled ? 'enabled' : 'disabled',
         },
       });
 

@@ -10,6 +10,31 @@
 import { sendProofReadyEmail } from '../../shared/zendesk.mjs';
 import { signApprovalToken, approvalUrl } from '../../shared/approval-link.mjs';
 import { getGroup } from '../../shared/secrets.mjs';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { testLaneEnabled } from '../../shared/test-lane.mjs';
+
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+
+/**
+ * Is this one of Kai's test-lane orders (shared/test-lane.mjs)? Read from the
+ * order's row, not the message, so nothing upstream can mark an order as a
+ * test by accident. Only asked where TEST_LANE is enabled; any error = no.
+ */
+async function isTestLaneOrder(orderName) {
+  if (!testLaneEnabled() || !process.env.JOBS_TABLE) return false;
+  try {
+    const res = await ddb.send(new GetCommand({
+      TableName: process.env.JOBS_TABLE,
+      Key: { PK: `ORDER#${orderName}`, SK: 'META' },
+      ProjectionExpression: 'testLane',
+    }));
+    return res.Item?.testLane === true;
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'could not read testLane', orderName, err: String(err) }));
+    return false;
+  }
+}
 
 const PROOF_CDN_BASE = process.env.PROOF_CDN_BASE ?? '';
 const PROOF_PORTAL_BASE = process.env.PROOF_PORTAL_BASE ?? '';
@@ -96,6 +121,7 @@ export async function handler(event) {
           customerEmail: n.customerEmail,
           customerName: n.customerName,
           proofUrl: await proofUrl(n.orderName),
+          testLane: await isTestLaneOrder(n.orderName),
         });
         console.log(JSON.stringify({
           msg: result.sent ? 'proof email sent' : `proof email held (${result.skipped})`,

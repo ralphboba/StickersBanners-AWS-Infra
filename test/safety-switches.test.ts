@@ -281,3 +281,60 @@ describe('the trial flags', () => {
     }
   });
 });
+
+/**
+ * Kai's test lane (2026-10-07, src/shared/test-lane.mjs). Orders Kai moves to
+ * Kai-TEST-QTS run for real into test-only destinations. It is a dev-only
+ * thing: prod must never carry it, and it must not touch the real switches.
+ */
+describe('the test lane', () => {
+  const prod = getConfig('prod');
+
+  function compute(cfg: typeof config) {
+    const app = new cdk.App();
+    const deps = new cdk.Stack(app, 'deps', { env });
+    const stack = new ComputeStack(app, `${cfg.prefix}-compute`, {
+      env,
+      config: cfg,
+      jobsTable: new dynamodb.Table(deps, 'Jobs', {
+        partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING },
+        sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING },
+      }),
+      intakeQueue: new sqs.Queue(deps, 'Intake', { fifo: true }),
+      notifyQueue: new sqs.Queue(deps, 'Notify', { fifo: true }),
+    });
+    return Template.fromStack(stack);
+  }
+  const fnEnv = (t: Template, name: string) => envOf(Object.values(
+    t.findResources('AWS::Lambda::Function', { Properties: { FunctionName: name } }))[0]!.Properties as any);
+
+  test('dev: on for the poller, the mover and the email — the real switches stay held', () => {
+    const t = compute(config);
+    for (const fn of ['sb-dev-poller', 'sb-dev-orderdesk-move', 'sb-dev-notify-consumer']) {
+      expect(fnEnv(t, fn).TEST_LANE).toBe('enabled');
+    }
+    expect(fnEnv(t, 'sb-dev-poller').ORDERDESK_WRITES).toBe('disabled');
+    expect(fnEnv(t, 'sb-dev-orderdesk-move').ORDERDESK_WRITES).toBe('disabled');
+    expect(fnEnv(t, 'sb-dev-notify-consumer').ZENDESK_SENDS).toBe('disabled');
+  });
+
+  test('prod: off everywhere, and the poller cannot stop pipeline runs', () => {
+    expect(prod.testLaneEnabled).toBeFalsy();
+    const t = compute(prod);
+    for (const fn of ['sb-prod-poller', 'sb-prod-orderdesk-move', 'sb-prod-notify-consumer']) {
+      expect(fnEnv(t, fn).TEST_LANE).toBe('disabled');
+    }
+    expect(JSON.stringify(t.findResources('AWS::IAM::Policy'))).not.toContain('states:StopExecution');
+  });
+
+  test('dev tasks: on, with PRODUCTION_TRANSFER still held', () => {
+    for (const def of Object.values(ecsTemplate().findResources('AWS::ECS::TaskDefinition'))) {
+      const vars: Record<string, string> = Object.fromEntries(
+        (def.Properties.ContainerDefinitions[0].Environment as { Name: string, Value: string }[])
+          .map((e) => [e.Name, e.Value]),
+      );
+      expect(vars.TEST_LANE).toBe('enabled');
+      expect(vars.PRODUCTION_TRANSFER).toBe('disabled');
+    }
+  });
+});

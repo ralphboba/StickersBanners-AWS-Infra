@@ -88,6 +88,9 @@ export class ComputeStack extends cdk.Stack {
     // Held by default — see lib/config/trial.ts for why arming is a deploy-time
     // flag rather than an edit to the literals below.
     const trial = trialConfig(this);
+    // Kai's test lane (src/shared/test-lane.mjs). Applies only to orders Kai
+    // moves to Kai-TEST-QTS; real orders stay held by the switches above.
+    const testLane = config.testLaneEnabled ? 'enabled' : 'disabled';
 
     const base = {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -98,6 +101,8 @@ export class ComputeStack extends cdk.Stack {
       // adds the X-Ray write permissions to each function role automatically.
       tracing: lambda.Tracing.ACTIVE,
     };
+
+    const pipelineArn = `arn:aws:states:${this.region}:${this.account}:stateMachine:${config.prefix}-pipeline`;
 
     // --- poller: pull QTS-folder orders from OrderDesk -> clean -> enqueue ---
     // Bundles src root so it can reuse shared/orderdesk (cleanOrder).
@@ -122,12 +127,26 @@ export class ComputeStack extends cdk.Stack {
         // Redirects the gate's folder ids for a bounded trial. Empty means
         // Linh's real folders, which is what an ordinary deploy produces.
         ORDERDESK_FOLDER_IDS: trial.orderDeskFolderIds,
+        TEST_LANE: testLane,
+        // Built from the name, not imported: the workflow stack depends on
+        // this one. Used only to stop the real lane's run of a test order.
+        STATE_MACHINE_ARN: pipelineArn,
       },
       description: 'Poll the OrderDesk QTS folder, clean jobs, enqueue intake',
     });
     intakeQueue.grantSendMessages(this.poller);
     jobsTable.grantReadWriteData(this.poller); // read for dedupe, write META
     this.grantSecretsRead(this.poller, config);
+    if (config.testLaneEnabled) {
+      this.poller.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['states:ListExecutions'],
+        resources: [pipelineArn],
+      }));
+      this.poller.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['states:StopExecution'],
+        resources: [`arn:aws:states:${this.region}:${this.account}:execution:${config.prefix}-pipeline:*`],
+      }));
+    }
 
     // --- orderdesk-move: the pipeline's OrderDesk folder moves after intake ---
     // Processing -> Proofing -> Pending Review -> facility, as Linh's program
@@ -146,6 +165,7 @@ export class ComputeStack extends cdk.Stack {
         SB_ENV: config.env,
         ORDERDESK_WRITES: trial.orderDeskWrites,
         ORDERDESK_FOLDER_IDS: trial.orderDeskFolderIds,
+        TEST_LANE: testLane,
       },
       description: 'Move the order between OrderDesk folders as the pipeline advances',
     });
@@ -171,8 +191,13 @@ export class ComputeStack extends cdk.Stack {
         // and needs explicit approval — see CLAUDE.md "Safety".
         ZENDESK_SENDS: trial.zendeskSends,
         PROOF_EMAIL_REDIRECT: trial.proofEmailRedirect,
+        // Test-lane orders (META.testLane) are emailed at the order's own
+        // address even with ZENDESK_SENDS held.
+        TEST_LANE: testLane,
+        JOBS_TABLE: jobsTable.tableName,
       },
     });
+    jobsTable.grantReadData(this.notifyConsumer); // META.testLane
     // SqsEventSource also grants Receive/Delete on the queue.
     this.notifyConsumer.addEventSource(
       new SqsEventSource(notifyQueue, { batchSize: 10, reportBatchItemFailures: true }),

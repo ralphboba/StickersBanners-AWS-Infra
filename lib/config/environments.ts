@@ -35,6 +35,9 @@ const environments: Record<DeployEnv, EnvironmentConfig> = {
     // scheduler deploy no longer turns it back off. OrderDesk writes, Zendesk
     // sends and production transfer stay held (test/safety-switches.test.ts).
     intakePollEnabled: true,
+    // Kai, 2026-10-07: end-to-end testing with his own test orders, moved by
+    // hand to Kai-TEST-QTS, while Linh's program keeps running.
+    testLaneEnabled: true,
   },
   prod: {
     env: 'prod',

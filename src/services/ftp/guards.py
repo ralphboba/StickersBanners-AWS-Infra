@@ -138,3 +138,34 @@ def transfer_destination(facility, order_name, env=None):
             "review": reviewing,
         }
     return {"kind": "drive", "review": False}
+
+
+# Kai's test lane (2026-10-07, src/shared/test-lane.mjs): an order Kai moved to
+# the Kai-TEST-QTS folder carries testLane on its job row. Its files are really
+# transferred -- PRODUCTION_TRANSFER does not hold it -- but only ever into a
+# test location nobody prints from: FTP /AWS-TEST/..., and for CA an
+# "AWS-TEST" folder inside the CA Drive.
+TEST_BASE_PATH = "/AWS-TEST"
+TEST_DRIVE_FOLDER = "AWS-TEST"
+
+
+def test_lane_enabled(env=None):
+    """TEST_LANE switched on for this task? Exact match, defaults to OFF."""
+    env = os.environ if env is None else env
+    return str(env.get("TEST_LANE", "")).strip().lower() == "enabled"
+
+
+def is_test_lane_job(job, env=None):
+    """A test-lane order, on a task where the lane is switched on."""
+    return test_lane_enabled(env) and isinstance(job, dict) and job.get("testLane") is True
+
+
+def test_lane_destination(facility, order_name):
+    """Where a test-lane order's files go. Never a real production path."""
+    transport = TRANSPORTS.get(facility)
+    if transport is None:
+        raise ValueError(f"Invalid production facility: {facility}")
+    if transport == "ftp":
+        env = {"FTP_BASE_PATH": TEST_BASE_PATH}
+        return {"kind": "ftp", "path": remote_path(facility, order_name, env=env), "test": True}
+    return {"kind": "drive", "subfolder": TEST_DRIVE_FOLDER, "test": True}

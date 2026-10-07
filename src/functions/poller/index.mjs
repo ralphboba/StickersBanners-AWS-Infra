@@ -7,6 +7,7 @@
 // are skipped, so re-polling the same folder is idempotent.
 
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { SFNClient, ListExecutionsCommand, StopExecutionCommand } from '@aws-sdk/client-sfn';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, ScanCommand,
@@ -20,12 +21,14 @@ import { writeGateStatus } from '../../shared/write-gates.mjs';
 import { fetchOrderByName } from '../../shared/shopify-orders.mjs';
 import { FOLDERS, MIRROR_STATUS_BY_ID } from '../../shared/orderdesk-folders.mjs';
 import {
-  isClaimed, isConditionFailure,
-  CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
+  isClaimed, isTestClaimed, isConditionFailure,
+  CLAIM_CONDITION, TEST_CLAIM_CONDITION, MIRROR_ONLY_CONDITION, MIRROR_VALUES,
 } from '../../shared/job-rows.mjs';
 import { updateOrderDeskDetails, applyExpressUpgrade } from '../../shared/orderdesk-write.mjs';
+import { TEST_INTAKE_FOLDER_ID, testLaneEnabled } from '../../shared/test-lane.mjs';
 
 const sqs = new SQSClient({});
+const sfn = new SFNClient({});
 // Real orders can carry undefined fields (missing totals/uploads); drop them.
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -35,6 +38,9 @@ const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const shopifyCreds = makeShopifyCredentials({ getSecret });
 const QTS_FOLDER_ID = process.env.QTS_FOLDER_ID;
+// Only used by the test lane, to stop the real lane's run of an order Kai has
+// moved to Kai-TEST-QTS. Unset: nothing is stopped.
+const STATE_MACHINE_ARN = process.env.STATE_MACHINE_ARN;
 
 // OrderDesk folder id -> dashboard status, for the display-only mirror.
 // From Linh's constants (orderStatusLib / folderLib) and confirmed against live
@@ -94,16 +100,49 @@ async function fetchFolder(storeId, apiKey, folderId, max) {
  * order in the intake folder, so a bare "does a row exist" check would make
  * this skip every real order once the schedule is enabled — see shared/job-rows.
  */
-async function alreadySeen(orderName) {
+async function alreadySeen(orderName, testLane = false) {
   const res = await ddb.send(
     new GetCommand({
       TableName: JOBS_TABLE,
       Key: { PK: `ORDER#${orderName}`, SK: 'META' },
-      ProjectionExpression: 'PK, #m',
+      ProjectionExpression: 'PK, #m, testLane',
       ExpressionAttributeNames: { '#m': 'mirror' },
     }),
   );
-  return isClaimed(res.Item);
+  // The test lane takes over a real-lane row (see TEST_CLAIM_CONDITION).
+  return testLane ? isTestClaimed(res.Item) : isClaimed(res.Item);
+}
+
+/**
+ * Test lane only: stop the real lane's run of this order, if it is still
+ * going (usually parked at the approval wait). Both runs would otherwise
+ * write the same order's rows. Execution names are `${orderName}-${messageId}`
+ * (pipeline-starter). Never throws — a run left going is untidy, not unsafe:
+ * every switch holds it.
+ */
+async function stopRealLaneRuns(orderName) {
+  if (!STATE_MACHINE_ARN) return [];
+  const prefix = `${String(orderName).replace(/[^A-Za-z0-9_-]/g, '')}-`;
+  const stopped = [];
+  try {
+    let nextToken;
+    do {
+      const page = await sfn.send(new ListExecutionsCommand({
+        stateMachineArn: STATE_MACHINE_ARN, statusFilter: 'RUNNING', maxResults: 1000, nextToken,
+      }));
+      for (const ex of page.executions ?? []) {
+        if (!ex.name?.startsWith(prefix)) continue;
+        await sfn.send(new StopExecutionCommand({
+          executionArn: ex.executionArn, error: 'TestLaneTakeover', cause: 'moved to Kai-TEST-QTS',
+        }));
+        stopped.push(ex.name);
+      }
+      nextToken = page.nextToken;
+    } while (nextToken);
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'could not stop real-lane run', orderName, err: String(err) }));
+  }
+  return stopped;
 }
 
 async function enqueue(job) {
@@ -120,7 +159,7 @@ async function enqueue(job) {
       },
       // Create the row, or take over the mirror's display-only one. Still
       // fails if a real order row exists — that is the dedupe/race guard.
-      ConditionExpression: CLAIM_CONDITION,
+      ConditionExpression: job.testLane ? TEST_CLAIM_CONDITION : CLAIM_CONDITION,
       ExpressionAttributeValues: MIRROR_VALUES,
     }),
   );
@@ -129,7 +168,9 @@ async function enqueue(job) {
       QueueUrl: INTAKE_QUEUE_URL,
       MessageBody: JSON.stringify(job),
       MessageGroupId: 'intake',
-      MessageDeduplicationId: job.orderName,
+      // The real lane may have queued this same order minutes ago; a test-lane
+      // message must not be dropped as its duplicate.
+      MessageDeduplicationId: job.testLane ? `${job.orderName}-test` : job.orderName,
     }),
   );
 }
@@ -166,7 +207,7 @@ async function hold(job, gate, move) {
           at: new Date().toISOString(),
         },
       },
-      ConditionExpression: CLAIM_CONDITION,
+      ConditionExpression: job.testLane ? TEST_CLAIM_CONDITION : CLAIM_CONDITION,
       ExpressionAttributeValues: MIRROR_VALUES,
     }),
   );
@@ -497,16 +538,44 @@ export async function handler(event = {}) {
     return { dryRun: true, polled: orders.length, inspected };
   }
 
+  const batch = await intakeBatch(orders, { storeId, apiKey });
+
+  // Kai's test lane: orders he moved to Kai-TEST-QTS. Only on the scheduled
+  // poll (no folderId asked for), and only where TEST_LANE is enabled.
+  let testLane;
+  if (testLaneEnabled() && event?.folderId === undefined) {
+    const testOrders = await fetchFolder(storeId, apiKey, TEST_INTAKE_FOLDER_ID, 50);
+    testLane = await intakeBatch(testOrders, { storeId, apiKey, testLane: true });
+  }
+
+  const summary = {
+    ...batch,
+    // All three switches, so a log line says exactly what was armed at the time.
+    ...writeGateStatus(),
+    ...(testLane ? { testLane } : {}),
+  };
+  console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
+  return summary;
+}
+
+/**
+ * Take a batch of orders into the pipeline: dedupe, intake gate (hold), or
+ * enqueue + claim. `testLane` marks Kai's test orders (shared/test-lane.mjs).
+ */
+async function intakeBatch(orders, { storeId, apiKey, testLane = false }) {
   let enqueued = 0;
   let skipped = 0;
   let held = 0;
   const holdReasons = {};
   /** Orders we queued but failed to take out of the QTS folder — see below. */
   const claimFailed = [];
+  /** Test lane: real-lane runs stopped on takeover. */
+  const taken = [];
   for (const order of orders) {
     const job = cleanOrder(order);
     if (!job.orderName) continue;
-    if (await alreadySeen(job.orderName)) {
+    if (testLane) job.testLane = true;
+    if (await alreadySeen(job.orderName, testLane)) {
       skipped += 1;
       continue;
     }
@@ -526,8 +595,9 @@ export async function handler(event = {}) {
     // the same reason legacy runs it before writing job data.
     const gate = intakeGate(job);
     if (gate) {
+      if (testLane) taken.push(...await stopRealLaneRuns(job.orderName));
       const move = await updateOrderDeskDetails({
-        order, orderName: job.orderName, tag: gate.tag, folder: gate.folder, storeId, apiKey,
+        order, orderName: job.orderName, tag: gate.tag, folder: gate.folder, storeId, apiKey, testLane,
       });
       try {
         await hold(job, gate, move);
@@ -541,6 +611,7 @@ export async function handler(event = {}) {
     }
 
     try {
+      if (testLane) taken.push(...await stopRealLaneRuns(job.orderName));
       await enqueue(job);
       enqueued += 1;
       // Take the order OUT of the QTS folder now that we own it.
@@ -557,7 +628,7 @@ export async function handler(event = {}) {
       // is the equivalent move for ours. Held by ORDERDESK_WRITES like every
       // other write, so with the switch off it only logs what it would do.
       const claimed = await updateOrderDeskDetails({
-        order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey,
+        order, orderName: job.orderName, tag: 'Green', folder: 'processing', storeId, apiKey, testLane,
       });
       // A failed claim is the one error here that is worse than it looks. The
       // order is already queued, so it gets processed and the customer gets a
@@ -585,14 +656,8 @@ export async function handler(event = {}) {
     }
   }
 
-  const summary = {
-    polled: orders.length, enqueued, skipped, held, holdReasons,
-    // All three switches, so a log line says exactly what was armed at the time.
-    ...writeGateStatus(),
-    // Empty on every healthy run. Non-empty means those orders were processed
-    // by us AND left in Linh's queue for him to process again.
-    claimFailed,
+  return {
+    polled: orders.length, enqueued, skipped, held, holdReasons, claimFailed,
+    ...(testLane ? { stoppedRealLaneRuns: taken } : {}),
   };
-  console.log(JSON.stringify({ msg: 'poll complete', ...summary }));
-  return summary;
 }
