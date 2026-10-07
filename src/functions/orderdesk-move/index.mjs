@@ -20,7 +20,12 @@ import { updateOrderDeskDetails } from '../../shared/orderdesk-write.mjs';
 import { isSyntheticOrder, orderDeskWritesEnabled } from '../../shared/write-gates.mjs';
 import { planMove, checkFrom } from './core.mjs';
 
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+// A skipped move has no tag value (and, held, no OrderDesk response): drop the
+// empty fields rather than fail the record. Without this every record threw
+// on its first live run (2026-10-07, S66745) and nothing was written.
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 
 async function record(orderName, entry) {
   await ddb.send(new UpdateCommand({
