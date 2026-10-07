@@ -42,6 +42,9 @@ _SIGNATURES = (
     # DOS EPS: Illustrator / Photoshop "EPS with preview" -- a binary header in
     # front of the PostScript. All five .eps uploads 2026-09-29..10-02 were this.
     (b"\xc5\xd0\xd3\xc6", "ps"),
+    # JPEG 2000: the .jp2/.jpf box format, and a bare codestream.
+    (b"\x00\x00\x00\x0cjP  \r\n\x87\n", "jp2"),
+    (b"\xff\x4f\xff\x51", "jp2"),
 )
 
 # Which converter path each format takes. Two names on the same route are the
@@ -49,7 +52,10 @@ _SIGNATURES = (
 # again) and a .jpeg stays "jpeg".
 _ROUTE = {"pdf": "pdf", "eps": "eps", "ai": "ai", "psd": "psd", "ps": "eps",
           "png": "raster", "jpg": "raster", "jpeg": "raster",
-          "tif": "raster", "tiff": "raster"}
+          "tif": "raster", "tiff": "raster",
+          # Added 2026-10-07 to the allow list (Kai): a .jfif is a JPEG under
+          # another name; .jp2/.jpf are JPEG 2000, which Pillow reads itself.
+          "jfif": "raster", "jp2": "raster", "jpf": "raster"}
 
 
 def sniff_format(path):

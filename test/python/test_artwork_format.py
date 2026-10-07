@@ -29,6 +29,7 @@ class Sniff(unittest.TestCase):
             cases = {b'%PDF-1.4': 'pdf', b'8BPS\x00\x01': 'psd',
                      b'\x89PNG\r\n\x1a\n': 'png', b'\xff\xd8\xff\xe0': 'jpg',
                      b'II*\x00': 'tif', b'MM\x00*': 'tif', b'%!PS-Adobe': 'ps', b'\xc5\xd0\xd3\xc6': 'ps',
+                     b'\x00\x00\x00\x0cjP  \r\n\x87\n': 'jp2', b'\xff\x4f\xff\x51': 'jp2',
                      b'random bytes': None}
             for head, want in cases.items():
                 self.assertEqual(sniff_format(write(d, 'f', head)), want, head)
@@ -46,6 +47,9 @@ class Corrected(unittest.TestCase):
             self.assertEqual(corrected_extension('tiff', write(d, 'a', b'II*\x00')), 'tiff')
             self.assertEqual(corrected_extension('ai', write(d, 'a', b'%PDF-1.6')), 'ai')
             self.assertEqual(corrected_extension('psd', write(d, 'a', b'8BPS')), 'psd')
+            # Added to the allow list 2026-10-07: same raster route, names kept.
+            self.assertEqual(corrected_extension('jfif', write(d, 'a', b'\xff\xd8\xff')), 'jfif')
+            self.assertEqual(corrected_extension('jpf', write(d, 'a', b'\x00\x00\x00\x0cjP  \r\n\x87\n')), 'jpf')
 
     def test_unknown_bytes_keep_the_name(self):
         with tempfile.TemporaryDirectory() as d:
@@ -59,6 +63,22 @@ class Corrected(unittest.TestCase):
             # Illustrator/Photoshop "EPS with preview" binary header.
             self.assertEqual(corrected_extension('pdf', write(d, 'a', b'\xc5\xd0\xd3\xc6')), 'eps')
             self.assertEqual(corrected_extension('eps', write(d, 'a', b'\xc5\xd0\xd3\xc6')), 'eps')
+
+
+class NewRasterFormats(unittest.TestCase):
+    """jfif, jp2, jpf (Kai, 2026-10-07): converted like any raster file."""
+
+    def test_each_converts_to_a_print_file(self):
+        from PIL import Image
+        from converter import process_image
+        with tempfile.TemporaryDirectory() as d:
+            src = Image.new('RGB', (300, 200), (200, 30, 30))
+            for ext, fmt in (('jfif', 'JPEG'), ('jp2', 'JPEG2000'), ('jpf', 'JPEG2000')):
+                path, out = os.path.join(d, f'a.{ext}'), os.path.join(d, f'{ext}.tif')
+                src.save(path, fmt)
+                self.assertTrue(process_image(path, 3, 2, 'in', out), ext)
+                with Image.open(out) as im:
+                    self.assertEqual(im.size, (216, 144), ext)
 
 
 class PsdFallback(unittest.TestCase):

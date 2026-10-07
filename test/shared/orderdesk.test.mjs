@@ -210,6 +210,21 @@ test('artwork: .eps is a print file now (legacy held it as missing)', () => {
   assert.equal(it.artworkExt, 'eps');
 });
 
+test('artwork: jfif, jp2 and jpf are print files (allow list, 2026-10-07)', () => {
+  for (const ext of ['jfif', 'jp2', 'jpf', 'JFIF']) {
+    const it = firstItem(order({ vl: { 'Uploaded File': `https://cdn.shop/files/logo.${ext}` } }));
+    assert.equal(it.isMissingFile, false, ext);
+    assert.equal(it.artworkExt, ext.toLowerCase(), ext);
+  }
+});
+
+test('artwork: anything off the allow list is still held as missing', () => {
+  for (const ext of ['webp', 'gif', 'bmp', 'heic', 'svg', 'zip', 'docx', 'mp4', 'psb']) {
+    const it = firstItem(order({ vl: { 'Uploaded File': `https://cdn.shop/files/logo.${ext}` } }));
+    assert.equal(it.isMissingFile, true, ext);
+  }
+});
+
 test('artwork: several uploads set hasMultipleFiles and produce no artwork', () => {
   const it = firstItem(order({
     vl: { 'Uploaded File': undefined, 'Uploaded File 1': 'https://cdn.shop/files/a.pdf' },

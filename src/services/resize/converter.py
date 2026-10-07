@@ -28,7 +28,7 @@ from psd_tools import PSDImage
 Image.MAX_IMAGE_PIXELS = None  # large-format banners exceed PIL's default guard
 
 VECTOR_FILE_TYPES = ["pdf", "ai", "psd", "eps"]
-RASTER_FILE_TYPES = ["jpeg", "jpg", "png", "tiff", "tif"]
+RASTER_FILE_TYPES = ["jpeg", "jpg", "png", "tiff", "tif", "jfif", "jp2", "jpf"]
 # SKUs whose dimensions are quoted in inches even without an "in" suffix.
 IN_UNIT_SKUS = ["SKUPB", "SKUXB", "SKU-543"]
 

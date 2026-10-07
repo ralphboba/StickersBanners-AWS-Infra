@@ -42,7 +42,12 @@ export function orderVariant(order) {
 // as a missing/unusable file (legacy tags the order Red and hands it to staff).
 // eps added 2026-10-04 (Kai): resize converts it with Ghostscript. Legacy has
 // no EPS support, so these were all held as missing files.
-export const VALID_FILE_EXTS = new Set(['jpg', 'jpeg', 'png', 'tif', 'tiff', 'pdf', 'ai', 'psd', 'eps']);
+// The allow list (Kai, 2026-10-07: only what we can certainly process). Linh's
+// eight, plus eps (Ghostscript -> PDF), jfif (a JPEG by another name) and
+// JPEG 2000 jp2/jpf -- each verified against real customer uploads.
+export const VALID_FILE_EXTS = new Set([
+  'jpg', 'jpeg', 'png', 'tif', 'tiff', 'pdf', 'ai', 'psd', 'eps', 'jfif', 'jp2', 'jpf',
+]);
 
 /**
  * Legacy getFinishMode normalisation — and the two classes differ here.
