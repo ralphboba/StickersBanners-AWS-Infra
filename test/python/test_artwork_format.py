@@ -81,6 +81,35 @@ class NewRasterFormats(unittest.TestCase):
                     self.assertEqual(im.size, (216, 144), ext)
 
 
+class TiffPillowCannotOpen(unittest.TestCase):
+    """CMYK + alpha (5 samples): five real uploads 2026-09-10 that Pillow, and
+    so Linh's program, could not open. Read with tifffile, alpha onto white."""
+
+    def test_cmyk_with_alpha_becomes_a_cmyk_print_file(self):
+        try:
+            import numpy as np
+            import tifffile
+        except ImportError:
+            self.skipTest('tifffile not installed')
+        from PIL import Image
+        from converter import process_image
+        with tempfile.TemporaryDirectory() as d:
+            arr = np.zeros((40, 60, 5), np.uint8)
+            arr[:, :, 0] = 200          # cyan ink everywhere
+            arr[:, :30, 4] = 255         # left half opaque
+            arr[:, 30:, 4] = 0           # right half transparent
+            src, out = os.path.join(d, 'a.tiff'), os.path.join(d, 'o.tif')
+            tifffile.imwrite(src, arr, photometric='separated', extrasamples=['unassalpha'])
+            with self.assertRaises(Exception):
+                Image.open(src)  # the case this exists for
+            self.assertTrue(process_image(src, 2, 1, 'in', out))
+            with Image.open(out) as im:
+                self.assertEqual(im.mode, 'CMYK')
+                left, right = im.getpixel((10, im.height // 2)), im.getpixel((im.width - 10, im.height // 2))
+                self.assertGreater(left[0], 150)   # ink kept where opaque
+                self.assertEqual(right, (0, 0, 0, 0))  # white where transparent
+
+
 class PsdFallback(unittest.TestCase):
     def test_a_psd_psd_tools_rejects_falls_back_to_its_stored_composite(self):
         try:

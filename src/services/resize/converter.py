@@ -22,7 +22,7 @@ import subprocess
 import tempfile
 
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from psd_tools import PSDImage
 
 Image.MAX_IMAGE_PIXELS = None  # large-format banners exceed PIL's default guard
@@ -359,6 +359,61 @@ def check_pdf_pages(file_path) -> int:
         return 0
 
 
+def _open_tiff_fallback(file_path):
+    """A TIFF that Pillow cannot open, read with tifffile instead.
+
+    Pillow has no mode for CMYK plus an extra channel. Five real uploads on
+    2026-09-10 (Cailin/Leah/Marce/Mia/Sophia.tiff, 7200x10800, uncompressed)
+    were CMYK + unassociated alpha, and both this program and Linh's (also
+    Pillow) failed on them. The alpha is flattened onto white, exactly as the
+    raster path does for transparent files, and the colour stays CMYK, which
+    the raster path preserves. Anything else it cannot map is re-raised.
+    """
+    import numpy as np
+    import tifffile
+
+    with tifffile.TiffFile(file_path) as tif:
+        page = tif.pages[0]
+        arr = page.asarray()
+        photometric = int(page.photometric)
+        planar_separate = int(page.planarconfig) == 2
+        extras = list(page.extrasamples or ())
+    if planar_separate and arr.ndim == 3:
+        arr = np.moveaxis(arr, 0, -1)
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    if arr.dtype == np.uint16:
+        arr = (arr >> 8).astype(np.uint8)
+    elif arr.dtype != np.uint8:
+        raise ValueError(f"TIFF sample type {arr.dtype} is not supported")
+
+    colour = {5: 4, 2: 3, 1: 1}.get(photometric)  # CMYK, RGB, grey
+    if colour is None or arr.shape[2] < colour:
+        raise ValueError(f"TIFF photometric {photometric} with {arr.shape[2]} samples is not supported")
+    base, rest = arr[:, :, :colour], arr[:, :, colour:]
+    has_alpha = rest.shape[2] > 0 and extras and int(extras[0]) in (1, 2)
+    if colour == 4:
+        if has_alpha:
+            # White in CMYK is no ink, so flattening onto white scales the ink
+            # by the alpha. Row blocks keep the uint16 copy small.
+            alpha = rest[:, :, 0]
+            out = np.empty_like(base)
+            for y in range(0, base.shape[0], 1024):
+                a = alpha[y:y + 1024, :, None].astype(np.uint16)
+                if int(extras[0]) == 2:  # unassociated: scale by alpha
+                    out[y:y + 1024] = (base[y:y + 1024].astype(np.uint16) * a // 255).astype(np.uint8)
+                else:  # associated: already premultiplied
+                    out[y:y + 1024] = base[y:y + 1024]
+            base = out
+        return Image.fromarray(np.ascontiguousarray(base), "CMYK")
+    if colour == 3:
+        if has_alpha:
+            return Image.fromarray(np.ascontiguousarray(
+                np.dstack([base, rest[:, :, :1]])), "RGBA")
+        return Image.fromarray(np.ascontiguousarray(base), "RGB")
+    return Image.fromarray(np.ascontiguousarray(base[:, :, 0]), "L")
+
+
 def process_image(file_path, width, height, unit, output_path):
     """C. Route by extension; returns True or raises."""
     width_px, height_px = get_dimensions(width, height, unit)
@@ -367,7 +422,13 @@ def process_image(file_path, width, height, unit, output_path):
 
     ext = os.path.splitext(file_path)[1][1:].lower()
     if ext in RASTER_FILE_TYPES:
-        with Image.open(file_path) as img:
+        try:
+            img = Image.open(file_path)
+        except UnidentifiedImageError:
+            if ext not in ("tif", "tiff"):
+                raise
+            img = _open_tiff_fallback(file_path)
+        with img:
             return _rescale_and_save(img, width_px, height_px, output_path)
     if ext == "pdf":
         return _convert_pdf(file_path, width_px, height_px, output_path)
