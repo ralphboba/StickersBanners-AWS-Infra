@@ -199,7 +199,9 @@ async function hold(job, gate, move) {
           // Where legacy would have put it, so the record is complete whether
           // or not the OrderDesk write actually went out.
           orderDeskFolder: gate.folder,
-          orderDeskFolderId: gate.folderId,
+          // The folder actually targeted: a Kai-TEST-* one for a test-lane
+          // order (S66755 recorded Linh's Manual while it went to Kai-TEST-manual).
+          orderDeskFolderId: move?.folderId ?? gate.folderId,
           orderDeskTag: gate.tag,
           moveApplied: Boolean(move?.applied),
           ...(move?.skipped ? { moveSkipped: move.skipped } : {}),
