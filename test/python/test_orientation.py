@@ -77,5 +77,27 @@ class SourceSize(unittest.TestCase):
             self.assertIsNone(source_size(p, "png"))
 
 
+
+
+class SwapActionTest(unittest.TestCase):
+    """Kai, 2026-10-07: proof orders go to Proofing as usual; only no-proof
+    orders stop for a person (Size Check)."""
+
+    def setUp(self):
+        from orientation import swap_action
+        self.swap_action = swap_action
+        self.swapped = [{"itemNo": 1, "ordered": "6 x 8 ft", "swapped": "8 x 6 ft"}]
+
+    def test_nothing_swapped_does_nothing(self):
+        self.assertIsNone(self.swap_action(True, []))
+        self.assertIsNone(self.swap_action(False, []))
+
+    def test_proof_order_is_noted_not_held(self):
+        self.assertEqual(self.swap_action(True, self.swapped), "note")
+
+    def test_no_proof_order_is_held(self):
+        self.assertEqual(self.swap_action(False, self.swapped), "hold")
+
+
 if __name__ == "__main__":
     unittest.main()

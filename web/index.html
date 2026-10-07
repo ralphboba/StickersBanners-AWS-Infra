@@ -173,6 +173,12 @@ const FOLDERS = [
   { key:'printing',        name:'Printing',                color:'--s-print' },
   { key:'proofing',        name:'Proofing',                color:'--s-proof' },
   { key:'needs_review',    name:'⚠ Needs Review',          color:'--s-review' },
+  // Not a status of its own: the no-proof orders resize stopped because the
+  // file looks the other way round from the order (Kai, 2026-10-07). They are
+  // needs_review rows with hold.reason "size-swapped"; this folder shows them
+  // apart so they are not lost among the intake holds. Proof orders are not
+  // stopped -- they go to Proofing with a "size?" mark instead.
+  { key:'size_check',      name:'↔ Size Check',            color:'--s-review', of:'needs_review' },
   { key:'awaiting_admin',  name:'Awaiting Admin Process',  color:'--s-admin' },
   { key:'awaiting_payment',name:'Awaiting Payment',        color:'--s-pay'   },
   { sep:true },
@@ -268,14 +274,22 @@ function renderFolders(){
 // One request for every folder count. Asking per folder meant 12 parallel
 // calls on every 20s refresh, each paging a whole status just to read .count —
 // that burst is what made the API return 503 now and then.
+const isSizeCheck = (o)=> o.hold?.reason==='size-swapped' && !o.mirror;
 async function loadCounts(){
   try{
     const d=await api('/orders?counts=1');
-    for(const f of FOLDERS) if(f.key) counts[f.key]=d.counts?.[f.key] ?? 0;
+    for(const f of FOLDERS) if(f.key && !f.of) counts[f.key]=d.counts?.[f.key] ?? 0;
+    // Size Check is carved out of needs_review, so count it from that list.
+    try{
+      const nr=await api('/orders?status=needs_review');
+      counts.size_check=nr.orders.filter(isSizeCheck).length;
+      counts.needs_review=nr.count-counts.size_check;
+    }catch{ counts.size_check='—'; }
   }catch{
     // Fallback for a dashboard deployed ahead of the API. Remove once the
     // counts endpoint has shipped everywhere.
     await Promise.all(FOLDERS.filter(f=>f.key).map(async f=>{
+      if(f.of) return;
       try { const d=await api(`/orders?status=${f.key}`); counts[f.key]=d.count; } catch { counts[f.key]='—'; }
     }));
   }
@@ -301,13 +315,25 @@ function holdPill(o){
   const tip=[o.hold.explain||'',o.hold.preview?'(preview — nothing moved in OrderDesk)':(o.hold.moveApplied?'(moved in OrderDesk)':'(OrderDesk write skipped)')].filter(Boolean).join(' ');
   return ` <span title="${esc(tip)}" style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;color:#8a4b00;background:#fdf1df;border:1px solid #f0d3a8">⛔ ${esc(label)}${o.hold.preview?' ·<span style="font-weight:500"> would</span>':''}</span>`;
 }
+// A proof order whose file looks swapped is not stopped; it carries this mark
+// so staff can look at the proof before the customer approves it.
+function sizePill(o){
+  if(!o.sizeSwap) return '';
+  return ` <span title="${esc(o.sizeSwap.explain||'')}" style="margin-left:6px;padding:1px 7px;border-radius:9px;font-size:11px;font-weight:600;color:#8a4b00;background:#fdf1df;border:1px solid #f0d3a8">↔ size?</span>`;
+}
 async function loadFolder(){
   renderFolders();
   const f=FMAP[current];
   $('headname').textContent=f.name; $('headtick').style.background=`var(${f.color})`;
   $('rows').innerHTML=''; $('empty').hidden=true; $('loading').hidden=false; $('headsub').textContent='';
   let data;
-  try { data=await api(`/orders?status=${current}`); }
+  try {
+    data=await api(`/orders?status=${f.of||current}`);
+    if(f.of || current==='needs_review'){
+      const orders=data.orders.filter(o=> f.of ? isSizeCheck(o) : !isSizeCheck(o));
+      data={...data, orders, count:orders.length};
+    }
+  }
   catch(e){
     // Keep the rows already on screen; only say something if there is nothing
     // to show. The next refresh is 20s away.
@@ -325,7 +351,7 @@ async function loadFolder(){
       <td class="fac">${esc(o.routing?.facility||'—')}</td>
       <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
       <td class="mono" style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
-      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span>${holdPill(o)}</td>
+      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span>${holdPill(o)}${sizePill(o)}</td>
     </tr>`).join('');
   $('rows').innerHTML=rows;
   $('empty').hidden=data.orders.length>0;
@@ -424,6 +450,14 @@ async function showDetail(name){
       <button class="btn reject" id="szkeep">Keep as ordered</button>
     </div>
     <div class="err" id="szErr"></div></div>` : '';
+  const swapNote = o.sizeSwap && !swapHold ? `<div class="proofbox">
+    <div class="lab"><b>Size may be swapped.</b> This is a proof order, so it was not stopped: the proof shows it as ordered. Check the proof — the customer may want it the other way round.</div>
+    ${(o.sizeSwap.items||[]).map(f=>`<div style="font-size:13px;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
+      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}<br>
+      Ordered <b>${esc(f.ordered)}</b> · file is <b>${esc(f.file)}</b> (${esc(f.fileSize?.[0])}×${esc(f.fileSize?.[1])})
+      ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
+      <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
+    </div>`).join('')}</div>` : '';
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
   // Demo controls: step this synthetic order forward/back through the pipeline.
@@ -452,7 +486,7 @@ async function showDetail(name){
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
       <div class="err" id="actErr"></div></div>`:''}
-    ${sizeBox}
+    ${sizeBox}${swapNote}
     ${demoBox}`;
   $('drawer').classList.add('open'); $('scrim').classList.add('open');
   if(demo){

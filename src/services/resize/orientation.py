@@ -52,6 +52,19 @@ def orientation_mismatch(src_w, src_h, out_w, out_h, tol=SQUARE_TOLERANCE):
     }
 
 
+def swap_action(needs_proof, swapped):
+    """What resize does about items that look swapped: None, "note" or "hold".
+
+    Kai, 2026-10-07: a proof order goes to Proofing as usual -- the customer
+    sees the proof before anything is printed -- and only carries a note for
+    staff. An order with no proof has nobody looking before it prints, so it
+    stops for a person (the dashboard's Size Check folder).
+    """
+    if not swapped:
+        return None
+    return "note" if needs_proof else "hold"
+
+
 def eps_bounding_box(path):
     """(width, height) in points from an EPS's %%BoundingBox, or None."""
     import re

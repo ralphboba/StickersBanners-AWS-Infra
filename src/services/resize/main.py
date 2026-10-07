@@ -24,7 +24,7 @@ from jobload import load_job
 from converter import check_pdf_pages, get_dimensions, infer_unit, process_image
 from artwork import artwork_extension, corrected_extension
 from fetch import download
-from orientation import orientation_mismatch, source_size
+from orientation import orientation_mismatch, source_size, swap_action
 
 
 class HeldForReview(RuntimeError):
@@ -185,12 +185,16 @@ def main():
             fetched.append((item, item_no, fetch_artwork(item, scratch, name)))
 
         swapped = swapped_items(fetched)
-        if swapped:
+        action = swap_action(bool(job.get("needsProof")), swapped)
+        if action:
             lines = [f"Item {s['itemNo']}: the file is {s['file']} "
                      f"({s['fileSize'][0]}x{s['fileSize'][1]}) but the order is "
                      f"{s['ordered']}; {s['swapped']} would fit it."
                      for s in swapped]
-            raise HeldForReview("size-swapped", " ".join(lines), swapped)
+            if action == "hold":
+                raise HeldForReview("size-swapped", " ".join(lines), swapped)
+            # Proof order: printed as ordered, proofed as usual, flagged.
+            note_size_swap(order_name, " ".join(lines), swapped)
 
         for item, item_no, local in fetched:
             name = f"{item_no}-1"
@@ -211,6 +215,26 @@ def main():
 
     record_step(order_name, "done", detail=json.dumps(produced))
     print(json.dumps({"orderName": order_name, "produced": produced}))
+
+
+def note_size_swap(order_name, explain, items):
+    """Flag a proof order whose file looks swapped, without stopping it.
+
+    Sets META.sizeSwap; the dashboard shows it on the order in Proofing. The
+    status is untouched -- the order carries on to its proof. Never raises: a
+    note that could not be written must not cost the customer their proof.
+    """
+    print(json.dumps({"orderName": order_name, "sizeSwapNote": explain}))
+    if not JOBS_TABLE:
+        return
+    try:
+        ddb.Table(JOBS_TABLE).update_item(
+            Key={"PK": f"ORDER#{order_name}", "SK": "META"},
+            UpdateExpression="SET sizeSwap = :n",
+            ExpressionAttributeValues={":n": {"explain": explain, "items": items}},
+        )
+    except Exception as err:
+        print(f"resize: could not note size swap on {order_name}: {err}", file=sys.stderr)
 
 
 def hold_for_review(order_name, reason, explain, detail=None):
