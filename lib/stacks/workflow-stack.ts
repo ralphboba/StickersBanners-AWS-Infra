@@ -153,8 +153,13 @@ export class WorkflowStack extends cdk.Stack {
     // pull that timed out) that have nothing to do with the file.
     const resizeLarge = runTask('ResizeLarge', 'resize', { cpu: '4096', memoryMiB: '30720', retries: 1 });
     const resize = runTask('Resize', 'resize', { retries: 1, onFail: resizeLarge });
-    const finish = runTask('Finish', 'finish');
-    const proof = runTask('Proof', 'proof');
+    // Finish and proof work on the print file resize made, and a big banner is
+    // a big file: S66660 (2026-10-06, two 40x6 ft banners = 34560x5184 px each)
+    // was killed four times on finish's 2 GB. Same fallback as resize.
+    const finishLarge = runTask('FinishLarge', 'finish', { cpu: '4096', memoryMiB: '30720', retries: 1 });
+    const finish = runTask('Finish', 'finish', { retries: 1, onFail: finishLarge });
+    const proofLarge = runTask('ProofLarge', 'proof', { cpu: '4096', memoryMiB: '30720', retries: 1 });
+    const proof = runTask('Proof', 'proof', { retries: 1, onFail: proofLarge });
 
     // Email the customer (via Zendesk) that their proof is ready to review.
     const notifyProofReady = new tasks.SqsSendMessage(this, 'NotifyProofReady', {
@@ -257,6 +262,7 @@ export class WorkflowStack extends cdk.Stack {
           .next(moveTo('MoveToPendingReview', 'review', route)),
       )
       .otherwise(route);
+    proofLarge.next(markProofing);
 
     // Resize can stop an order for a person: a file that cannot print
     // (bad-artwork) or one that looks the other way round from the order
@@ -282,6 +288,7 @@ export class WorkflowStack extends cdk.Stack {
     const afterResize = new sfn.Choice(this, 'IsHeld')
       .when(sfn.Condition.stringEquals('$.afterResize.status', 'needs_review'), heldForReview)
       .otherwise(finish.next(needsProof));
+    finishLarge.next(needsProof);
 
     // Pipeline picks the order up from "In Queue" -> "Printing" while it runs.
     resizeLarge.next(checkHeld);

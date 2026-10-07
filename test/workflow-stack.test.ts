@@ -137,4 +137,19 @@ describe('WorkflowStack', () => {
     expect(s.ResizeLarge.Next).toBe('CheckHeld');
     expect(s.ResizeLarge.Catch[0].Next).toBe('MarkFailed');
   });
+
+  test('finish and proof get the same 30 GB second chance', () => {
+    // S66660 (2026-10-06): two 40x6 ft banners, finish killed 4x on 2 GB.
+    const sm = Object.values(build().findResources('AWS::StepFunctions::StateMachine'))[0];
+    const s = JSON.parse(sm.Properties.DefinitionString['Fn::Join'][1]
+      .map((p: unknown) => (typeof p === 'string' ? p : 'X')).join('')).States;
+    expect(s.Finish.Catch[0].Next).toBe('FinishLarge');
+    expect(s.FinishLarge.Parameters.Overrides).toMatchObject({ Cpu: '4096', Memory: '30720' });
+    expect(s.FinishLarge.Next).toBe('NeedsProof');
+    expect(s.FinishLarge.Catch[0].Next).toBe('MarkFailed');
+    expect(s.Proof.Catch[0].Next).toBe('ProofLarge');
+    expect(s.ProofLarge.Parameters.Overrides).toMatchObject({ Cpu: '4096', Memory: '30720' });
+    expect(s.ProofLarge.Next).toBe('MarkProofing');
+    expect(s.ProofLarge.Catch[0].Next).toBe('MarkFailed');
+  });
 });
