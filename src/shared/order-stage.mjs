@@ -204,18 +204,17 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
       canConvert: convertible,
       convertTo: convertible ? [...DELIVERY_OPTIONS] : [],
       blockedBy: convertible ? null
-        : (openness === 'closed' ? (folder ? 'shipping' : 'unknown_folder') : product),
+        : (openness === 'closed' ? 'shipping' : product),
       currentService: shippingMethod ?? null,
     };
   }
 
   let blockedBy = null;
-  if (openness === 'closed') blockedBy = folder ? 'shipping' : 'unknown_folder';
+  if (openness === 'closed') blockedBy = 'shipping';
   else if (ineligible) blockedBy = ineligible.blockedBy;
   // Production has finished. Express can still move up and a pickup can still
   // become a delivery, but a Ground order is already manifested for the Ground
   // collection and cannot be pulled back out of it (Kai, 2026-09-28).
-  else if (openness === 'restricted' && onGround) blockedBy = 'ground_after_production';
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
   else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';

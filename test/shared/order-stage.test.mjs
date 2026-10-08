@@ -79,11 +79,10 @@ describe('canUpgrade', () => {
     assert.equal(s.blockedBy, null);
   });
 
-  test('Awaiting Shipment on Ground: refused, with its own reason', () => {
+  test('Awaiting Shipment on Ground: yes — only Completed Orders is closed (Kai, 2026-10-08)', () => {
     const s = orderStage({ folderId: '3571', shippingMethod: 'FedEx Ground' });
-    assert.equal(s.canUpgrade, false);
-    assert.equal(s.blockedBy, 'ground_after_production');
-    assert.equal(s.upgradeTo, null);
+    assert.equal(s.canUpgrade, true);
+    assert.equal(s.blockedBy, null);
   });
 
   test('already on 1-Day: no, and the reason says so', () => {
@@ -104,10 +103,9 @@ describe('canUpgrade', () => {
     assert.equal(s.blockedBy, 'service_not_upgradable');
   });
 
-  test('unknown folder: no, whatever the service says', () => {
-    const s = orderStage({ folderId: '999999', shippingMethod: '2-Day Shipping' });
-    assert.equal(s.canUpgrade, false);
-    assert.equal(s.blockedBy, 'unknown_folder');
+  test('unknown folder: open, like every folder but Completed Orders', () => {
+    const s = orderStage({ folderId: '999999', shippingMethod: 'FedEx Ground' });
+    assert.equal(s.canUpgrade, true);
   });
 
   test('no folder at all, or no arguments: no', () => {
@@ -256,12 +254,12 @@ describe('pickup -> delivery conversion', () => {
     assert.equal(DELIVERY_OPTIONS.length, 4);
   });
 
-  test('refused once the order is completed, or in an unknown folder', () => {
-    assert.equal(orderStage({ folderId: '3516', shippingMethod: 'Georgia Warehouse' }).blockedBy, 'shipping');
-    const u = orderStage({ folderId: '999999', shippingMethod: 'Georgia Warehouse' });
-    assert.equal(u.canConvert, false);
-    assert.equal(u.blockedBy, 'unknown_folder');
-    assert.deepEqual(u.convertTo, []);
+  test('refused only once the order is completed; an unknown folder converts', () => {
+    const c = orderStage({ folderId: '3516', shippingMethod: 'Georgia Warehouse' });
+    assert.equal(c.blockedBy, 'shipping');
+    assert.deepEqual(c.convertTo, []);
+    assert.equal(orderStage({ folderId: '999999', shippingMethod: 'Georgia Warehouse' }).canConvert, true);
+    assert.equal(orderStage({ folderId: '52437', shippingMethod: 'New Jersey Warehouse' }).canConvert, true);
   });
 
   test('refused for a B2SIGN order, as an upgrade would be', () => {
@@ -298,10 +296,9 @@ describe('the restricted window, service by service', () => {
   const AW = '3571';   // GA Awaiting Shipment
   const PROD = '73068';
 
-  test('Ground: open before, refused after', () => {
+  test('Ground: open before and after production', () => {
     assert.equal(orderStage({ folderId: PROD, shippingMethod: 'FedEx Ground' }).canUpgrade, true);
-    assert.equal(orderStage({ folderId: AW, shippingMethod: 'FedEx Ground' }).blockedBy,
-      'ground_after_production');
+    assert.equal(orderStage({ folderId: AW, shippingMethod: 'FedEx Ground' }).canUpgrade, true);
   });
 
   test('express: unaffected by the window', () => {
@@ -328,8 +325,8 @@ describe('the restricted window, service by service', () => {
 
   test('the window is reported, so the page can word the refusal', () => {
     assert.equal(orderStage({ folderId: PROD, shippingMethod: 'FedEx Ground' }).window, 'open');
-    assert.equal(orderStage({ folderId: AW, shippingMethod: 'FedEx Ground' }).window, 'restricted');
-    assert.equal(orderStage({ folderId: '999999' }).window, 'closed');
+    assert.equal(orderStage({ folderId: AW, shippingMethod: 'FedEx Ground' }).window, 'open');
+    assert.equal(orderStage({ folderId: '3516' }).window, 'closed');
   });
 });
 

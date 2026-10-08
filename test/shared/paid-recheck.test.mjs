@@ -11,10 +11,8 @@ describe('paid-time re-check', () => {
   test('still in production: allowed', () => {
     assert.deepEqual(stillAllowed(od(), CHANGE), { allowed: true });
   });
-  test('Ground reached Awaiting Shipment while the customer was paying: refused', () => {
-    const r = stillAllowed(od({ folder_id: 3571 }), CHANGE);
-    assert.equal(r.allowed, false);
-    assert.equal(r.reason, 'ground_after_production');
+  test('Ground reached Awaiting Shipment while the customer was paying: still applied (only Completed is closed)', () => {
+    assert.equal(stillAllowed(od({ folder_id: 3571 }), CHANGE).allowed, true);
   });
   test('Completed: refused, with the stage for the alert', () => {
     const r = stillAllowed(od({ folder_id: 3516 }), CHANGE);
@@ -37,7 +35,7 @@ describe('paid-time re-check', () => {
       order_notes: [{ content: 'Shipping upgraded FedEx Ground -> FedEx 3-Days by customer, +$61.06 (CHG-1)' }] });
     assert.deepEqual(stillAllowed(done, CHANGE), { allowed: true });
   });
-  test('an unknown folder is refused', () => {
-    assert.equal(stillAllowed(od({ folder_id: 999999 }), CHANGE).allowed, false);
+  test('an unknown folder is open', () => {
+    assert.equal(stillAllowed(od({ folder_id: 999999 }), CHANGE).allowed, true);
   });
 });
