@@ -68,8 +68,10 @@
   button.secondary[disabled] { opacity:.4; cursor:not-allowed; }
   .err { color:#A33; font-size:14px; margin:10px 0 0; }
   @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
-  /* Add-ons in two columns (Kai, 2026-10-08: one long column was too long to see). */
-  #aoList { column-count:2; column-gap:10px; }
+  /* Add-ons: one column on a phone; on a computer the page widens, shipping
+     sits on the left, add-ons (two columns) on the right with the pay button
+     at their bottom right (Kai, 2026-10-08). Without add-ons nothing changes. */
+  #aoList { column-gap:10px; }
   .ao-prod { border:1px solid var(--line); border-radius:8px; padding:10px; break-inside:avoid; display:inline-block; width:100%; margin-bottom:10px; }
   .ao-head { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
   .ao-head img { width:36px; height:36px; object-fit:contain; border-radius:6px; background:var(--paper-2); flex:none; }
@@ -82,7 +84,13 @@
   .qty button { width:28px; height:28px; border:0; background:none; font-size:17px; cursor:pointer; color:var(--ink); }
   .qty input { width:30px; height:28px; border:0; text-align:center; font:inherit; font-size:14px; -moz-appearance:textfield; background:transparent; }
   .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  @media (max-width:340px) { #aoList { column-count:1; } }
+  @media (min-width:860px) {
+    .wrap:has(#addons:not([hidden])) { max-width:1080px; }
+    .panes:has(#addons:not([hidden])) { display:grid; grid-template-columns:minmax(360px,420px) 1fr; gap:14px; align-items:start; }
+    #aoList { column-count:2; }
+    /* the pay button stays in view at the bottom right while the list scrolls */
+    #aoSummary { position:sticky; bottom:0; background:var(--paper); padding:12px 0 14px; margin-bottom:-14px; box-shadow:0 -8px 12px -10px rgba(0,0,0,.18); }
+  }
   .sumline { display:flex; justify-content:space-between; font-size:14px; padding:3px 0; color:var(--ink-2); }
   [hidden] { display:none !important; }
 </style>
@@ -108,6 +116,7 @@
       <ol class="steps" id="steps"></ol>
     </div>
 
+    <div class="panes">
     <div class="card">
       <div class="rowline">
         <span class="k">Current shipping</span>
@@ -226,6 +235,7 @@
         <p class="fine">Shipping is recalculated with your new items, the same way our checkout does.
           The amount shown is the total you'll be charged, tax included. Nothing changes until you pay.</p>
       </div>
+    </div>
     </div>
   </main>
 </div>
