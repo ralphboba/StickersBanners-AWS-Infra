@@ -353,11 +353,8 @@
               set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
               return;
             }
-            if (res.status === 409 && res.b.error === 'already_paid') {
-              set('send', 'Your payment is already in — refresh in a minute');
-              return;
-            }
-            set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+            // Each failure has its own words from the server (Kai, 2026-10-08).
+            set('send', res.b.reason || (res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us'));
           })
           .catch(function () { set('send', 'We couldn’t reach our system — please try again'); $('send').disabled = false; });
       });
@@ -522,7 +519,7 @@
             set('dSend', 'The amount changed — pay ' + money(opt.total) + ' and ship it');
             return;
           }
-          set('dSend', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+          set('dSend', res.b.reason || (res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us'));
         })
         .catch(function () { set('dSend', 'We couldn’t reach our system — please try again'); $('dSend').disabled = false; });
     });

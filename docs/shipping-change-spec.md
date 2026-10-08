@@ -116,14 +116,29 @@
 - PO Box → "We can't ship to a PO box."
 - **3-Days 주문이 아직 공장 폴더에 들어가기 전** → "We're still scheduling this order." (⚠️ 4장 참고)
 
-### 가격이 안 나오나 (옵션은 있어도 "We can't price…")
-Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않는다. 대표적인 경우:
-- 배송비 할인을 받은 주문 (`shipping_discounted`)
-- 직원이 OrderDesk 배송을 손으로 바꿔서 Shopify와 다름 (`method_changed`). 예: S67179
-- 고객이 낸 배송비가 지금 체크아웃 요금과 다름 (`price_unverified`)
-- 원래 주문에 미결제 잔액이 있음 (`balance_due`). 예: Pay By Check
-- 이 주문만 손으로 면세 처리됨 (`tax_exempt_order`), 달러가 아님 (`not_usd`)
-- 그 서비스를 Shopify가 이 주소에 제공하지 않음 (`service_unavailable`)
+### 가격이 안 나오나 — 경우마다 다른 문구 (Kai, 2026-10-08)
+Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않는다. 문구는 경우마다 다르다
+(`routes.mjs` REFUSAL_COPY). 내부 코드명은 화면에 나오지 않는다.
+- `shipping_discounted` 배송비 할인 → "Your order got a shipping discount… Contact us…"
+- `method_changed` 직원이 배송을 이미 바꿈(예: S67179) → "Our team has already changed the shipping…"
+- `price_unverified` 주문 후 요금이 바뀜 → "Shipping rates have changed since you placed this order…"
+- `balance_due` 원래 주문 미결제(예: Pay By Check) → "This order still has a balance to pay. Once it's paid…"
+- `tax_exempt_order` 손으로 면세 처리 → "This order has a tax exemption we can't apply online…"
+- `not_usd` 다른 통화 → "Orders paid in another currency can't be changed online…"
+- `shipping_unverified` 배송 줄이 여러 개 → "This order has more than one shipping charge…"
+- `no_address` 주소 없음 → "We don't have a delivery address on this order…"
+- `service_unavailable` 이 주소에 더 빠른 배송 없음 → "Faster shipping isn't available for this order's delivery address."
+- `rates_unavailable` Shopify 요금 조회 실패 → "We couldn't get shipping prices right now. Please try again…"
+- `edit_begin_failed` Shopify가 주문 수정을 거부(결제 방식 등) → "This order can't be edited online because of how it was paid…"
+- 그 외 → "We can't price a shipping change for this order online. Contact us…"
+
+### Pay를 누른 뒤 실패하면 — 경우마다 다른 문구
+- 결제 대기 중 직원 확인 필요(`attention`) / 확정 금액 불일치 → "Our team is reviewing a shipping change on this order and will contact you."
+- 주소 저장 실패 → "We couldn't save that delivery address…"
+- Shopify 확정 실패 → "We couldn't update your order just now — nothing was charged…"
+- 방금 다른 변경이 들어옴 → "This order was just changed. Refresh the page…"
+- 이미 결제됨 → "Your payment for this change is already in…"
+- 스위치 꺼짐(배포 실수) → "Shipping changes aren't available online right now…"
 
 ### 확인되지 않은 것
 - Shop Pay 할부 결제 주문은 Shopify가 주문 수정을 막는 것으로 알려져 있다. 실제로 시도된 적은 아직 없다.

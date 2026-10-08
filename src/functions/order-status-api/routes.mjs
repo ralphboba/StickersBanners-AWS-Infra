@@ -45,13 +45,44 @@ const BLOCKED_COPY = {
 
 /**
  * When the order is eligible but we cannot price it exactly (see
- * shopify-pricing.mjs for every reason). The internal reason is logged, never
- * shown: "your shipping was discounted" or "your order was edited" is not
- * something to announce, and the answer for the customer is the same.
+ * shopify-pricing.mjs for every reason). Each reason has its own words (Kai,
+ * 2026-10-08: "경우마다 다르게 표시" — one message for every case confused
+ * customers), so the customer can tell whether to wait, retry, pay first or
+ * contact us. Anything not listed falls back to UNPRICEABLE_COPY.
  */
 const UNPRICEABLE_COPY = 'We can’t price a shipping change for this order online. '
   + 'Contact us and we’ll sort it out.';
-const SERVICE_UNAVAILABLE_COPY = 'That service isn’t available for this order online.';
+const SERVICE_UNAVAILABLE_COPY = 'Faster shipping isn’t available for this order’s delivery address.';
+const REFUSAL_COPY = {
+  shipping_discounted: 'Your order got a shipping discount, so a change can’t be priced online. '
+    + 'Contact us and we’ll update it for you.',
+  method_changed: 'Our team has already changed the shipping on this order. '
+    + 'Contact us if you’d like to change it again.',
+  switch_line_mismatch: 'Our team has already changed the shipping on this order. '
+    + 'Contact us if you’d like to change it again.',
+  price_unverified: 'Shipping rates have changed since you placed this order, so we can’t work out '
+    + 'the difference online. Contact us and we’ll take care of it.',
+  balance_due: 'This order still has a balance to pay. Once it’s paid, you can change the shipping here.',
+  tax_exempt_order: 'This order has a tax exemption we can’t apply online. '
+    + 'Contact us to change the shipping.',
+  not_usd: 'Orders paid in another currency can’t be changed online. Contact us to change the shipping.',
+  shipping_unverified: 'This order has more than one shipping charge, so it can’t be changed online. '
+    + 'Contact us and we’ll update it.',
+  no_address: 'We don’t have a delivery address on this order. Contact us to change the shipping.',
+  not_an_upgrade: 'There’s no faster shipping to offer for this order.',
+  service_unavailable: SERVICE_UNAVAILABLE_COPY,
+  rates_unavailable: 'We couldn’t get shipping prices right now. Please try again in a few minutes.',
+  order_not_found: 'We couldn’t load your order’s details right now. Please try again in a few minutes.',
+  order_unreadable: 'We couldn’t load your order’s details right now. Please try again in a few minutes.',
+  // Shopify would not open an edit on this order (e.g. how it was paid).
+  edit_begin_failed: 'This order can’t be edited online because of how it was paid. '
+    + 'Contact us and we’ll change the shipping for you.',
+};
+const refusalCopy = (reason) => REFUSAL_COPY[reason] ?? UNPRICEABLE_COPY;
+/** Shipping changes are switched off (deploy without shippingChange=live). */
+const NOT_AVAILABLE_COPY = 'Shipping changes aren’t available online right now. Please try again later or contact us.';
+/** A change already flagged for the team (attention). */
+const WITH_TEAM_COPY = 'Our team is reviewing a shipping change on this order and will contact you.';
 
 /**
  * Load the row and check the token. Shared by both routes, so the quote route
@@ -66,7 +97,7 @@ async function authorised(deps, orderName, presentedUrl) {
     row = await deps.loadRow(orderName, presentedUrl);
   } catch (err) {
     console.error(JSON.stringify({ msg: 'order lookup failed', orderName, err: String(err) }));
-    return { response: json(502, { error: 'lookup_failed' }) };
+    return { response: json(502, { error: 'lookup_failed', reason: 'We couldn’t load your order right now. Please try again in a few minutes.' }) };
   }
   if (!row) return { response: NOT_FOUND };
 
@@ -150,7 +181,7 @@ async function quoteUpgrades(deps, orderName, options, order, expectedFrom) {
       continue;
     }
     logRefusal(orderName, q.reason);
-    if (q.reason !== 'service_unavailable') { refusal = UNPRICEABLE_COPY; break; }
+    if (q.reason !== 'service_unavailable') { refusal = refusalCopy(q.reason); break; }
     refusal = refusal ?? SERVICE_UNAVAILABLE_COPY;
   }
   return { upgrades, refusal };
@@ -348,7 +379,7 @@ async function quoteDelivery(deps, authorised, event) {
       }
       logRefusal(orderName, q.reason);
       if (q.reason !== 'service_unavailable') {
-        return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+        return json(422, { error: 'unpriceable', reason: refusalCopy(q.reason) });
       }
     }
     if (!options.length) return json(422, { error: 'service_unavailable', reason: SERVICE_UNAVAILABLE_COPY });
@@ -365,7 +396,7 @@ async function quoteDelivery(deps, authorised, event) {
     logRefusal(orderName, q.reason);
     return json(422, {
       error: q.reason === 'service_unavailable' ? 'service_unavailable' : 'unpriceable',
-      reason: q.reason === 'service_unavailable' ? SERVICE_UNAVAILABLE_COPY : UNPRICEABLE_COPY,
+      reason: refusalCopy(q.reason),
     });
   }
 
@@ -394,7 +425,7 @@ const REVERT_AFTER_MS = 48 * 60 * 60 * 1000;
 async function requestChange(deps, authorised, event) {
   // The read-only status function has no write dependencies; only the
   // order-change-request function is built with them.
-  if (!deps.commitEdit || !deps.sendInvoice || !deps.savePending) return json(503, { error: 'not_available' });
+  if (!deps.commitEdit || !deps.sendInvoice || !deps.savePending) return json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY });
   let body;
   try { body = JSON.parse(event?.body ?? '{}'); } catch { return json(400, { error: 'bad_json' }); }
   const orderName = String(body.o ?? '').trim();
@@ -416,7 +447,7 @@ async function requestChange(deps, authorised, event) {
     return json(200, { requested: true, already: true, total: centsToDollars(existing.shippingCents + existing.taxCents),
       ...(existing.paymentUrl ? { paymentUrl: existing.paymentUrl } : {}) });
   }
-  if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: UNPRICEABLE_COPY });
+  if (existing?.status === 'attention') return json(409, { error: 'with_team', reason: WITH_TEAM_COPY });
 
   const t = timer('POST', orderName);
   let order = await deps.loadShopifyOrder(orderName);
@@ -433,14 +464,14 @@ async function requestChange(deps, authorised, event) {
   // shipping where it will be delivered; what the page showed came from the
   // same address. (An unpaid pickup change already put it there.)
   if (stage.canConvert && existing?.status !== 'pending') {
-    if (!deps.setShippingAddress) return json(503, { error: 'not_available' });
+    if (!deps.setShippingAddress) return json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY });
     const checked = checkDeliveryAddress(body.address);
     if (checked.response) return checked.response;
     const set = await deps.setShippingAddress({ orderName, orderId: order?.id, address: checked.address });
     if (!set.updated) {
-      if (set.skipped) return json(503, { error: 'not_available' });
+      if (set.skipped) return json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY });
       console.error(JSON.stringify({ msg: 'shipping address not set', orderName, set }));
-      return json(502, { error: 'address_failed' });
+      return json(502, { error: 'address_failed', reason: 'We couldn’t save that delivery address. Please check it and try again.' });
     }
     order = await deps.loadShopifyOrder(orderName);
   }
@@ -451,9 +482,9 @@ async function requestChange(deps, authorised, event) {
     else if (order?.outstandingCents > 0) {
       // A balance for something other than the recorded choice: changed by hand.
       logRefusal(orderName, 'switch_line_mismatch');
-      return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+      return json(422, { error: 'unpriceable', reason: refusalCopy('switch_line_mismatch') });
     } else if (line?.title !== (row.shipping?.method ?? null)) {
-      return json(409, { error: 'already_paid' });
+      return json(409, { error: 'already_paid', reason: 'Your payment for this change is already in. Refresh in a minute to see it.' });
     }
   }
   const pricedOn = switching ? orderBeforeChange(order, existing) : order;
@@ -466,7 +497,7 @@ async function requestChange(deps, authorised, event) {
   t.mark('quote');
   if (!q.ok || !q.edit) {
     logRefusal(orderName, q.reason ?? 'no_edit');
-    return json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY });
+    return json(422, { error: 'unpriceable', reason: refusalCopy(q.reason) });
   }
   if (q.totalCents !== expected) {
     return json(409, { error: 'price_changed', total: centsToDollars(q.totalCents),
@@ -499,7 +530,7 @@ async function requestChange(deps, authorised, event) {
   try {
     await save(existing?.status === 'pending' ? { ...change, replaces: existing.ref } : change);
   } catch {
-    return json(409, { error: 'changed_meanwhile' });
+    return json(409, { error: 'changed_meanwhile', reason: 'This order was just changed. Refresh the page to see the latest options.' });
   }
 
   const committed = await deps.commitEdit({
@@ -513,9 +544,9 @@ async function requestChange(deps, authorised, event) {
     // Nothing changed in Shopify: put the record back the way it was.
     await save(existing?.status === 'pending' ? { ...existing, replaces: ref } : { ...change, status: 'failed', replaces: ref })
       .catch((err) => console.error(JSON.stringify({ msg: 'record rollback failed', orderName, ref, err: String(err) })));
-    if (committed.skipped) return json(503, { error: 'not_available' });
+    if (committed.skipped) return json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY });
     console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
-    return json(502, { error: 'commit_failed' });
+    return json(502, { error: 'commit_failed', reason: 'We couldn’t update your order just now — nothing was charged. Please try again in a few minutes.' });
   }
 
   // Shopify is the authority on what is owed. If the committed balance is not
@@ -523,7 +554,7 @@ async function requestChange(deps, authorised, event) {
   if (committed.outstandingCents !== q.totalCents) {
     await save({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
       committedOutstandingCents: committed.outstandingCents, replaces: ref });
-    return json(502, { error: 'commit_mismatch' });
+    return json(502, { error: 'commit_mismatch', reason: WITH_TEAM_COPY });
   }
   // Shopify's invoice for the edited order goes to the customer now, while
   // there is a balance (Shopify refuses one for a paid order): the new
