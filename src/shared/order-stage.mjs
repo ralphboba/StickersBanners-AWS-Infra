@@ -163,19 +163,10 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   const pickup = isPickup(shippingMethod);
   const onGround = /\bground\b/i.test(String(shippingMethod ?? ''));
 
-  // ── never charge for what the legacy bot may hand over for free ──────────
-  // Linh's changeExpress upgrades a 3-day order to 2-day for nothing when it is
-  // routed between 3pm and 6pm ET (routing.mjs). That decision is made when the
-  // order leaves for a facility. So while an order is still unrouted we cannot
-  // know whether it is about to be upgraded free, and selling it the same
-  // upgrade would take money for something the customer was going to get.
-  //
-  // Once the order sits in a facility folder the legacy bot has already had its
-  // say: if it is still on 3-day, it was not upgraded, and the upgrade is
-  // genuinely ours to sell. Time is not consulted — the rule holds whenever the
-  // page is opened.
-  const routed = Boolean(folder?.facility);
-  const legacyMayUpgradeFree = ladder?.from === SERVICE.d3 && !routed;
+  // A 3-Days order may be upgraded in any folder (Kai, 2026-10-08: "3 day여도
+  // 업그레이드 가능하게"). The old guard refused it until it reached a facility
+  // folder, because Linh's program may move a 3-Days order to 2-Days for free
+  // when it routes it between 3 and 6pm ET; Kai: "3에서 2데이는 뭐 알아서 하겠지".
 
   // The reasons to refuse, in the order they are checked.
   // Checked before the ladder: a B2SIGN order or a PO box is refused whatever
@@ -217,7 +208,6 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   // collection and cannot be pulled back out of it (Kai, 2026-09-28).
   else if (!ladder) blockedBy = 'service_not_upgradable';
   else if (ladder.top) blockedBy = 'already_fastest';
-  else if (legacyMayUpgradeFree) blockedBy = 'awaiting_routing';
 
   return {
     stage,

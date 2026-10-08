@@ -112,7 +112,6 @@
 - Completed Orders (픽업 주문) → "Your order has been completed."
 - 이미 FedEx 1-Day → "This order is already on our fastest service."
 - 사다리 밖 배송(Saturday Overnight, 알 수 없는 이름) → "This order's shipping cannot be upgraded online."
-- **3-Days 주문이 아직 공장 폴더에 들어가기 전** → "We're still scheduling this order. Check back shortly." (⚠️ 4장 참고)
 - B2Sign 상품 → "This order is made by one of our partners, so changes go through our team."
 - 스티커 상품 → "Sticker orders ship on their own schedule, so the shipping can't be changed online."
 - 배송 불가 지역 → "We can't change shipping for this delivery address."
@@ -148,11 +147,10 @@ Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않�
 
 ---
 
-## 4. ⚠️ Kai 규칙과 맞는지 확인이 필요한 것
-
-- **3-Days 주문, 공장 폴더 전에는 막힘 (`awaiting_routing`):** Linh 프로그램이 오후 3~6시에 공장으로 보낼 때 3-Days를 2-Days로 **무료로** 올려 줄 수 있어서, 그 전에 돈을 받지 않으려고 넣은 규칙이다. 폴더 규칙("Completed만 막는다")과는 별개지만, 고객 입장에서는 QTS나 Proofing에 있는 3-Days 주문이 막힌다. **유지할지 Kai 결정 필요.**
-
----
+## 4. 결정된 것
+- **3-Days 주문은 어느 폴더에서든 업그레이드 가능** (Kai, 2026-10-08: "3 day여도 업그레이드 가능하게",
+  "3에서 2데이는 뭐 알아서 하겠지"). 예전에는 공장 폴더에 들어가기 전까지 막았다. Linh 프로그램이
+  오후 3~6시에 3-Days를 2-Days로 무료로 올려 줄 수 있어서였는데, 그 규칙은 없앴다.
 
 ## 5. 스위치와 배포
 

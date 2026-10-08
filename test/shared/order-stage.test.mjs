@@ -157,19 +157,12 @@ describe('never collide with the legacy bot', () => {
     assert.equal(nextService('1-day').from, 'FedEx 1-Day');
   });
 
-  test('an unrouted 3-day order is NOT sold an upgrade the legacy bot may give free', () => {
-    for (const id of ['665685', '653109', '661019', '73066', '73067', '31358']) {
+  test('a 3-day order is upgradable in every folder, routed or not (Kai, 2026-10-08)', () => {
+    for (const id of ['665685', '651474', '653109', '661019', '73066', '73067', '31358',
+                      '73068', '73069', '73070', '674352', '42928', '3571']) {
       const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Days' });
-      assert.equal(s.canUpgrade, false, `folder ${id} must not sell a 3-day upgrade`);
-      assert.equal(s.blockedBy, 'awaiting_routing');
-    }
-  });
-
-  test('once routed, a 3-day order is ours to sell — the bot already decided', () => {
-    for (const id of ['73068', '73069', '73070', '674352', '42928']) {
-      const s = orderStage({ folderId: id, shippingMethod: 'FedEx 3-Days' });
-      assert.equal(s.canUpgrade, true, `folder ${id} should sell the upgrade`);
-      assert.equal(s.upgradeTo, 'FedEx 2-Days');
+      assert.equal(s.canUpgrade, true, `folder ${id}`);
+      assert.deepEqual(s.upgradeOptions, ['FedEx 2-Days', 'FedEx 1-Day']);
     }
   });
 
@@ -178,14 +171,6 @@ describe('never collide with the legacy bot', () => {
     assert.equal(orderStage({ folderId: '73068', shippingMethod: '2-day' }).canUpgrade, true);
   });
 
-  test('the guard does not depend on the clock', () => {
-    // The legacy cutoff is 3-6pm ET, but the page is opened at any hour and the
-    // routing may happen later. Refusing by folder, not by time, holds always.
-    const a = orderStage({ folderId: '665685', shippingMethod: '3-day' });
-    const b = orderStage({ folderId: '665685', shippingMethod: '3-day' });
-    assert.deepEqual(a, b);
-    assert.equal(a.canUpgrade, false);
-  });
 });
 
 describe('the methods live orders actually carry', () => {
