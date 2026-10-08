@@ -66,6 +66,10 @@ authority: **Linh** (legacy author).
     in Shopify's confirmation template is shown to EVERY customer — this is
     live with real customers (first real paid change: S66881, 2026-10-07).
     Neither context = off. `ORDERDESK_WRITES` is not affected by either.
+  - Add-ons on the customer page (Kai, 2026-10-08): OFF unless named —
+    `--context addOnOrders=S64262` (those orders only, while testing) or
+    `--context addOns=live` (every order). They use the same write switches
+    as the shipping change (`docs/shipping-change-spec.md` §8).
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed

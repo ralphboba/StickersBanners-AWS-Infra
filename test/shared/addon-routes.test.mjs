@@ -13,7 +13,7 @@ const CATALOG = [{ productId: 'P1', title: 'Banner Stands', image: null, options
 const AQ = { ok: true, mode: 'addons', from: 'FedEx 2-Days', to: 'FedEx 2-Days', itemsCents: 14900, shippingCents: 945, taxCents: 951, totalCents: 16796,
   edit: { orderId: 'gid://shopify/Order/1', calculatedOrderId: 'gid://shopify/CalculatedOrder/9', restore: { title: 'FedEx 2-Days', priceCents: 12811 } } };
 
-function build({ row = ROW, aq = AQ, pending = null, commit, order } = {}) {
+function build({ row = ROW, aq = AQ, pending = null, commit, order, addOnOrders = 'S1' } = {}) {
   const log = { quotes: [], commits: [], saved: [], invoices: [] };
   const deps = {
     loadRow: async () => row,
@@ -24,6 +24,7 @@ function build({ row = ROW, aq = AQ, pending = null, commit, order } = {}) {
     loadPending: async () => pending,
     loadAddOns: async () => CATALOG,
     quoteAddOns: async (a) => { log.quotes.push(a); return aq; },
+    addOnOrders,
     now: () => 1790000000000,
     commitEdit: async (a) => { log.commits.push(a); return commit ?? { committed: true, outstandingCents: 16796, paymentUrl: 'https://pay',
       lineItems: [{ id: 'gid://shopify/LineItem/500', quantity: 1 }, { id: 'gid://shopify/LineItem/900', quantity: 1 }] }; },
@@ -99,5 +100,17 @@ describe('add-ons on the page', () => {
     const { handler, log } = build();
     await call(handler, '/my-order/request', { o: 'S1', s: URL, service: 'FedEx 1-Day', expectedTotal: 10 });
     assert.equal(log.quotes.length, 0);
+  });
+
+  test('only on the orders named at deploy; none when unset (Kai: "주문 하나에만")', async () => {
+    for (const addOnOrders of ['', 'S999']) {
+      const { handler, log } = build({ addOnOrders });
+      assert.deepEqual(read(await call(handler, '/my-order', { o: 'S1', s: URL }, 'GET')).body.addOns, []);
+      assert.equal(read(await call(handler, '/my-order/quote', SEL)).body.error, 'addon_not_offered');
+      await call(handler, '/my-order/request', { ...SEL, expectedTotal: 167.96 });
+      assert.equal(log.commits.length + log.quotes.length, 0);
+    }
+    const all = build({ addOnOrders: '*' });
+    assert.deepEqual(read(await call(all.handler, '/my-order', { o: 'S1', s: URL }, 'GET')).body.addOns, CATALOG);
   });
 });

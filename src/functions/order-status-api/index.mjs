@@ -91,7 +91,8 @@ async function loadPending(orderName) {
   return res?.Item ?? null;
 }
 
-const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending, loadAddOns, quoteAddOns });
+const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending, loadAddOns, quoteAddOns,
+  addOnOrders: process.env.ADDON_ORDERS ?? '' });
 
 // { warmup: true } from the 5-minute schedule: load the Shopify token so the
 // next customer does not wait for it, and return. Nothing else is touched.

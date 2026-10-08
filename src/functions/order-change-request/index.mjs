@@ -38,6 +38,7 @@ const routes = makeHandler({
     }
   },
   estimates: async () => null,
+  addOnOrders: process.env.ADDON_ORDERS ?? '',
   loadAddOns: async () => fetchAddOnCatalog({ ...(await creds()) }),
   quoteAddOns: async (args) => {
     try { return await quoteOrderChange({ ...(await creds()), ...args }); } catch (err) {

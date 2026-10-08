@@ -270,7 +270,7 @@ async function status(deps, authorised, event) {
           awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl,
             ...(pending.addOns?.length ? { addOns: pending.addOns.map(publicItem) } : {}) },
         },
-        addOns: await addOnList(deps, stage),
+        addOns: await addOnList(deps, stage, row.orderName ?? orderName),
       });
     }
   }
@@ -318,7 +318,7 @@ async function status(deps, authorised, event) {
       pickup: stage.canConvert === true,
       needsAddress: Boolean(delivery),
     },
-    addOns: await addOnList(deps, stage),
+    addOns: await addOnList(deps, stage, row.orderName ?? orderName),
   });
 }
 
@@ -446,7 +446,7 @@ async function requestChange(deps, authorised, event) {
 
   // Products added (or an unpaid choice that carries some): their own path,
   // so the shipping-only path below stays exactly as it was.
-  if (Array.isArray(body.addOns) || (await pendingHasAddOns(deps, orderName))) {
+  if ((Array.isArray(body.addOns) && addOnsEnabledFor(deps, orderName)) || (await pendingHasAddOns(deps, orderName))) {
     return requestAddOnChange(deps, row, orderName, body);
   }
 
@@ -610,8 +610,18 @@ function addOnsOpen(stage) {
   return !['shipping', 'completed_pickup', 'supplier_order', 'sticker_order'].includes(stage.blockedBy);
 }
 
-async function addOnList(deps, stage) {
-  if (!deps.loadAddOns || !addOnsOpen(stage)) return [];
+/**
+ * Which orders get add-ons at all (ADDON_ORDERS, set at deploy): "S64262" —
+ * those orders only, while it is tested (Kai, 2026-10-08: "주문 하나에만");
+ * "*" — every order; empty — none.
+ */
+function addOnsEnabledFor(deps, orderName) {
+  const list = String(deps.addOnOrders ?? '').split(',').map((o) => o.trim().toUpperCase()).filter(Boolean);
+  return list.includes('*') || list.includes(String(orderName ?? '').replace(/^#/, '').toUpperCase());
+}
+
+async function addOnList(deps, stage, orderName) {
+  if (!deps.loadAddOns || !addOnsOpen(stage) || !addOnsEnabledFor(deps, orderName)) return [];
   try { return await deps.loadAddOns(); } catch { return []; }
 }
 
@@ -647,6 +657,7 @@ async function quoteUpgradesDroppingAddOns(deps, orderName, options, before, pen
 
 /** Price the selection. Shared by the quote and the request, so they cannot differ. */
 async function priceAddOnChange(deps, row, orderName, body) {
+  if (!addOnsEnabledFor(deps, orderName)) return { response: json(409, { error: 'addon_not_offered', reason: ADDON_GONE_COPY }) };
   const stage = stageFor(row);
   if (!addOnsOpen(stage)) {
     return { response: json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY }) };

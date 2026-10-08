@@ -42,6 +42,12 @@ export interface ComputeStackProps extends cdk.StackProps {
    * this switch.
    */
   readonly shippingChangeLive?: boolean;
+  /**
+   * Add-ons on the customer page (Kai, 2026-10-08: "주문 하나에만" first).
+   * Order names like "S64262" (comma-separated) show and accept add-ons on
+   * those orders only; "*" on every order. Unset = add-ons off everywhere.
+   */
+  readonly addOnOrders?: string;
   /** Who gets the daily shipping-upgrade count by email (Kai only). */
   readonly upgradeReportEmail?: string;
 }
@@ -196,6 +202,11 @@ export class ComputeStack extends cdk.Stack {
     // Public (no Cognito): the customer is not logged in, and the link in their
     // confirmation email is what authorises them. Bundles src root for
     // shared/order-stage, order-token, shopify-orders and shopify-pricing.
+    const addOnOrders = (props.addOnOrders ?? '').split(',').map((o) => o.trim().replace(/^#/, '').toUpperCase()).filter(Boolean);
+    if (addOnOrders.some((o) => o !== '*' && !/^S\d+$/.test(o))) {
+      throw new Error(`addOnOrders must be order names like S64262 (or "*"), got "${props.addOnOrders}"`);
+    }
+    const addOnEnv = { ADDON_ORDERS: addOnOrders.join(',') };
     this.orderStatusApi = new lambda.Function(this, 'OrderStatusApi', {
       ...base,
       functionName: `${config.prefix}-order-status-api`,
@@ -207,6 +218,7 @@ export class ComputeStack extends cdk.Stack {
       environment: {
         JOBS_TABLE: jobsTable.tableName,
         SB_ENV: config.env,
+        ...addOnEnv,
       },
       description: 'Customer order status + shipping upgrade quote (read-only)',
     });
@@ -242,6 +254,7 @@ export class ComputeStack extends cdk.Stack {
       SHOPIFY_WRITES: armed ? 'enabled' : 'disabled',
       ORDERDESK_UPGRADE_WRITES: armed ? 'enabled' : 'disabled',
       ...(testOrders.length ? { WRITE_ONLY_ORDERS: testOrders.join(',') } : {}),
+      ...addOnEnv,
     };
     this.orderChangeRequest = new lambda.Function(this, 'OrderChangeRequest', {
       ...base,
