@@ -204,7 +204,7 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
       canConvert: convertible,
       convertTo: convertible ? [...DELIVERY_OPTIONS] : [],
       blockedBy: convertible ? null
-        : (openness === 'closed' ? 'shipping' : product),
+        : (openness === 'closed' ? 'completed_pickup' : product),
       currentService: shippingMethod ?? null,
     };
   }

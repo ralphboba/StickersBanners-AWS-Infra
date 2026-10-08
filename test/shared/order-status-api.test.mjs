@@ -240,3 +240,16 @@ describe('POST /my-order/quote', () => {
     assert.equal((await post('{nope')).statusCode, 400);
   });
 });
+
+describe('no-options messages (Kai, 2026-10-08)', () => {
+  test('Completed Orders reads as shipped and on its way; every message ends by pointing to the team', async () => {
+    fake(pickupRow({ folderId: '3516', shipping: { method: 'FedEx 2-Days', state: 'GA', postalCode: '30301' } }));
+    const shipped = read(await get('S70001')).body.shipping.reason;
+    assert.match(shipped, /^Your order has been shipped and is on its way to your address\./);
+    assert.match(shipped, /If you have any questions, please contact our team\.$/);
+    fake(pickupRow({ shipping: { method: 'FedEx 1-Day', state: 'GA', postalCode: '30301' } }));
+    assert.match(read(await get('S70001')).body.shipping.reason, /fastest service\. If you have any questions, please contact our team\.$/);
+    fake(pickupRow({ folderId: '3516' }));
+    assert.match(read(await get('S70001')).body.shipping.reason, /^Your order has been completed\. If you have any questions/);
+  });
+});

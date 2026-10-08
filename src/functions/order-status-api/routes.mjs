@@ -23,9 +23,15 @@ const json = (statusCode, body) => ({
 /** One response for "no such order" and "not your order". */
 const NOT_FOUND = json(404, { error: 'not_found' });
 
+/** Every "no options" message ends by pointing to the team (Kai, 2026-10-08). */
+const ASK_TEAM = ' If you have any questions, please contact our team.';
+
 /** Why the customer cannot upgrade, in words they can act on. */
-const BLOCKED_COPY = {
-  shipping: 'Your order is with the shipping team, so it can no longer be changed.',
+const BLOCKED_COPY = Object.fromEntries(Object.entries({
+  // Completed Orders (Kai, 2026-10-08: "your order has been shipped, on the way").
+  shipping: 'Your order has been shipped and is on its way to your address.',
+  // A pickup order in Completed Orders: nothing is on its way, it was collected.
+  completed_pickup: 'Your order has been completed.',
   already_fastest: 'This order is already on our fastest service.',
   service_not_upgradable: 'This order’s shipping cannot be upgraded online.',
   awaiting_routing: 'We’re still scheduling this order. Check back shortly.',
@@ -41,7 +47,8 @@ const BLOCKED_COPY = {
     + 'shipping can no longer be changed.',
   // Delivery conversion, address typed by the customer.
   outside_us: 'We can only deliver within the United States.',
-};
+  address_incomplete: 'Please fill in the street, city, state and ZIP code.',
+}).map(([k, v]) => [k, v + ASK_TEAM]));
 
 /**
  * When the order is eligible but we cannot price it exactly (see
@@ -326,7 +333,7 @@ function checkDeliveryAddress(raw) {
   address.province = address.province.toUpperCase();
   address.country = (address.country || 'US').toUpperCase();
   if (!address.address1 || !address.city || !/^[A-Z]{2}$/.test(address.province) || !address.zip) {
-    return { response: json(400, { error: 'address_incomplete' }) };
+    return { response: json(400, { error: 'address_incomplete', reason: BLOCKED_COPY.address_incomplete }) };
   }
   // The store's rates cover one Domestic (US) zone. Nothing else has a price.
   if (address.country !== 'US') return { response: json(422, { error: 'outside_us', reason: BLOCKED_COPY.outside_us }) };

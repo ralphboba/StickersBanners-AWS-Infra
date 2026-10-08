@@ -256,7 +256,7 @@ describe('pickup -> delivery conversion', () => {
 
   test('refused only once the order is completed; an unknown folder converts', () => {
     const c = orderStage({ folderId: '3516', shippingMethod: 'Georgia Warehouse' });
-    assert.equal(c.blockedBy, 'shipping');
+    assert.equal(c.blockedBy, 'completed_pickup');
     assert.deepEqual(c.convertTo, []);
     assert.equal(orderStage({ folderId: '999999', shippingMethod: 'Georgia Warehouse' }).canConvert, true);
     assert.equal(orderStage({ folderId: '52437', shippingMethod: 'New Jersey Warehouse' }).canConvert, true);

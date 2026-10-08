@@ -106,15 +106,18 @@
 - **열림:** 확인 메일 버튼(올바른 토큰), 어느 폴더든
 - **안 열림:** 토큰이 틀림, Shopify나 OrderDesk 일시 장애
 
-### 옵션이 나오나 — 안 나오는 경우와 화면 문구
-- Completed Orders → "Your order is with the shipping team, so it can no longer be changed."
+### 옵션이 나오나 — 안 나오는 경우와 화면 문구 (Kai, 2026-10-08)
+모든 문구 끝에 " If you have any questions, please contact our team."이 붙는다.
+- Completed Orders (배송 주문) → "Your order has been shipped and is on its way to your address."
+- Completed Orders (픽업 주문) → "Your order has been completed."
 - 이미 FedEx 1-Day → "This order is already on our fastest service."
 - 사다리 밖 배송(Saturday Overnight, 알 수 없는 이름) → "This order's shipping cannot be upgraded online."
-- B2Sign 상품 → "This order is made by one of our partners…"
-- 스티커 상품 → "Sticker orders ship on their own schedule…"
-- 배송지가 배송 불가 지역 → "We can't change shipping for this delivery address."
+- **3-Days 주문이 아직 공장 폴더에 들어가기 전** → "We're still scheduling this order. Check back shortly." (⚠️ 4장 참고)
+- B2Sign 상품 → "This order is made by one of our partners, so changes go through our team."
+- 스티커 상품 → "Sticker orders ship on their own schedule, so the shipping can't be changed online."
+- 배송 불가 지역 → "We can't change shipping for this delivery address."
 - PO Box → "We can't ship to a PO box."
-- **3-Days 주문이 아직 공장 폴더에 들어가기 전** → "We're still scheduling this order." (⚠️ 4장 참고)
+- 픽업 주소 입력: 미국 밖 → "We can only deliver within the United States." / 빈칸 → "Please fill in the street, city, state and ZIP code."
 
 ### 가격이 안 나오나 — 경우마다 다른 문구 (Kai, 2026-10-08)
 Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않는다. 문구는 경우마다 다르다
