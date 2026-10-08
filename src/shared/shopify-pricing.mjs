@@ -36,7 +36,7 @@ import { shopifyGraphQL } from './shopify-fetch.mjs';
 import { toMailingAddress } from './shopify-orders.mjs';
 import { toCents, centsToAmount } from './money.mjs';
 import { isPickup } from './order-stage.mjs';
-import { stageShippingChange, beginOrderEdit } from './shopify-order-edit.mjs';
+import { stageShippingChange, beginOrderEdit, stageOrderChange } from './shopify-order-edit.mjs';
 
 const ORDER_FOR_PRICING = `
   query OrderForPricing($q: String!) {
@@ -53,6 +53,7 @@ const ORDER_FOR_PRICING = `
         paymentCollectionDetails { additionalPaymentCollectionUrl }
         shippingAddress { address1 address2 city provinceCode zip countryCodeV2 }
         billingAddress { address1 address2 city provinceCode zip countryCodeV2 }
+        lineItems(first: 100) { nodes { id currentQuantity } }
         shippingLines(first: 5) {
           nodes {
             id
@@ -131,6 +132,8 @@ export async function fetchOrderForPricing({ shop, token, orderName, fetchImpl }
     customerTaxExempt: Boolean(o.customer?.taxExempt),
     shippingAddress: addressFrom(o.shippingAddress),
     billingAddress: addressFrom(o.billingAddress),
+    // Line ids, so the add-ons an edit adds can be told apart afterwards.
+    lineItemIds: (o.lineItems?.nodes ?? []).map((l) => l.id),
     shippingLines: lines.map((l) => ({
       id: l.id,
       title: l.title,
@@ -252,11 +255,108 @@ export function orderBeforeChange(order, change) {
   if (!order || !r?.title || !Number.isSafeInteger(r.priceCents)) return null;
   if (order.shippingLines?.length !== 1 || order.shippingLines[0].title !== change.to) return null;
   if (!(order.outstandingCents > 0) || !Number.isSafeInteger(order.currentTotalCents)) return null;
+  const actual = order.shippingLines[0];
+  const itemsCents = Number.isSafeInteger(change.itemsCents) ? change.itemsCents : 0;
   return {
     ...order,
-    shippingLines: [{ ...order.shippingLines[0], title: r.title, originalCents: r.priceCents, discountedCents: r.priceCents }],
+    shippingLines: [{ ...actual, title: r.title, originalCents: r.priceCents, discountedCents: r.priceCents }],
+    // What Shopify's line really is now (the unpaid choice), so a new choice
+    // that happens to equal the paid one still puts the paid line back.
+    actualShippingLine: { title: actual.title, priceCents: actual.originalCents },
     outstandingCents: 0,
     currentTotalCents: order.currentTotalCents - order.outstandingCents,
+    // Unpaid add-ons are still on the Shopify order; price as if they were not.
+    ...(itemsCents ? { currentSubtotalCents: order.currentSubtotalCents - itemsCents } : {}),
+  };
+}
+
+/**
+ * The price of a change that ADDS PRODUCTS (Kai, 2026-10-08), with or without a
+ * faster service, read from a staged edit of the customer's own order.
+ *
+ * Shipping is re-priced like checkout every time (Kai: "항상 다시 계산"):
+ * checkout's rate for the service at the NEW subtotal, minus the rate for what
+ * they paid at the old one, added to the line they paid. On an order nobody
+ * edited that is exactly checkout's rate at the new subtotal. A pickup stays a
+ * pickup ($0): its add-ons are collected with it.
+ *
+ * @param {object} p
+ * @param {object} p.order   fetchOrderForPricing, or orderBeforeChange of it
+ * @param {string|null} [p.to]  a faster service, or null to keep the current one
+ * @param {Array<{variantId: string, quantity: number}>} p.addOns
+ * @param {string[]} [p.removeLineItemIds]  unpaid add-on lines from an earlier choice
+ */
+export async function quoteOrderChange({
+  shop, token, order, to = null, addOns = [], removeLineItemIds = [], expectedFrom, rateCache, fetchImpl,
+}) {
+  const no = (reason) => ({ ok: false, reason });
+  if (!order) return no('order_not_found');
+  if (order.currency !== USD) return no('not_usd');
+  if (order.orderTaxExempt && !order.customerTaxExempt) return no('tax_exempt_order');
+  if (order.subtotalCents === null || order.currentSubtotalCents === null) return no('order_unreadable');
+  if (order.shippingLines.length !== 1) return no('shipping_unverified');
+  const line = order.shippingLines[0];
+  if (line.originalCents === null || line.discountedCents === null) return no('shipping_unverified');
+  if (line.discountedCents !== line.originalCents) return no('shipping_discounted');
+  if (expectedFrom && line.title !== expectedFrom && !(isPickup(line.title) && isPickup(expectedFrom))) {
+    return no('method_changed');
+  }
+  if (order.outstandingCents !== 0) return no('balance_due');
+  const pickup = isPickup(line.title);
+  if (pickup && to) return no('convert_with_addons');
+  const target = to ?? line.title;
+  const actual = order.actualShippingLine ?? { title: line.title, priceCents: line.originalCents };
+
+  let fromNow = 0;
+  let lookup = null;
+  if (!pickup) {
+    const address = order.shippingAddress;
+    if (!address) return no('no_address');
+    lookup = (subtotalCents) => {
+      const key = `${subtotalCents}|upgrade|${JSON.stringify(address)}`;
+      if (rateCache?.has(key)) return rateCache.get(key);
+      const p = checkoutRates({ shop, token, fetchImpl, subtotalCents, address, customerId: order.customerId });
+      rateCache?.set(key, p);
+      return p;
+    };
+    const atCheckout = await lookup(order.subtotalCents);
+    if (!atCheckout) return no('rates_unavailable');
+    if (atCheckout.get(line.title) !== line.originalCents) return no('price_unverified');
+    const now = order.currentSubtotalCents === order.subtotalCents ? atCheckout : await lookup(order.currentSubtotalCents);
+    if (!now) return no('rates_unavailable');
+    fromNow = now.get(line.title);
+    if (fromNow === undefined) return no('service_unavailable');
+  }
+
+  let shippingCents = 0;
+  let toCentsRate = null;
+  const edit = await stageOrderChange({
+    shop, token, fetchImpl, orderId: order.id, removeLineItemIds,
+    addVariants: addOns.map((a) => ({ variantId: a.variantId, quantity: a.quantity })),
+    totalBeforeCents: order.currentTotalCents,
+    shippingFor: async (newSubtotalCents) => {
+      if (pickup) return null;
+      const rates = await lookup(newSubtotalCents);
+      if (!rates) return { error: 'rates_unavailable' };
+      toCentsRate = rates.get(target);
+      if (toCentsRate === undefined) return { error: 'service_unavailable' };
+      shippingCents = toCentsRate - fromNow;
+      const priceCents = line.originalCents + shippingCents;
+      if (target === actual.title && priceCents === actual.priceCents) return null;   // nothing to restage
+      return { removeLineId: line.id, title: target, priceCents };
+    },
+  });
+  if (!edit.ok) return no(edit.reason);
+  const itemsCents = edit.subtotalCents - order.currentSubtotalCents;
+  const taxCents = edit.outstandingCents - itemsCents - shippingCents;
+  if (taxCents < 0 || edit.outstandingCents <= 0) return no('calc_inconsistent');
+  return {
+    ok: true, mode: 'addons', from: line.title, to: target,
+    itemsCents, shippingCents, taxCents, totalCents: edit.outstandingCents,
+    fromCents: fromNow, toCents: toCentsRate,
+    edit: { orderId: order.id, calculatedOrderId: edit.calculatedOrderId,
+      expectedOutstandingCents: edit.outstandingCents,
+      restore: { title: line.title, priceCents: line.originalCents } },
   };
 }
 

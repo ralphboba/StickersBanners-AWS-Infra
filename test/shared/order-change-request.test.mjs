@@ -359,7 +359,10 @@ describe('orderBeforeChange', () => {
     const order = { outstandingCents: 100, currentTotalCents: 500, shippingLines: [{ id: 'L', title: 'FedEx 1-Day', originalCents: 300, discountedCents: 300 }] };
     const change = { to: 'FedEx 1-Day', restore: { title: 'FedEx Ground', priceCents: 200 } };
     assert.deepEqual(orderBeforeChange(order, change), { outstandingCents: 0, currentTotalCents: 400,
-      shippingLines: [{ id: 'L', title: 'FedEx Ground', originalCents: 200, discountedCents: 200 }] });
+      shippingLines: [{ id: 'L', title: 'FedEx Ground', originalCents: 200, discountedCents: 200 }],
+      actualShippingLine: { title: 'FedEx 1-Day', priceCents: 300 } });
+    // Unpaid add-ons come off the subtotal too.
+    assert.equal(orderBeforeChange({ ...order, currentSubtotalCents: 20000 }, { ...change, itemsCents: 14900 }).currentSubtotalCents, 5100);
     assert.equal(orderBeforeChange({ ...order, outstandingCents: 0 }, change), null);
     assert.equal(orderBeforeChange(order, { ...change, to: 'FedEx 2-Days' }), null);
     assert.equal(orderBeforeChange(order, { to: 'FedEx 1-Day' }), null);

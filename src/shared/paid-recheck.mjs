@@ -23,6 +23,11 @@ export function stillAllowed(od, change) {
       state: od.shipping?.state, country: od.shipping?.country },
     items: (od.order_items ?? []).map((i) => ({ name: i.name })),
   });
+  // Add-ons with no service change (Kai, 2026-10-08): only the folder decides,
+  // exactly as for the page (Completed Orders is the one closed folder).
+  if (change.addOns?.length && change.to === change.from) {
+    return stage.window === 'closed' ? { allowed: false, reason: 'shipping', label: stage.label } : { allowed: true };
+  }
   const ok = isPickup(od.shipping_method)
     ? stage.canConvert && stage.convertTo.includes(change.to)
     : stage.canUpgrade && (stage.upgradeOptions ?? [stage.upgradeTo]).includes(change.to);

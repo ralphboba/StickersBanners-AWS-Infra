@@ -19,7 +19,7 @@
 
 import crypto from 'node:crypto';
 
-import { upgradeMessage } from '../../shared/gchat.mjs';
+import { upgradeMessage, addOnMessage } from '../../shared/gchat.mjs';
 import { centsToDollars, toCents } from '../../shared/money.mjs';
 
 /**
@@ -39,6 +39,15 @@ export function fullyPaid(order) {
   if (!['paid', 'partially_refunded'].includes(status)) return false;
   if (order?.total_outstanding === undefined || order?.total_outstanding === null) return status === 'paid';
   return toCents(String(order.total_outstanding)) === 0;
+}
+
+/** The change's add-on lines (ids recorded at commit) are on the order, still ordered. */
+export function addOnLinesOnOrder(lineItems, change) {
+  const ids = change.addedLineItemIds ?? [];
+  if (!ids.length) return false;
+  const tail = (g) => String(g ?? '').split('/').pop();
+  const live = new Set(lineItems.filter((l) => (l.current_quantity ?? l.quantity ?? 1) > 0).map((l) => tail(l.id ?? l.admin_graphql_api_id)));
+  return ids.every((id) => live.has(tail(id)));
 }
 
 /** Shopify signs the raw body with the app's webhook secret (base64 HMAC-SHA256). */
@@ -98,6 +107,10 @@ export function makePaidHandler(deps) {
     // payment.
     if (Array.isArray(order.shipping_lines)
       && !order.shipping_lines.some((l) => String(l?.title ?? '') === change.to)) {
+      return reply(200, { ignored: 'edit_not_on_order', ref: change.ref });
+    }
+    // Add-ons: the lines that commit created must be on the order too.
+    if (change.addOns?.length && Array.isArray(order.line_items) && !addOnLinesOnOrder(order.line_items, change)) {
       return reply(200, { ignored: 'edit_not_on_order', ref: change.ref });
     }
 
@@ -164,7 +177,13 @@ async function settle(deps, orderName, change) {
     // Only a write that happened now is announced; a duplicate was announced
     // the first time.
     let chat = { sent: false, skipped: 'duplicate' };
-    if (result.applied) {
+    if (result.applied && change.addOns?.length) {
+      chat = await deps.notify(orderName, addOnMessage({
+        orderName, addOns: change.addOns, from: result.from ?? change.from, to: change.to,
+        items: centsToDollars(change.itemsCents ?? 0), shipping: centsToDollars(change.shippingCents ?? 0),
+        tax: centsToDollars(change.taxCents ?? 0), test: Boolean(change.test),
+      }), where);
+    } else if (result.applied) {
       chat = await deps.notify(orderName, upgradeMessage({
         orderName, from: result.from ?? change.from, to: change.to,
         amount: centsToDollars(change.shippingCents), tax: centsToDollars(change.taxCents ?? 0),

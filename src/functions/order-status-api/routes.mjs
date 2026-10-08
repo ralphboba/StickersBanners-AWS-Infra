@@ -8,6 +8,7 @@ import { authorisesOrder } from '../../shared/order-token.mjs';
 import { centsToDollars, toCents } from '../../shared/money.mjs';
 import { isNoShipDestination, isPoBox } from '../../shared/upgrade-eligibility.mjs';
 import { orderBeforeChange } from '../../shared/shopify-pricing.mjs';
+import { resolveAddOns } from '../../shared/addon-catalog.mjs';
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -87,7 +88,7 @@ const REFUSAL_COPY = {
 };
 const refusalCopy = (reason) => REFUSAL_COPY[reason] ?? UNPRICEABLE_COPY;
 /** Shipping changes are switched off (deploy without shippingChange=live). */
-const NOT_AVAILABLE_COPY = 'Shipping changes aren’t available online right now. Please try again later or contact us.';
+const NOT_AVAILABLE_COPY = 'Changes to your order aren’t available online right now. Please try again later or contact us.';
 /** A change already flagged for the team (attention). */
 const WITH_TEAM_COPY = 'Our team is reviewing a shipping change on this order and will contact you.';
 
@@ -144,6 +145,7 @@ export function makeHandler(deps) {
     const method = String(event?.requestContext?.http?.method ?? event?.httpMethod ?? 'GET').toUpperCase();
     const path = String(event?.rawPath ?? event?.requestContext?.http?.path ?? event?.path ?? '');
     if (method === 'POST' && path.endsWith('/request')) return requestChange(deps, authorisedFor, event);
+    if (method === 'POST' && wantsAddOns(event)) return quoteAddOns(deps, authorisedFor, event);
     if (method === 'POST') return quoteDelivery(deps, authorisedFor, event);
     return status(deps, authorisedFor, event);
   };
@@ -247,9 +249,10 @@ async function status(deps, authorised, event) {
     const paymentUrl = pending.paymentUrl ?? order?.paymentUrl ?? null;
     if (paymentUrl && order?.outstandingCents > 0) {
       const before = offeredServices(stage).length ? orderBeforeChange(order, pending) : null;
-      const { upgrades } = before
-        ? await quoteUpgrades(deps, orderName, offeredServices(stage), before, pending.from)
-        : { upgrades: [] };
+      const { upgrades } = !before ? { upgrades: [] }
+        : pending.addOns?.length
+          ? await quoteUpgradesDroppingAddOns(deps, orderName, offeredServices(stage), before, pending)
+          : await quoteUpgrades(deps, orderName, offeredServices(stage), before, pending.from);
       if (!upgrades.length) {
         // Options could not be re-priced: say why in the log (no secrets).
         console.warn(JSON.stringify({ msg: 'pending options not repriced', orderName, canUpgrade: stage.canUpgrade,
@@ -264,9 +267,10 @@ async function status(deps, authorised, event) {
           current: pending.from, canUpgrade: upgrades.length > 0, canConvert: false, reason: null,
           pickup: stage.canConvert === true,
           upgrades, upgrade: upgrades[0] ?? null,
-          awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl },
+          awaitingPayment: { from: pending.from, to: pending.to, total: centsToDollars(order.outstandingCents), paymentUrl,
+            ...(pending.addOns?.length ? { addOns: pending.addOns.map(publicItem) } : {}) },
         },
-        addOns: [],
+        addOns: await addOnList(deps, stage),
       });
     }
   }
@@ -314,7 +318,7 @@ async function status(deps, authorised, event) {
       pickup: stage.canConvert === true,
       needsAddress: Boolean(delivery),
     },
-    addOns: [], // pending the item and price list
+    addOns: await addOnList(deps, stage),
   });
 }
 
@@ -439,6 +443,12 @@ async function requestChange(deps, authorised, event) {
   const got = await authorised(orderName, String(body.s ?? '').trim());
   if (got.response) return got.response;
   const { row } = got;
+
+  // Products added (or an unpaid choice that carries some): their own path,
+  // so the shipping-only path below stays exactly as it was.
+  if (Array.isArray(body.addOns) || (await pendingHasAddOns(deps, orderName))) {
+    return requestAddOnChange(deps, row, orderName, body);
+  }
 
   const service = String(body.service ?? '');
   const expected = toCents(body.expectedTotal);
@@ -584,4 +594,199 @@ async function requestChange(deps, authorised, event) {
       invoiceSent: Boolean(invoice.sent) });
   }
   return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent) });
+}
+
+// ── add-ons (Kai, 2026-10-08) ─────────────────────────────────────────────
+// Products from the Stand / Red Carpets menu added to the customer's order
+// (addon-catalog.mjs), alone or together with a faster service: one staged
+// edit, one balance, one payment, shipping re-priced like checkout every time.
+
+const ADDON_GONE_COPY = 'One of those items is no longer available. Refresh the page to see the current list.'
+  + ' If you have any questions, please contact our team.';
+const NOTHING_SELECTED_COPY = 'Choose at least one item to add.';
+
+/** Add-ons are offered wherever a change is (not Completed, not a supplier or sticker order). */
+function addOnsOpen(stage) {
+  return !['shipping', 'completed_pickup', 'supplier_order', 'sticker_order'].includes(stage.blockedBy);
+}
+
+async function addOnList(deps, stage) {
+  if (!deps.loadAddOns || !addOnsOpen(stage)) return [];
+  try { return await deps.loadAddOns(); } catch { return []; }
+}
+
+const publicItem = (a) => ({ product: a.product, title: a.title, sku: a.sku, quantity: a.quantity,
+  unit: centsToDollars(a.unitCents ?? a.price) });
+
+function wantsAddOns(event) {
+  try { return Array.isArray(JSON.parse(event?.body ?? '{}')?.addOns); } catch { return false; }
+}
+
+async function pendingHasAddOns(deps, orderName) {
+  if (!deps.loadPending) return false;
+  const p = await deps.loadPending(orderName);
+  return p?.status === 'pending' && p.addOns?.length > 0;
+}
+
+// The faster services while an unpaid choice with add-ons is open: each priced
+// as "this service, without those items", so picking one replaces the choice
+// the way a shipping-only switch does.
+async function quoteUpgradesDroppingAddOns(deps, orderName, options, before, pending) {
+  if (!deps.quoteAddOns) return { upgrades: [] };
+  const rateCache = new Map();
+  const results = await Promise.all(options.map((to) => deps.quoteAddOns({
+    order: before, to, addOns: [], removeLineItemIds: pending.addedLineItemIds ?? [], expectedFrom: pending.from, rateCache })));
+  const upgrades = [];
+  for (const q of results) {
+    if (!q.ok) { logRefusal(orderName, q.reason); continue; }
+    upgrades.push({ to: q.to, shipping: centsToDollars(q.shippingCents), tax: centsToDollars(q.taxCents),
+      total: centsToDollars(q.totalCents), final: true });
+  }
+  return { upgrades };
+}
+
+/** Price the selection. Shared by the quote and the request, so they cannot differ. */
+async function priceAddOnChange(deps, row, orderName, body) {
+  const stage = stageFor(row);
+  if (!addOnsOpen(stage)) {
+    return { response: json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY }) };
+  }
+  if (!deps.loadAddOns || !deps.quoteAddOns) return { response: json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY }) };
+  const service = body.service ? String(body.service) : null;
+  if (service && !(stage.canUpgrade && (stage.upgradeOptions ?? [stage.upgradeTo]).includes(service))) {
+    return { response: json(400, { error: 'service_not_offered' }) };
+  }
+  const resolved = resolveAddOns(body.addOns ?? [], await deps.loadAddOns());
+  if (resolved.error) return { response: json(409, { error: 'addon_not_offered', reason: ADDON_GONE_COPY }) };
+
+  const existing = deps.loadPending ? await deps.loadPending(orderName) : null;
+  if (existing?.status === 'attention') return { response: json(409, { error: 'with_team', reason: WITH_TEAM_COPY }) };
+  const pendingAddOns = existing?.status === 'pending' && existing.addOns?.length > 0;
+  if (!resolved.addOns.length && !pendingAddOns) {
+    return { response: json(400, { error: 'nothing_selected', reason: NOTHING_SELECTED_COPY }) };
+  }
+
+  const order = await deps.loadShopifyOrder(orderName);
+  const line = order?.shippingLines?.length === 1 ? order.shippingLines[0] : null;
+  let base = order;
+  let removeLineItemIds = [];
+  let switching = false;
+  let expectedFrom = row.shipping?.method ?? null;
+  if (existing?.status === 'pending') {
+    if (line?.title === existing.to && order.outstandingCents > 0) {
+      switching = true;
+      base = orderBeforeChange(order, existing);
+      removeLineItemIds = existing.addedLineItemIds ?? [];
+      expectedFrom = existing.from;
+    } else if (order?.outstandingCents > 0) {
+      logRefusal(orderName, 'switch_line_mismatch');
+      return { response: json(422, { error: 'unpriceable', reason: refusalCopy('switch_line_mismatch') }) };
+    } else if (line?.title !== expectedFrom && !(isPickupTitle(line?.title) && isPickupTitle(expectedFrom))) {
+      return { response: json(409, { error: 'already_paid', reason: 'Your payment for this change is already in. Refresh in a minute to see it.' }) };
+    }
+  }
+  if (!base) {
+    logRefusal(orderName, 'switch_unpriceable');
+    return { response: json(422, { error: 'unpriceable', reason: UNPRICEABLE_COPY }) };
+  }
+  const q = await deps.quoteAddOns({ order: base, to: service, addOns: resolved.addOns, removeLineItemIds, expectedFrom });
+  if (!q.ok) {
+    logRefusal(orderName, q.reason);
+    return { response: json(422, { error: 'unpriceable', reason: refusalCopy(q.reason) }) };
+  }
+  return { q, existing, order, switching, addOns: resolved.addOns };
+}
+
+const isPickupTitle = (t) => /\b(warehouse|pick\s*-?\s*up|pickup)\b/i.test(String(t ?? ''));
+
+const quoteBody = (q, addOns) => ({
+  items: addOns.map(publicItem),
+  itemsTotal: centsToDollars(q.itemsCents),
+  shippingService: q.to,
+  shipping: centsToDollars(q.shippingCents),
+  tax: centsToDollars(q.taxCents),
+  total: centsToDollars(q.totalCents),
+});
+
+// ── POST /my-order/quote with addOns ──  read only: a staged edit, never committed.
+async function quoteAddOns(deps, authorised, event) {
+  let body;
+  try { body = JSON.parse(event?.body ?? '{}'); } catch { return json(400, { error: 'bad_json' }); }
+  const orderName = String(body.o ?? '').trim();
+  const got = await authorised(orderName, String(body.s ?? '').trim());
+  if (got.response) return got.response;
+  const priced = await priceAddOnChange(deps, got.row, orderName, body);
+  if (priced.response) return priced.response;
+  return json(200, quoteBody(priced.q, priced.addOns));
+}
+
+// ── POST /my-order/request with addOns ──  commit, invoice, Shopify's payment page.
+async function requestAddOnChange(deps, row, orderName, body) {
+  const expected = toCents(body.expectedTotal);
+  if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
+  const t = timer('POST-addons', orderName);
+  const priced = await priceAddOnChange(deps, row, orderName, body);
+  if (priced.response) return priced.response;
+  const { q, existing, order, switching, addOns } = priced;
+  t.mark('quote');
+  if (q.totalCents !== expected) {
+    return json(409, { error: 'price_changed', ...quoteBody(q, addOns) });
+  }
+
+  const now = deps.now();
+  const ref = `CHG-${orderName}-${now}`;
+  const change = {
+    orderName, ref, status: 'pending', kind: 'addons',
+    orderDeskId: row.source?.orderDeskId ?? null,
+    shopifyOrderId: q.edit.orderId,
+    from: q.from, to: q.to, shippingCents: q.shippingCents, taxCents: q.taxCents, itemsCents: q.itemsCents,
+    addOns: addOns.map((a) => ({ variantId: a.variantId, sku: a.sku, product: a.product, title: a.title,
+      quantity: a.quantity, unitCents: a.price })),
+    restore: q.edit.restore,
+    committedAt: new Date(now).toISOString(),
+    revertAfter: new Date(now + REVERT_AFTER_MS).toISOString(),
+    ...(row.testOrder ? { test: true } : {}),
+  };
+  const save = (c) => deps.savePending(c);
+  try {
+    await save(existing?.status === 'pending' ? { ...change, replaces: existing.ref } : change);
+  } catch {
+    return json(409, { error: 'changed_meanwhile', reason: 'This order was just changed. Refresh the page to see the latest options.' });
+  }
+  const what = addOns.map((a) => `${a.product} ${a.title} x${a.quantity}`).join(', ');
+  const committed = await deps.commitEdit({
+    orderName, calculatedOrderId: q.edit.calculatedOrderId,
+    staffNote: `Order change ${ref}: add ${what || '(no items)'}`
+      + (q.to !== q.from ? `; shipping ${q.from} -> ${q.to}` : '')
+      + ', requested by the customer online' + (switching ? ` (replaces unpaid ${existing.ref})` : ''),
+  });
+  t.mark('commit');
+  if (!committed.committed) {
+    await save(existing?.status === 'pending' ? { ...existing, replaces: ref } : { ...change, status: 'failed', replaces: ref })
+      .catch((err) => console.error(JSON.stringify({ msg: 'record rollback failed', orderName, ref, err: String(err) })));
+    if (committed.skipped) return json(503, { error: 'not_available', reason: NOT_AVAILABLE_COPY });
+    console.error(JSON.stringify({ msg: 'order edit commit failed', orderName, committed }));
+    return json(502, { error: 'commit_failed', reason: 'We couldn’t update your order just now — nothing was charged. Please try again in a few minutes.' });
+  }
+  if (committed.outstandingCents !== q.totalCents) {
+    await save({ ...change, status: 'attention', attentionReason: 'commit_balance_mismatch',
+      committedOutstandingCents: committed.outstandingCents, replaces: ref });
+    return json(502, { error: 'commit_mismatch', reason: WITH_TEAM_COPY });
+  }
+  // The add-ons' own lines on the Shopify order: the ones this commit created.
+  const before = new Set(order.lineItemIds ?? []);
+  const addedLineItemIds = (committed.lineItems ?? []).filter((l) => !before.has(l.id) && l.quantity > 0).map((l) => l.id);
+  const message = `We've added ${what} to your order`
+    + (q.to !== q.from ? ` and your shipping is changing to ${q.to}` : '')
+    + '. Here is your updated invoice — pay the balance to confirm.';
+  const [, invoice] = await Promise.all([
+    save({ ...change, addedLineItemIds, ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}),
+      replaces: ref, confirmed: true }),
+    deps.sendInvoice({ orderName, orderId: q.edit.orderId, customMessage: message })
+      .catch((err) => ({ sent: false, error: String(err) })),
+  ]);
+  if (!invoice.sent) console.error(JSON.stringify({ msg: 'balance invoice not sent', orderName, ref, invoice }));
+  t.done();
+  return json(200, { requested: true, total: centsToDollars(q.totalCents), invoiceSent: Boolean(invoice.sent),
+    ...(committed.paymentUrl ? { paymentUrl: committed.paymentUrl } : {}) });
 }

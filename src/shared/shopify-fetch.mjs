@@ -39,7 +39,17 @@ const CALCULATE_ONLY_MUTATIONS = new Set([
   // orderEditCommit. Beginning one and staging lines is how Shopify quotes the
   // exact balance a change would leave (shopify-order-edit.mjs).
   'orderEditBegin', 'orderEditAddShippingLine', 'orderEditRemoveShippingLine',
+  // Add-ons (Kai, 2026-10-08): adding a product to the staged edit, or taking
+  // an unpaid add-on back out (quantity 0), is staged the same way.
+  'orderEditAddVariant', 'orderEditSetQuantity',
 ]);
+
+/**
+ * Read-only FIELDS that take arguments (connections) and may appear inside a
+ * mutation's selection: the order's line items, read back to find the add-ons
+ * a staged or committed edit carries. They select data; they change nothing.
+ */
+const READ_FIELDS_WITH_ARGS = new Set(['lineItems', 'addedLineItems']);
 
 /**
  * Mutations that DO persist, allowed only through `write: true` and only while
@@ -88,7 +98,8 @@ export function checkReadOnly(document) {
   const bodyStart = stripped.indexOf('{');
   const body = bodyStart >= 0 ? stripped.slice(bodyStart) : '';
   const invokes = [...body.matchAll(/\b([a-zA-Z][a-zA-Z0-9_]*)\s*\(/g)].map((m) => m[1]);
-  const allowed = invokes.length > 0 && invokes.every((f) => CALCULATE_ONLY_MUTATIONS.has(f));
+  const called = invokes.filter((f) => !READ_FIELDS_WITH_ARGS.has(f));
+  const allowed = called.length > 0 && called.every((f) => CALCULATE_ONLY_MUTATIONS.has(f));
   if (allowed) return { ok: true };
 
   return {
@@ -130,7 +141,8 @@ export function checkWrite(document) {
   const bodyStart = stripped.indexOf('{');
   const body = bodyStart >= 0 ? stripped.slice(bodyStart) : '';
   const invokes = [...body.matchAll(/\b([a-zA-Z][a-zA-Z0-9_]*)\s*\(/g)].map((m) => m[1]);
-  const ok = invokes.length > 0 && invokes.every((f) => WRITE_MUTATIONS.has(f) || CALCULATE_ONLY_MUTATIONS.has(f));
+  const called = invokes.filter((f) => !READ_FIELDS_WITH_ARGS.has(f));
+  const ok = called.length > 0 && called.every((f) => WRITE_MUTATIONS.has(f) || CALCULATE_ONLY_MUTATIONS.has(f));
   return ok ? { ok: true } : { ok: false, reason: 'refused: not an allowed write' };
 }
 

@@ -37,6 +37,23 @@ export function upgradeMessage({ orderName, from, to, amount, tax = 0, test = fa
   return `${orderName} ${verb} ${from} → ${to} · ${money}${test ? ' (TEST)' : ''}`;
 }
 
+/**
+ * Chat line for a paid change that added products (Kai, 2026-10-08), e.g.
+ *   S67000 added 10'x8' Telescopic Adjustable Stand x1 · shipping +$5.30 · +$149.00 items + $9.84 tax = $164.14
+ * @param {{ orderName: string, addOns: Array<{product: string, title: string, quantity: number}>,
+ *           from: string, to: string, items: number, shipping: number, tax?: number, test?: boolean }} p
+ */
+export function addOnMessage({ orderName, addOns, from, to, items, shipping, tax = 0, test = false }) {
+  const i = toCents(items); const sh = toCents(shipping); const t = toCents(tax);
+  if (i === null || i <= 0 || sh === null || t === null || t < 0) throw new Error('items must be positive, tax non-negative');
+  const what = addOns.map((a) => `${a.title && a.title !== a.product ? `${a.product} ${a.title}` : a.product} x${a.quantity}`).join(', ');
+  const ship = from !== to ? `${from} → ${to} ` : 'shipping ';
+  const sign = sh >= 0 ? '+' : '-';
+  return `${orderName} added ${what} · ${ship}${sign}$${centsToAmount(Math.abs(sh))}`
+    + ` · +$${centsToAmount(i)} items${t > 0 ? ` + $${centsToAmount(t)} tax` : ''} = $${centsToAmount(i + sh + t)}`
+    + (test ? ' (TEST)' : '');
+}
+
 /** Only an https Google Chat webhook is accepted as a destination. */
 export function isChatWebhook(url) {
   try {

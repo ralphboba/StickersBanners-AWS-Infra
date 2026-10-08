@@ -66,7 +66,7 @@ describe('commit and invoice', () => {
       displayFinancialStatus: 'PARTIALLY_PAID', currentTotalPriceSet: { shopMoney: { amount: '40.25' } },
       totalOutstandingSet: { shopMoney: { amount: '33.08' } } } } });
     assert.deepEqual(await commitShippingChange({ ...ARGS, fetchImpl, orderName: 'S1', calculatedOrderId: 'C' }),
-      { committed: true, financialStatus: 'PARTIALLY_PAID', outstandingCents: 3308, totalCents: 4025, paymentUrl: null });
+      { committed: true, financialStatus: 'PARTIALLY_PAID', outstandingCents: 3308, totalCents: 4025, paymentUrl: null, lineItems: [] });
   });
 });
 

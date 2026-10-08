@@ -171,3 +171,36 @@ Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않�
 - 2026-10-07 **S66881: 첫 실제 고객.** Ground → 1-Day, $112.92 결제, OrderDesk와 Chat 정상
 - 2026-10-08 S67136: 픽업 전환이 주소 단계에서 실패. `orderUpdate`가 쓰기 허용 목록에 없었다(5501b6d에서 수정). 주문은 변경 없음.
 - 2026-10-08 S67179: NJ Awaiting Shipment라서 막힘 → 규칙 변경(c4ce09a). 직원이 이미 OrderDesk를 1-Day로 바꿔 둔 상태였고, 차액은 수동 인보이스로 받아야 한다.
+
+---
+
+## 8. Add-on (상품 추가) — 2026-10-08
+
+### Kai 규칙
+- 목록: **Stand / Red Carpets 메뉴(Shopify 컬렉션 `stands-and-carpets`)의 모든 상품.** 단 Kai가 막아 둔 상품은 뺀다. 막아 둔 상품 = DRAFT이거나 온라인 스토어에 공개되지 않은 상품.
+  - 인쇄가 필요한 상품(X-Banner, Retractable Banner)은 **"Stand Only" 옵션만** 보인다. 고객은 파일을 올릴 수 없기 때문이다(Linh 규칙).
+  - 목록은 Shopify에서 읽는다(10분 캐시). 컬렉션에 상품을 넣거나 빼면 배포 없이 바뀐다.
+- **수량 한도 없음.**
+- **배송비는 상품을 고를 때마다 체크아웃처럼 다시 계산한다.** 새 소계 기준 체크아웃 요금 − 원래 소계 기준 요금을, 원래 낸 배송 줄에 더한다.
+  - 아무도 수정하지 않은 주문이면 결과는 정확히 "새 소계의 체크아웃 요금"이다.
+  - 픽업 주문은 $0 픽업 그대로 두고, 상품은 픽업할 때 같이 가져간다.
+- **결제되면 OrderDesk에 상품 줄을 추가**하고 총액, 배송비, 세금, 노트를 바꾼다. 폴더는 그대로 둔다.
+- 폴더 규칙은 배송 변경과 같다(Completed Orders만 막음). B2Sign과 스티커 주문에는 보이지 않는다.
+
+### 흐름
+1. GET: `addOns`에 목록이 들어간다.
+2. 고객이 수량을 고르면 `POST /my-order/quote {addOns, service?}`를 호출한다. Shopify 주문 수정을 걸어 보고(확정 안 함) 상품, 배송 재계산, 세금, 합계를 받는다.
+3. 위쪽에서 더 빠른 배송을 같이 골랐으면 **한 번의 수정, 한 번의 결제**로 같이 처리한다.
+4. `POST /my-order/request {addOns, service?, expectedTotal}`: 금액 재확인 → 기록(`kind: 'addons'`) → Shopify 주문 수정 확정 → 새로 생긴 상품 줄 id 기록 → 인보이스 → Shopify 결제 페이지.
+5. 결제 안 하고 다시 고르면, 이전 선택의 상품 줄을 같은 수정 안에서 0개로 빼고 새 선택으로 바꾼다.
+6. 결제 확인은 webhook과 5분 재확인이 같은 코드로 한다. 이 경우 새 배송 줄과 상품 줄이 둘 다 주문에 있어야 "결제됨"이다.
+   그다음 OrderDesk에 상품 줄과 금액을 반영하고, Chat에 "S… added … · shipping +$ · +$ items + $ tax = $"를 보낸다.
+
+### 필요한 것 / 확인 안 된 것
+- **Shopify 앱에 `read_products` 권한이 필요하다.** 없으면 목록을 못 읽고, 페이지에 add-on 칸이 보이지 않는다(다른 기능은 영향 없음).
+- OrderDesk에 상품 줄을 PUT으로 추가하는 방식은 **실제 OrderDesk로는 아직 시험하지 않았다.** 테스트 주문으로 확인이 필요하다.
+- Shopify 데이터 문제:
+  - 20'x8' 단독 상품 SKU가 `SKUBS08X16`이다(→ `SKUBS08X20`이어야 함).
+  - Retractable "Stand Only"가 `SKU-545`다(→ `SKU-546`이어야 함).
+  - X-Banner와 Double X-Banner "Stand Only" SKU(`SKUXBS`, `SKUDXBS`)는 확인이 필요하다.
+  - 스탠드가 "Banner Stands" 옵션과 단독 상품으로 **중복** 노출된다.

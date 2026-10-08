@@ -28,7 +28,13 @@ const total = (c) => `$${centsToDollars((c.shippingCents ?? 0) + (c.taxCents ?? 
  */
 export function paidWithChange(order, change) {
   if (!order || order.outstandingCents !== 0) return false;
-  return (order.shippingLines ?? []).some((l) => l?.title === change.to);
+  if (!(order.shippingLines ?? []).some((l) => l?.title === change.to)) return false;
+  // Add-ons: the lines that commit created are on the order.
+  if (change.addOns?.length) {
+    const ids = new Set(order.lineItemIds ?? []);
+    return (change.addedLineItemIds ?? []).length > 0 && change.addedLineItemIds.every((id) => ids.has(id));
+  }
+  return true;
 }
 
 /**
