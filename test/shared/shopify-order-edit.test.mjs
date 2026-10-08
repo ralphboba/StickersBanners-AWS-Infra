@@ -1,7 +1,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stageShippingChange, commitShippingChange, sendBalanceInvoice } from '../../src/shared/shopify-order-edit.mjs';
+import { stageShippingChange, commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../src/shared/shopify-order-edit.mjs';
 import { __resetShopifyClient, checkReadOnly, checkWrite, shopifyGraphQL } from '../../src/shared/shopify-fetch.mjs';
 
 beforeEach(() => { __resetShopifyClient(); });
@@ -18,10 +18,12 @@ describe('staging is not a write', () => {
     assert.equal(checkReadOnly('mutation A($id: ID!) { orderInvoiceSend(id: $id) { order { id } } }').ok, false);
   });
 
-  test('the write path admits only commit and invoice', () => {
+  test('the write path admits only commit, invoice and the pickup address update', () => {
     assert.equal(checkWrite('mutation A($id: ID!) { orderEditCommit(id: $id) { order { id } } }').ok, true);
-    assert.equal(checkWrite('mutation A($id: ID!) { orderUpdate(input: {}) { order { id } } }').ok, false);
+    assert.equal(checkWrite('mutation A($input: OrderInput!) { orderUpdate(input: $input) { order { id } } }').ok, true);
     assert.equal(checkWrite('mutation A($id: ID!) { orderCancel(orderId: $id) { job { id } } }').ok, false);
+    assert.equal(checkWrite('mutation A($id: ID!) { orderMarkAsPaid(input: { id: $id }) { order { id } } }').ok, false);
+    assert.equal(checkWrite('mutation A($i: RefundInput!) { refundCreate(input: $i) { refund { id } } }').ok, false);
   });
 
   test('the transport refuses a write with the switch off, before any request', async () => {
@@ -65,5 +67,42 @@ describe('commit and invoice', () => {
       totalOutstandingSet: { shopMoney: { amount: '33.08' } } } } });
     assert.deepEqual(await commitShippingChange({ ...ARGS, fetchImpl, orderName: 'S1', calculatedOrderId: 'C' }),
       { committed: true, financialStatus: 'PARTIALLY_PAID', outstandingCents: 3308, totalCents: 4025, paymentUrl: null });
+  });
+});
+
+describe('pickup address (orderUpdate) through the real transport', () => {
+  const ADDR = { address1: '3785 John Herndon Ct', city: 'Suwanee', province: 'GA', zip: '30024' };
+
+  test('goes through the write gate and keeps the name and phone', async () => {
+    process.env.SHOPIFY_WRITES = 'enabled';
+    const sent = [];
+    const fetchImpl = async (_u, init) => {
+      const b = JSON.parse(init.body);
+      sent.push(b);
+      if (/orderUpdate/.test(b.query)) return reply({ orderUpdate: { userErrors: [], order: { id: 'O' } } });
+      return reply({ order: { shippingAddress: null, billingAddress: { firstName: 'Danny', lastName: 'Nam', phone: '+1678' } } });
+    };
+    const r = await setOrderShippingAddress({ ...ARGS, fetchImpl, orderName: 'S66306', orderId: 'gid://shopify/Order/1', address: ADDR });
+    assert.deepEqual(r, { updated: true });
+    const input = sent.at(-1).variables.input;
+    assert.deepEqual([input.shippingAddress.firstName, input.shippingAddress.phone, input.shippingAddress.provinceCode],
+      ['Danny', '+1678', 'GA']);
+  });
+
+  test('a transport refusal comes back as an answer, not a crash', async () => {
+    process.env.SHOPIFY_WRITES = 'enabled';
+    const fetchImpl = async () => ({ ok: false, status: 503, text: async () => 'down', json: async () => ({}) });
+    const r = await setOrderShippingAddress({ ...ARGS, fetchImpl, orderName: 'S66306', orderId: 'O', address: ADDR });
+    assert.equal(r.updated, false);
+    assert.equal(r.error, 'address_update_failed');
+  });
+
+  test('off and DEMO-/ZZ- stay refused before any request', async () => {
+    let called = false;
+    const fetchImpl = async () => { called = true; return reply({}); };
+    assert.equal((await setOrderShippingAddress({ ...ARGS, fetchImpl, orderName: 'S1', orderId: 'O', address: ADDR })).skipped, 'disabled');
+    process.env.SHOPIFY_WRITES = 'enabled';
+    assert.equal((await setOrderShippingAddress({ ...ARGS, fetchImpl, orderName: 'ZZ-1', orderId: 'O', address: ADDR })).skipped, 'synthetic');
+    assert.equal(called, false);
   });
 });

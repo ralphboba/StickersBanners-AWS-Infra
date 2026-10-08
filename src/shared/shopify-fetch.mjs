@@ -45,7 +45,13 @@ const CALCULATE_ONLY_MUTATIONS = new Set([
  * Mutations that DO persist, allowed only through `write: true` and only while
  * SHOPIFY_WRITES is armed. Anything else is refused even then.
  */
-const WRITE_MUTATIONS = new Set(['orderEditCommit', 'orderInvoiceSend']);
+const WRITE_MUTATIONS = new Set([
+  'orderEditCommit', 'orderInvoiceSend',
+  // Puts the delivery address on a pickup order before it is converted
+  // (setOrderShippingAddress). Missing here until 2026-10-08, so every pickup
+  // conversion was refused by this transport — a real customer hit it.
+  'orderUpdate',
+]);
 
 /** Below this many points left, wait for the bucket to refill before sending. */
 const LOW_WATER_POINTS = 200;

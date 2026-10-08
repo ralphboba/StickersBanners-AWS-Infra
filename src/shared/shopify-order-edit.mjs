@@ -196,6 +196,15 @@ const SET_SHIPPING_ADDRESS = `
 export async function setOrderShippingAddress({ shop, token, orderName, orderId, address, fetchImpl }) {
   const blocked = blockedReason(orderName, shopifyWritesEnabled);
   if (blocked) return { updated: false, ...blocked };
+  try {
+    return await putShippingAddress({ shop, token, orderId, address, fetchImpl });
+  } catch (err) {
+    // A refusal or a network failure is an answer the caller can show, not a crash.
+    return { updated: false, error: 'address_update_failed', detail: String(err?.message ?? err) };
+  }
+}
+
+async function putShippingAddress({ shop, token, orderId, address, fetchImpl }) {
   const names = (await shopifyGraphQL({ shop, token, fetchImpl, query: ORDER_NAMES, variables: { id: orderId } }))?.data?.order;
   const who = names?.shippingAddress ?? names?.billingAddress ?? names?.customer ?? {};
   const input = {
