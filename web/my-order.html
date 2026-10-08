@@ -68,18 +68,21 @@
   button.secondary[disabled] { opacity:.4; cursor:not-allowed; }
   .err { color:#A33; font-size:14px; margin:10px 0 0; }
   @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
-  .ao-prod { padding:12px 0; border-top:1px solid var(--line); }
-  .ao-prod:first-of-type { border-top:0; }
-  .ao-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-  .ao-head img { width:44px; height:44px; object-fit:contain; border-radius:6px; background:var(--paper-2); flex:none; }
-  .ao-head b { font-size:15px; }
-  .ao-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0; }
-  .ao-row .nm { font-size:14px; flex:1; min-width:0; }
-  .ao-row .pr { font-size:14px; color:var(--ink-2); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  /* Add-ons in two columns (Kai, 2026-10-08: one long column was too long to see). */
+  #aoList { column-count:2; column-gap:10px; }
+  .ao-prod { border:1px solid var(--line); border-radius:8px; padding:10px; break-inside:avoid; display:inline-block; width:100%; margin-bottom:10px; }
+  .ao-head { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+  .ao-head img { width:36px; height:36px; object-fit:contain; border-radius:6px; background:var(--paper-2); flex:none; }
+  .ao-head b { font-size:14px; line-height:1.3; }
+  .ao-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 8px; padding:6px 0; border-top:1px dashed var(--line); }
+  .ao-head + .ao-row { border-top:0; }
+  .ao-row .nm { font-size:13px; flex:1 0 100%; min-width:0; line-height:1.3; }
+  .ao-row .pr { font-size:13px; color:var(--ink-2); white-space:nowrap; font-variant-numeric:tabular-nums; }
   .qty { display:flex; align-items:center; border:1px solid var(--line); border-radius:7px; flex:none; }
-  .qty button { width:32px; height:32px; border:0; background:none; font-size:18px; cursor:pointer; color:var(--ink); }
-  .qty input { width:42px; height:32px; border:0; text-align:center; font:inherit; font-size:15px; -moz-appearance:textfield; }
+  .qty button { width:28px; height:28px; border:0; background:none; font-size:17px; cursor:pointer; color:var(--ink); }
+  .qty input { width:30px; height:28px; border:0; text-align:center; font:inherit; font-size:14px; -moz-appearance:textfield; background:transparent; }
   .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  @media (max-width:340px) { #aoList { column-count:1; } }
   .sumline { display:flex; justify-content:space-between; font-size:14px; padding:3px 0; color:var(--ink-2); }
   [hidden] { display:none !important; }
 </style>
