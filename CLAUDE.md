@@ -5,6 +5,11 @@ to AWS (CDK/TypeScript). Owner: Kai (timothy@stickersbanners.com). Domain
 authority: **Linh** (legacy author).
 
 ## Read this first
+- **`docs/shipping-change-spec.md`** — the customer shipping change ("Manage my
+  order"): Kai's rules (e.g. ONLY Completed Orders is closed; never move OD
+  folders; Shopify prices; options never preselected), the full workflow, and
+  every case that is allowed or refused. Read it before touching that code;
+  update it in the same commit when a rule changes.
 - **`docs/linh-requirements.md`** — Linh's own answers (routing, credentials,
   behaviour) = the spec the system must match. Do not forget these.
 - **`docs/pricing-and-tax.md`** — customer charges: shipping price AND tax both
@@ -57,10 +62,10 @@ authority: **Linh** (legacy author).
   - Customer shipping change (`ORDERDESK_UPGRADE_WRITES` + `SHOPIFY_WRITES` on
     the change functions only): `--context testOrders=S64262` arms them for the
     listed orders; `--context shippingChange=live` arms them for **every** order
-    (Kai approved, 2026-10-04: everything on except the confirmation email —
-    the "Manage my order" button in Shopify's template stays S64262-only, so
-    customers have no way in yet). Neither context = off. `ORDERDESK_WRITES`
-    is not affected by either.
+    (Kai approved, 2026-10-04). Since 2026-10-05 the "Manage my order" button
+    in Shopify's confirmation template is shown to EVERY customer — this is
+    live with real customers (first real paid change: S66881, 2026-10-07).
+    Neither context = off. `ORDERDESK_WRITES` is not affected by either.
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed
@@ -89,5 +94,6 @@ authority: **Linh** (legacy author).
 - Go-live is staged, one switch at a time — **`docs/go-live.md`** is the runbook.
 
 ## Working agreement
-- Branch: `claude/stickerbanners-aws-cdk-fw49s2`. Commit + push when work is done.
+- Branch: `claude/order-modification-automation-li1gja`. Commit + push when work is done.
+- Reply to Kai in Korean. Do only what he asks — no extra functions.
 - $0 / free-tier first. Ask before hard-to-reverse or outward-facing actions.
