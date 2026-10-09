@@ -44,6 +44,14 @@ describe('add-ons on the page', () => {
     const { body } = read(await call(handler, '/my-order', { o: 'S1', s: URL }, 'GET'));
     assert.deepEqual(body.addOns, CATALOG);
   });
+  test('the quick view (lite=1) carries the list too, so products show with everything else', async () => {
+    const { handler } = build();
+    const { body } = read(await call(handler, '/my-order', { o: 'S1', s: URL, lite: '1' }, 'GET'));
+    assert.equal(body.shipping.lite, true);
+    assert.deepEqual(body.addOns, CATALOG);
+    const off = build({ addOnOrders: '' });
+    assert.deepEqual(read(await call(off.handler, '/my-order', { o: 'S1', s: URL, lite: '1' }, 'GET')).body.addOns, []);
+  });
   test('GET lists none in Completed Orders', async () => {
     const { handler } = build({ row: { ...ROW, folderId: '3516' } });
     assert.deepEqual(read(await call(handler, '/my-order', { o: 'S1', s: URL }, 'GET')).body.addOns, []);

@@ -217,10 +217,12 @@ async function status(deps, authorised, event) {
   const stage = stageFor(row);
 
   // ── the quick view (?lite=1) ───────────────────────────────────────────
-  // No Shopify call: the order, its progress and the names of the faster
+  // No order pricing: the order, its progress and the names of the faster
   // services, so the page shows something at once while the priced view
   // (below, a few seconds of Shopify) is on its way. Nothing here is more
-  // than the full view already says.
+  // than the full view already says. The add-on list comes too (Kai,
+  // 2026-10-09: products appear with the rest, not after): it is the
+  // catalogue, cached for minutes, never this order's prices.
   if (q.lite === '1') {
     return json(200, {
       orderName: row.orderName,
@@ -231,7 +233,7 @@ async function status(deps, authorised, event) {
         // Pickup orders are priced only once the address is entered.
         optionNames: stage.canUpgrade ? offeredServices(stage) : [],
       },
-      addOns: [],
+      addOns: await addOnList(deps, stage, row.orderName ?? orderName),
     });
   }
 

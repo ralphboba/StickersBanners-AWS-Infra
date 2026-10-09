@@ -82,6 +82,7 @@
   .ao-row .pr { font-size:13px; color:var(--ink-2); white-space:nowrap; font-variant-numeric:tabular-nums; }
   .qty { display:flex; align-items:center; border:1px solid var(--line); border-radius:7px; flex:none; }
   .qty button { width:28px; height:28px; border:0; background:none; font-size:17px; cursor:pointer; color:var(--ink); }
+  .qty button:disabled { opacity:.35; cursor:wait; }
   .qty input { width:30px; height:28px; border:0; text-align:center; font:inherit; font-size:14px; -moz-appearance:textfield; background:transparent; }
   .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   @media (min-width:860px) {
@@ -305,6 +306,7 @@
       box.appendChild(label);
     });
     $('pricing').hidden = names.length === 0;
+    renderAddOns(data, true);
     $('loading').hidden = true;
     $('view').hidden = false;
   }
@@ -583,9 +585,13 @@
     $('deliver').hidden = false;
   }
   // ── add-ons ──────────────────────────────────────────────────────────
-  function renderAddOns(data) {
+  // preview: the quick view's list, shown with everything else; the buttons
+  // wake up when the priced view arrives a moment later.
+  function renderAddOns(data, preview) {
     var products = data.addOns || [];
-    if (!products.length) return;
+    var box = $('aoList');
+    box.textContent = '';
+    if (!products.length) { $('addons').hidden = true; return; }
     var sh = data.shipping || {};
     var ap = sh.awaitingPayment || null;
     if (ap && ap.addOns && ap.addOns.length) {
@@ -597,7 +603,6 @@
       $('aoWaiting').hidden = false;
     }
     var qty = {};          // variantId -> quantity
-    var box = $('aoList');
     products.forEach(function (p) {
       var wrap = document.createElement('div'); wrap.className = 'ao-prod';
       var head = document.createElement('div'); head.className = 'ao-head';
@@ -613,6 +618,7 @@
         var input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '1'; input.value = '0';
         input.inputMode = 'numeric'; input.setAttribute('aria-label', 'Quantity of ' + p.title + ' ' + o.title);
         var plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+'; plus.setAttribute('aria-label', 'More ' + o.title);
+        if (preview) { minus.disabled = plus.disabled = input.disabled = true; }
         var setQ = function (n) {
           n = Math.max(0, Math.floor(Number(n) || 0));
           input.value = String(n);
@@ -629,6 +635,7 @@
       box.appendChild(wrap);
     });
     $('addons').hidden = false;
+    if (preview) return;
 
     var current = null;    // the last priced selection
     var seq = 0;
