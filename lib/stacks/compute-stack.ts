@@ -6,6 +6,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as targets from 'aws-cdk-lib/aws-scheduler-targets';
@@ -166,6 +167,12 @@ export class ComputeStack extends cdk.Stack {
       handler: 'functions/orderdesk-move/index.handler',
       // orderDeskFetch waits out a 429 for up to 60 s.
       timeout: Duration.seconds(90),
+      // The log group already exists and is kept: a deploy from a branch
+      // without this function (2026-10-09) removed the function but retained
+      // its log group, and CloudFormation cannot create one that exists. Use
+      // it by name instead of letting CDK make a new one.
+      logGroup: logs.LogGroup.fromLogGroupName(
+        this, 'OrderDeskMoveLogs', `/aws/lambda/${config.prefix}-orderdesk-move`),
       environment: {
         JOBS_TABLE: jobsTable.tableName,
         SB_ENV: config.env,
