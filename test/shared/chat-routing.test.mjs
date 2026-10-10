@@ -62,7 +62,7 @@ describe('Chat routing for an order in every Order Desk folder', () => {
     for (const [folderName, want] of cases) {
       const { spaces, outcome } = await payInFolder({ folderId: '900001', folderName });
       assert.deepEqual(spaces, want.sort(), String(folderName));
-      assert.equal(outcome.reason, 'too_late');   // unknown folder: nothing written, team told
+      assert.equal(outcome.written, true);   // an unknown folder is open (Kai, 2026-10-08)
     }
   });
 });

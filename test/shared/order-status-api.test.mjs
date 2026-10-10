@@ -132,14 +132,27 @@ describe('GET /my-order for an upgrade', () => {
     assert.equal(calls.quote[0].to, 'FedEx 1-Day');
   });
 
-  test('a refusal from the pricer shows no price, and no internal reason', async () => {
+  test('a refusal from the pricer shows no price, and its own words — never the internal code', async () => {
     fake(upgradeRow(), { quoteResult: { ok: false, reason: 'shipping_discounted' } });
     const res = await get('S70001');
     const { body } = read(res);
     assert.equal(body.shipping.canUpgrade, false);
     assert.equal(body.shipping.upgrade, null);
-    assert.match(body.shipping.reason, /contact us/i);
-    assert.ok(!res.body.includes('discount'));
+    assert.match(body.shipping.reason, /shipping discount.*contact us/i);
+    assert.ok(!res.body.includes('shipping_discounted'));
+  });
+
+  test('every case says something different (Kai, 2026-10-08)', async () => {
+    const reasons = ['shipping_discounted', 'method_changed', 'price_unverified', 'balance_due', 'tax_exempt_order',
+      'not_usd', 'shipping_unverified', 'no_address', 'rates_unavailable', 'edit_begin_failed', 'service_unavailable'];
+    const seen = new Map();
+    for (const reason of reasons) {
+      fake(upgradeRow(), { quoteResult: { ok: false, reason } });
+      const text = read(await get('S70001')).body.shipping.reason;
+      assert.ok(text, reason);
+      assert.ok(!seen.has(text), `${reason} shares its message with ${seen.get(text)}`);
+      seen.set(text, reason);
+    }
   });
 
   test('a locked order never reaches Shopify', async () => {
@@ -225,5 +238,18 @@ describe('POST /my-order/quote', () => {
 
   test('bad JSON is a 400, not a crash', async () => {
     assert.equal((await post('{nope')).statusCode, 400);
+  });
+});
+
+describe('no-options messages (Kai, 2026-10-08)', () => {
+  test('Completed Orders reads as shipped and on its way; every message ends by pointing to the team', async () => {
+    fake(pickupRow({ folderId: '3516', shipping: { method: 'FedEx 2-Days', state: 'GA', postalCode: '30301' } }));
+    const shipped = read(await get('S70001')).body.shipping.reason;
+    assert.match(shipped, /^Your order has been shipped and is on its way to your address\./);
+    assert.match(shipped, /If you have any questions, please contact our team\.$/);
+    fake(pickupRow({ shipping: { method: 'FedEx 1-Day', state: 'GA', postalCode: '30301' } }));
+    assert.match(read(await get('S70001')).body.shipping.reason, /fastest service\. If you have any questions, please contact our team\.$/);
+    fake(pickupRow({ folderId: '3516' }));
+    assert.match(read(await get('S70001')).body.shipping.reason, /^Your order has been completed\. If you have any questions/);
   });
 });

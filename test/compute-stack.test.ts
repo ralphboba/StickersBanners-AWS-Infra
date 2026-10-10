@@ -5,7 +5,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { getConfig } from '../lib/config/environments';
 import { ComputeStack } from '../lib/stacks/compute-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string, shippingChangeLive?: boolean) {
+function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: string, shippingChangeLive?: boolean, addOnOrders?: string) {
   const app = new cdk.App();
   const config = getConfig(envName);
   // Dependencies live in their own stack (mirrors the real app wiring).
@@ -27,6 +27,7 @@ function synth(envName: 'dev' | 'prod' = 'dev', shippingChangeTestOrders?: strin
     notifyQueue,
     shippingChangeTestOrders,
     shippingChangeLive,
+    addOnOrders,
   });
   return Template.fromStack(stack);
 }
@@ -104,6 +105,18 @@ describe('ComputeStack', () => {
       if (fn.Properties.FunctionName === 'sb-dev-order-status-api') expect(fn.Properties.Environment.Variables.SHOPIFY_WRITES).toBeUndefined();
     }
     expect(() => synth('dev', 'S64262', true)).toThrow(/exclusive/);
+  });
+
+  test('add-ons: off unless orders are named; named orders reach both customer functions', () => {
+    const env = (t: Template, name: string) => Object.values(t.findResources('AWS::Lambda::Function'))
+      .find((fn) => fn.Properties.FunctionName === name)?.Properties.Environment.Variables;
+    const off = synth();
+    expect(env(off, 'sb-dev-order-status-api').ADDON_ORDERS).toBe('');
+    const one = synth('dev', undefined, true, 's64262');
+    expect(env(one, 'sb-dev-order-status-api').ADDON_ORDERS).toBe('S64262');
+    expect(env(one, 'sb-dev-order-change-request').ADDON_ORDERS).toBe('S64262');
+    expect(env(synth('dev', undefined, true, '*'), 'sb-dev-order-status-api').ADDON_ORDERS).toBe('*');
+    expect(() => synth('dev', undefined, true, 'all')).toThrow(/order names/);
   });
 
   test('functions run on Node 22 and are not VPC-bound', () => {

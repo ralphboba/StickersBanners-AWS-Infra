@@ -99,6 +99,7 @@ export const paidDeps = {
       orderDeskId: change.orderDeskId, orderName: change.orderName, toMethod: change.to,
       amount: centsToDollars(change.shippingCents), tax: centsToDollars(change.taxCents ?? 0),
       invoiceRef: change.ref, deliverTo: change.deliverTo, storeId, apiKey,
+      ...(change.addOns?.length ? { addOns: change.addOns, items: centsToDollars(change.itemsCents ?? 0) } : {}),
     });
   },
   notify: async (orderName, text, where = {}) => {

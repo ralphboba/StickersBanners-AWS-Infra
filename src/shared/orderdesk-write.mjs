@@ -232,6 +232,10 @@ export function upgradeAlreadyApplied(order, invoiceRef) {
  */
 export async function applyShippingUpgrade({
   orderDeskId, orderName, toMethod, amount, tax = 0, invoiceRef, deliverTo, storeId, apiKey, fetchImpl,
+  // Add-ons (Kai, 2026-10-08): products the customer added and paid for, and
+  // what Shopify charged for them before tax. Each becomes an item on the
+  // OrderDesk order. `amount` is then the shipping re-price (may be 0).
+  addOns = [], items = 0,
 }) {
   // Three numbers, and they must be kept apart. `amount` is the shipping
   // charge; `tax` is what Shopify charged on it; their sum is what left the
@@ -242,11 +246,14 @@ export async function applyShippingUpgrade({
   // actually moved. It comes from Shopify and is passed straight through.
   const deltaCents = cents(amount);
   const taxCents = cents(tax);
-  const paidCents = deltaCents + taxCents;
+  const itemsCents = cents(items);
+  const hasAddOns = Array.isArray(addOns) && addOns.length > 0;
+  const paidCents = deltaCents + taxCents + (hasAddOns ? itemsCents : 0);
   const intent = {
     orderDeskId, toMethod, invoiceRef,
     amount: dollars(deltaCents), tax: dollars(taxCents), paid: dollars(paidCents),
     ...(deliverTo ? { deliverTo } : {}),
+    ...(hasAddOns ? { items: dollars(itemsCents), addOns: addOns.map((a) => `${a.sku} x${a.quantity}`) } : {}),
   };
   const opts = fetchImpl ? { fetchImpl } : {};
 
@@ -259,7 +266,12 @@ export async function applyShippingUpgrade({
   }
 
   if (!orderDeskId || !toMethod) return { applied: false, error: 'missing order id or target' };
-  if (deltaCents <= 0) return { applied: false, error: 'upgrade amount must be positive' };
+  if (hasAddOns) {
+    if (itemsCents <= 0 || paidCents <= 0) return { applied: false, error: 'add-on amount must be positive' };
+    if (addOns.some((a) => !a?.sku || !Number.isSafeInteger(a?.quantity) || a.quantity <= 0)) {
+      return { applied: false, error: 'add-on without sku or quantity' };
+    }
+  } else if (deltaCents <= 0) return { applied: false, error: 'upgrade amount must be positive' };
   if (taxCents < 0) return { applied: false, error: 'tax cannot be negative' };
 
   // 1. Re-read. This copy, not one fetched minutes ago, is what we merge onto.
@@ -280,7 +292,9 @@ export async function applyShippingUpgrade({
 
   // Pickup and address go together, judged on the FRESH record: the office may
   // have changed the method since the customer was quoted.
-  const converting = isPickup(fresh.shipping_method);
+  // A pickup is converted only when the new service is a delivery; a pickup
+  // that only adds products stays a pickup.
+  const converting = isPickup(fresh.shipping_method) && !isPickup(toMethod);
   if (converting && !deliverTo) {
     return { applied: false, error: 'pickup order needs a delivery address' };
   }
@@ -317,14 +331,28 @@ export async function applyShippingUpgrade({
     } : {}),
     // The grand total moves by everything the customer paid, tax included.
     order_total: dollars(cents(fresh.order_total) + paidCents),
+    // The added products, as items the production team will see and ship.
+    ...(hasAddOns ? { order_items: [
+      ...(fresh.order_items ?? []),
+      ...addOns.map((a) => ({
+        name: a.title && a.title !== a.product ? `${a.product} - ${a.title}` : a.product,
+        code: a.sku, quantity: a.quantity, price: Number(dollars(a.unitCents)),
+      })),
+    ] } : {}),
     order_notes: [
       ...(fresh.order_notes ?? []),
       {
         username: 'SBBot',
         date_added: stamp,
-        content: `${converting ? 'Pickup converted to delivery' : 'Shipping upgraded'} `
-          + `${from} -> ${toMethod} by customer, +$${dollars(deltaCents)}`
-          + (taxCents > 0 ? ` + $${dollars(taxCents)} tax = $${dollars(paidCents)}` : '')
+        content: (hasAddOns
+          ? `Added by customer: ${addOns.map((a) => `${a.product}${a.title && a.title !== a.product ? ` ${a.title}` : ''} (${a.sku}) x${a.quantity}`).join(', ')}`
+            + ` +$${dollars(itemsCents)}`
+            + (from !== toMethod ? `; shipping ${from} -> ${toMethod}` : '; shipping re-priced')
+            + ` ${deltaCents >= 0 ? '+' : '-'}$${dollars(Math.abs(deltaCents))}`
+            + ` + $${dollars(taxCents)} tax = $${dollars(paidCents)}`
+          : `${converting ? 'Pickup converted to delivery' : 'Shipping upgraded'} `
+            + `${from} -> ${toMethod} by customer, +$${dollars(deltaCents)}`
+            + (taxCents > 0 ? ` + $${dollars(taxCents)} tax = $${dollars(paidCents)}` : ''))
           + ` (${invoiceRef})`
           + (converting ? `. Deliver to: ${[deliverTo.address1, deliverTo.address2, deliverTo.city,
             deliverTo.province, deliverTo.zip].filter(Boolean).join(', ')}` : ''),

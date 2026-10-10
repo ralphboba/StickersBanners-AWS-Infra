@@ -81,37 +81,23 @@ describe('integrity', () => {
   });
 });
 
-describe('the three windows', () => {
-  test('production and everything before it is open', () => {
-    for (const id of ['665685', '651474', '653109', '661019', '73066', '73067',
-                      '73068', '73069', '73070', '674352', '42928']) {
-      assert.equal(windowOf(id), 'open', `${id} should be open`);
+describe('windows: only Completed Orders is closed (Kai, 2026-10-08)', () => {
+  test('every folder except Completed Orders is open — Awaiting Shipment, Awaiting Pickup and Pay By Check too', () => {
+    for (const f of FOLDERS.filter((x) => x.id !== '3516')) {
+      assert.equal(windowOf(f.id), 'open', `${f.name} should be open`);
     }
+    assert.deepEqual([...AWAITING_SHIPMENT_IDS].sort(), ['3571', '43256', '43257', '674353', '79040'].sort());
   });
 
-  test('Awaiting Shipment is restricted, not shut — express may still move', () => {
-    assert.deepEqual([...AWAITING_SHIPMENT_IDS].sort(),
-      ['3571', '43256', '43257', '674353', '79040'].sort());
-    for (const id of AWAITING_SHIPMENT_IDS) {
-      assert.equal(windowOf(id), 'restricted', id);
-    }
-  });
-
-  test('Awaiting Pickup is restricted too — a pickup can still become a delivery', () => {
-    for (const id of ['31301', '52437', '52438', '674908', '82463']) {
-      assert.equal(windowOf(id), 'restricted', id);
-    }
-  });
-
-  test('completed is shut, and so is an unpaid order', () => {
+  test('Completed Orders is closed', () => {
     assert.equal(windowOf('3516'), 'closed');
-    assert.equal(windowOf('698334'), 'closed', 'no settled balance to add to');
+    assert.equal(isModifiable('3516'), false);
   });
 
-  test('an unknown folder fails CLOSED', () => {
-    for (const id of ['999999', '', null, undefined, 'abc', 0]) {
-      assert.equal(windowOf(id), 'closed', `unknown ${String(id)}`);
-      assert.equal(isModifiable(id), false);
+  test('a folder this list does not know is open', () => {
+    for (const id of ['999999', 'abc']) {
+      assert.equal(windowOf(id), 'open', `unknown ${String(id)}`);
+      assert.equal(isModifiable(id), true);
     }
   });
 });
@@ -120,7 +106,7 @@ describe('lookup', () => {
   test('ids match whether passed as string or number', () => {
     assert.equal(folderById('73068')?.name, 'GA');
     assert.equal(folderById(73068)?.name, 'GA');
-    assert.equal(windowOf(3571), 'restricted', 'a number id resolves the same as a string');
+    assert.equal(windowOf(3516), 'closed', 'a number id resolves the same as a string');
   });
 
   test('facilityOf finds the facility, and null when there is none', () => {

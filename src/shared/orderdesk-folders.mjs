@@ -9,19 +9,18 @@
 // other.
 //
 // ── `window` is a property of the row, not a separate list ─────────────────
-// How much a customer may change depends on where the order is, and there are
-// three answers rather than two (Kai, 2026-09-28):
+// Kai (2026-10-08): "Unless the order is in Completed Orders, it can be
+// upgraded" — any folder, Awaiting Shipment and Awaiting Pickup included, and
+// a folder this list does not know. Completed Orders (shipped) is the only
+// closed one:
 //
-//   open        anything on the ladder
-//   restricted  production is finished. Express may still move up and a pickup
-//               may still become a delivery, but Ground cannot: it is already
-//               manifested for the Ground collection.
-//   closed      nothing
+//   open    anything on the ladder, and a pickup may become a delivery
+//   closed  nothing — Completed Orders only
 //
-// Keeping it as a field means adding a folder forces a decision about it. A
-// separate array of "locked folder ids" would eventually drift from this list;
-// a field cannot.
-//
+// (Until 2026-10-08 Awaiting Shipment/Pickup were "restricted" — Ground could
+// not change — and Pay By Check and unknown folders were closed. A real
+// customer, S67179 in NJ Awaiting Shipment, was refused because of it.)
+
 // Customer-facing wording is deliberately NOT here — `stage` is an internal
 // enum and order-stage.mjs translates it. That way an internal name like
 // "Missing/Corrupted File" has no path to a customer's screen.
@@ -44,7 +43,7 @@
 export const FOLDERS = [
   // ── intake ────────────────────────────────────────────────────────────────
   { id: '665685', name: 'QTS', stage: 'received', mirror: 'in_queue', window: 'open' },
-  { id: '698334', name: 'QTS - Pay By Check', stage: 'received', mirror: 'in_progress', window: 'closed' },
+  { id: '698334', name: 'QTS - Pay By Check', stage: 'received', mirror: 'in_progress', window: 'open' },
   { id: '650227', key: 'processing', name: 'Processing', stage: 'in_progress', mirror: 'in_progress', window: 'open' },
   { id: '651474', key: 'proofing', name: 'Proofing', stage: 'proofing', mirror: 'proofing', window: 'open' },
   // Not a "needs a person" folder despite the name. Linh (2026-10-05): an
@@ -69,18 +68,18 @@ export const FOLDERS = [
 
   // ── ★ the cutoff. Entering one of these sends the order to ShipStation, so
   //      nothing about it may change from here on.
-  { id: '3571', name: 'GA Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_ga', facility: 'GA', window: 'restricted' },
-  { id: '43256', name: 'NJ Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_nj', facility: 'NJ', window: 'restricted' },
-  { id: '43257', name: 'TX Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_tx', facility: 'TX', window: 'restricted' },
-  { id: '674353', name: 'NV Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_nv', facility: 'NV', window: 'restricted' },
-  { id: '79040', name: 'CA Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_ca', facility: 'CA', window: 'restricted' },
+  { id: '3571', name: 'GA Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_ga', facility: 'GA', window: 'open' },
+  { id: '43256', name: 'NJ Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_nj', facility: 'NJ', window: 'open' },
+  { id: '43257', name: 'TX Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_tx', facility: 'TX', window: 'open' },
+  { id: '674353', name: 'NV Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_nv', facility: 'NV', window: 'open' },
+  { id: '79040', name: 'CA Awaiting Shipment', stage: 'ready_to_ship', mirror: 'awaiting_ship_ca', facility: 'CA', window: 'open' },
 
   // ── pickup ────────────────────────────────────────────────────────────────
-  { id: '31301', name: 'GA Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_ga', facility: 'GA', window: 'restricted' },
-  { id: '52437', name: 'NJ Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_nj', facility: 'NJ', window: 'restricted' },
-  { id: '52438', name: 'TX Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_tx', facility: 'TX', window: 'restricted' },
-  { id: '674908', name: 'NV Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_nv', facility: 'NV', window: 'restricted' },
-  { id: '82463', name: 'CA Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_ca', facility: 'CA', window: 'restricted' },
+  { id: '31301', name: 'GA Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_ga', facility: 'GA', window: 'open' },
+  { id: '52437', name: 'NJ Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_nj', facility: 'NJ', window: 'open' },
+  { id: '52438', name: 'TX Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_tx', facility: 'TX', window: 'open' },
+  { id: '674908', name: 'NV Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_nv', facility: 'NV', window: 'open' },
+  { id: '82463', name: 'CA Awaiting Pickup', stage: 'ready_for_pickup', mirror: 'pickup_ca', facility: 'CA', window: 'open' },
 
   // ── staff test orders ─────────────────────────────────────────────────────
   // Kai's own folder for test orders (S64262). Nothing real is filed here and
@@ -117,24 +116,21 @@ export const MIRROR_STATUS_BY_ID = Object.freeze(
   Object.fromEntries(FOLDERS.filter((f) => f.mirror).map((f) => [f.id, f.mirror])),
 );
 
-/** Folder ids that mean production has finished — the restricted window. */
+/** Folder ids that mean production has finished (informational; still open). */
 export const AWAITING_SHIPMENT_IDS = Object.freeze(
   FOLDERS.filter((f) => f.stage === 'ready_to_ship').map((f) => f.id),
 );
 
 /**
  * How much may a customer change, given where the order is?
- *
- * Fails CLOSED. An id we do not recognise — a folder somebody added in
- * OrderDesk this morning — returns 'closed'. This decision gates a charge, so
- * the safe answer to "I do not know" is nothing.
+ * Only Completed Orders is closed; every other folder — including one somebody
+ * added in Order Desk this morning — is open (Kai, 2026-10-08).
  *
  * @param {string|number} folderId
- * @returns {'open'|'restricted'|'closed'}
+ * @returns {'open'|'closed'}
  */
 export function windowOf(folderId) {
-  const w = folderById(folderId)?.window;
-  return w === 'open' || w === 'restricted' ? w : 'closed';
+  return folderById(folderId)?.window === 'closed' ? 'closed' : 'open';
 }
 
 /** Anything at all still changeable here? Convenience over windowOf. */

@@ -52,6 +52,7 @@ const COMMIT = `
         id name displayFinancialStatus
         currentTotalPriceSet { shopMoney { amount } } totalOutstandingSet { shopMoney { amount } }
         paymentCollectionDetails { additionalPaymentCollectionUrl }
+        lineItems(first: 100) { nodes { id currentQuantity } }
       }
       userErrors { field message }
     }
@@ -127,6 +128,141 @@ export async function stageShippingChange({
   return { ok: true, calculatedOrderId: c.id, outstandingCents, totalCents };
 }
 
+// ── add-ons (Kai, 2026-10-08) ──────────────────────────────────────────────
+// Products added to the customer's own order, in the same staged edit as any
+// shipping change, so one balance and one payment cover both.
+
+const BEGIN_ITEMS = `
+  mutation EditBeginItems($id: ID!) {
+    orderEditBegin(id: $id) {
+      calculatedOrder {
+        id
+        subtotalPriceSet { shopMoney { amount currencyCode } }
+        totalPriceSet { shopMoney { amount } }
+        shippingLines { id title stagedStatus price { shopMoney { amount } } }
+        lineItems(first: 100) { nodes { id quantity } }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+
+const CALC_FIELDS = `calculatedOrder {
+        id
+        subtotalPriceSet { shopMoney { amount currencyCode } }
+        totalPriceSet { shopMoney { amount } }
+        totalOutstandingSet { shopMoney { amount currencyCode } }
+      }
+      userErrors { field message }`;
+
+/** One document: take unpaid add-ons back out, then add the new ones, in order. */
+export function itemsDocument(removeCount, addCount) {
+  const vars = ['$id: ID!'];
+  const parts = [];
+  for (let i = 0; i < removeCount; i += 1) {
+    vars.push(`$l${i}: ID!`);
+    parts.push(`r${i}: orderEditSetQuantity(id: $id, lineItemId: $l${i}, quantity: 0) { ${CALC_FIELDS} }`);
+  }
+  for (let i = 0; i < addCount; i += 1) {
+    vars.push(`$v${i}: ID!`, `$q${i}: Int!`);
+    parts.push(`a${i}: orderEditAddVariant(id: $id, variantId: $v${i}, quantity: $q${i}, allowDuplicates: true) { ${CALC_FIELDS} }`);
+  }
+  return `mutation EditItems(${vars.join(', ')}) {\n  ${parts.join('\n  ')}\n}`;
+}
+
+const SHIP_STAGE = `
+  mutation EditShip($id: ID!, $remove: ID!, $add: OrderEditAddShippingLineInput!) {
+    removed: orderEditRemoveShippingLine(id: $id, shippingLineId: $remove) { userErrors { field message } }
+    added: orderEditAddShippingLine(id: $id, shippingLine: $add) {
+      ${CALC_FIELDS}
+    }
+  }
+`;
+
+const money2 = (c) => toCents(c?.shopMoney?.amount);
+
+/**
+ * Stage an order change that may add products, take back unpaid add-ons and
+ * change the shipping line, and read the balance. Nothing is committed.
+ *
+ * The shipping line is decided AFTER the items are in, from the edit's own new
+ * subtotal (`shippingFor`), because checkout's rate depends on the subtotal
+ * (Kai: "체크아웃처럼 배송비 다시 계산 … 항상").
+ *
+ * @param {object} p
+ * @param {string} p.orderId
+ * @param {string[]} [p.removeLineItemIds]  order line items (unpaid add-ons) to set to 0
+ * @param {Array<{variantId: string, quantity: number}>} [p.addVariants]
+ * @param {(newSubtotalCents: number, calc: object) => Promise<null | {removeLineId: string, title: string, priceCents: number} | {error: string}>} p.shippingFor
+ * @param {number} p.totalBeforeCents
+ * @returns {Promise<{ ok: true, calculatedOrderId: string, subtotalBeforeCents: number, subtotalCents: number,
+ *                     outstandingCents: number, totalCents: number, shipping: object|null } | { ok: false, reason: string }>}
+ */
+export async function stageOrderChange({
+  shop, token, orderId, removeLineItemIds = [], addVariants = [], shippingFor, totalBeforeCents, fetchImpl,
+}) {
+  const begun = await shopifyGraphQL({ shop, token, fetchImpl, query: BEGIN_ITEMS, variables: { id: orderId } });
+  const b = begun?.data?.orderEditBegin;
+  if ((b?.userErrors ?? []).length || !b?.calculatedOrder?.id) return { ok: false, reason: 'edit_begin_failed' };
+  const calcId = b.calculatedOrder.id;
+  const subtotalBeforeCents = money2(b.calculatedOrder.subtotalPriceSet);
+  if (subtotalBeforeCents === null) return { ok: false, reason: 'edit_unreadable' };
+
+  // Unpaid add-ons from an earlier choice: their calculated lines, by id.
+  const calcLines = b.calculatedOrder.lineItems?.nodes ?? [];
+  const removeIds = [];
+  for (const id of removeLineItemIds) {
+    const l = calcLines.find((c) => tail(c.id) === tail(id));
+    if (!l) return { ok: false, reason: 'addon_line_not_found' };
+    if (l.quantity > 0) removeIds.push(l.id);
+  }
+
+  let calc = { subtotal: subtotalBeforeCents, total: money2(b.calculatedOrder.totalPriceSet), outstanding: null };
+  if (removeIds.length || addVariants.length) {
+    const variables = { id: calcId };
+    removeIds.forEach((id, i) => { variables[`l${i}`] = id; });
+    addVariants.forEach((v, i) => { variables[`v${i}`] = v.variantId; variables[`q${i}`] = v.quantity; });
+    const res = await shopifyGraphQL({
+      shop, token, fetchImpl, query: itemsDocument(removeIds.length, addVariants.length), variables,
+    });
+    const steps = Object.values(res?.data ?? {});
+    if (!steps.length || steps.some((r) => (r?.userErrors ?? []).length || !r?.calculatedOrder)) {
+      return { ok: false, reason: 'addon_stage_failed' };
+    }
+    const last = steps[steps.length - 1].calculatedOrder;
+    calc = { subtotal: money2(last.subtotalPriceSet), total: money2(last.totalPriceSet), outstanding: money2(last.totalOutstandingSet) };
+    if (calc.subtotal === null || calc.total === null || calc.outstanding === null) return { ok: false, reason: 'edit_unreadable' };
+  }
+
+  // The shipping line, from checkout's rate at the NEW subtotal.
+  const ship = await shippingFor(calc.subtotal, b.calculatedOrder);
+  if (ship?.error) return { ok: false, reason: ship.error };
+  if (ship) {
+    if (!Number.isSafeInteger(ship.priceCents) || ship.priceCents < 0) return { ok: false, reason: 'bad_price' };
+    const line = (b.calculatedOrder.shippingLines ?? []).find((l) => tail(l.id) === tail(ship.removeLineId));
+    if (!line) return { ok: false, reason: 'shipping_line_not_found' };
+    const staged = await shopifyGraphQL({
+      shop, token, fetchImpl, query: SHIP_STAGE,
+      variables: { id: calcId, remove: line.id, add: { title: ship.title, price: { amount: centsToAmount(ship.priceCents), currencyCode: 'USD' } } },
+    });
+    const r = staged?.data;
+    if ((r?.removed?.userErrors ?? []).length || (r?.added?.userErrors ?? []).length || !r?.added?.calculatedOrder) {
+      return { ok: false, reason: 'edit_stage_failed' };
+    }
+    const c = r.added.calculatedOrder;
+    calc = { subtotal: money2(c.subtotalPriceSet), total: money2(c.totalPriceSet), outstanding: money2(c.totalOutstandingSet) };
+    if (calc.subtotal === null || calc.total === null || calc.outstanding === null) return { ok: false, reason: 'edit_unreadable' };
+  }
+  if (calc.outstanding === null) return { ok: false, reason: 'nothing_to_change' };
+  if (Number.isSafeInteger(totalBeforeCents) && calc.total - totalBeforeCents !== calc.outstanding) {
+    return { ok: false, reason: 'edit_inconsistent' };
+  }
+  return {
+    ok: true, calculatedOrderId: calcId, subtotalBeforeCents, subtotalCents: calc.subtotal,
+    outstandingCents: calc.outstanding, totalCents: calc.total, shipping: ship ?? null,
+  };
+}
+
 /**
  * Commit a staged edit. SHOPIFY_WRITES only. The customer is not notified by
  * the edit itself; they are redirected to Shopify's payment page for the
@@ -148,6 +284,8 @@ export async function commitShippingChange({ shop, token, orderName, calculatedO
     // Shopify's own page for paying the balance — the same checkout the
     // customer used to buy. The customer is sent straight there.
     paymentUrl: r.order.paymentCollectionDetails?.additionalPaymentCollectionUrl ?? null,
+    // Every line on the order now, so the caller can tell which ones this edit added.
+    lineItems: (r.order.lineItems?.nodes ?? []).map((l) => ({ id: l.id, quantity: l.currentQuantity })),
   };
 }
 
@@ -196,6 +334,15 @@ const SET_SHIPPING_ADDRESS = `
 export async function setOrderShippingAddress({ shop, token, orderName, orderId, address, fetchImpl }) {
   const blocked = blockedReason(orderName, shopifyWritesEnabled);
   if (blocked) return { updated: false, ...blocked };
+  try {
+    return await putShippingAddress({ shop, token, orderId, address, fetchImpl });
+  } catch (err) {
+    // A refusal or a network failure is an answer the caller can show, not a crash.
+    return { updated: false, error: 'address_update_failed', detail: String(err?.message ?? err) };
+  }
+}
+
+async function putShippingAddress({ shop, token, orderId, address, fetchImpl }) {
   const names = (await shopifyGraphQL({ shop, token, fetchImpl, query: ORDER_NAMES, variables: { id: orderId } }))?.data?.order;
   const who = names?.shippingAddress ?? names?.billingAddress ?? names?.customer ?? {};
   const input = {

@@ -68,6 +68,40 @@
   button.secondary[disabled] { opacity:.4; cursor:not-allowed; }
   .err { color:#A33; font-size:14px; margin:10px 0 0; }
   @media (max-width:420px) { .grid { grid-template-columns:1fr; } }
+  /* Add-ons: one column on a phone; on a computer the page widens, shipping
+     sits on the left, add-ons (two columns) on the right with the pay button
+     at their bottom right (Kai, 2026-10-08). Without add-ons nothing changes. */
+  /* Each product is a closed row; tapping it opens its sizes (Kai, 2026-10-09). */
+  #aoList { display:grid; grid-template-columns:1fr; gap:10px; align-items:start; }
+  .ao-prod { border:1px solid var(--line); border-radius:8px; background:var(--paper); }
+  .ao-prod[open] { border-color:var(--ink-3); }
+  .ao-head { display:flex; align-items:center; gap:10px; padding:10px; cursor:pointer; list-style:none; user-select:none; }
+  .ao-head::-webkit-details-marker { display:none; }
+  .ao-head:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; border-radius:8px; }
+  .ao-head img { width:40px; height:40px; object-fit:contain; border-radius:6px; background:var(--paper-2); flex:none; }
+  .ao-head .t { flex:1; min-width:0; }
+  .ao-head b { display:block; font-size:14px; line-height:1.3; }
+  .ao-head .from { display:block; font-size:12.5px; color:var(--ink-3); }
+  .ao-head .cnt { flex:none; background:var(--accent); color:#fff; font-size:12px; font-weight:700; border-radius:10px; padding:1px 8px; }
+  .ao-head::after { content:""; flex:none; width:8px; height:8px; border-right:2px solid var(--ink-2); border-bottom:2px solid var(--ink-2); transform:rotate(45deg); margin:0 4px 4px 0; transition:transform .15s; }
+  .ao-prod[open] > .ao-head::after { transform:rotate(-135deg); margin:4px 4px 0 0; }
+  .ao-opts { padding:0 10px 4px; }
+  .ao-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 8px; padding:6px 0; border-top:1px dashed var(--line); }
+  .ao-row .nm { font-size:13px; flex:1 0 100%; min-width:0; line-height:1.3; }
+  .ao-row .pr { font-size:13px; color:var(--ink-2); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .qty { display:flex; align-items:center; border:1px solid var(--line); border-radius:7px; flex:none; }
+  .qty button { width:28px; height:28px; border:0; background:none; font-size:17px; cursor:pointer; color:var(--ink); }
+  .qty button:disabled { opacity:.35; cursor:wait; }
+  .qty input { width:30px; height:28px; border:0; text-align:center; font:inherit; font-size:14px; -moz-appearance:textfield; background:transparent; }
+  .qty input::-webkit-outer-spin-button, .qty input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  @media (min-width:860px) {
+    .wrap:has(#addons:not([hidden])) { max-width:1080px; }
+    .panes:has(#addons:not([hidden])) { display:grid; grid-template-columns:minmax(360px,420px) 1fr; gap:14px; align-items:start; }
+    #aoList { grid-template-columns:1fr 1fr; }
+    /* the pay button stays in view at the bottom right while the list scrolls */
+    #aoSummary { position:sticky; bottom:0; background:var(--paper); padding:12px 0 14px; margin-bottom:-14px; box-shadow:0 -8px 12px -10px rgba(0,0,0,.18); }
+  }
+  .sumline { display:flex; justify-content:space-between; font-size:14px; padding:3px 0; color:var(--ink-2); }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -92,6 +126,7 @@
       <ol class="steps" id="steps"></ol>
     </div>
 
+    <div class="panes">
     <div class="card">
       <div class="rowline">
         <span class="k">Current shipping</span>
@@ -187,6 +222,31 @@
           until you pay — if you leave the payment page, your order stays a pickup order.</p>
       </form>
     </div>
+
+    <!-- Add-ons (Kai, 2026-10-08): stands and red carpets added to this order.
+         Priced by Shopify on the order itself; shipping re-priced like checkout. -->
+    <div class="card" id="addons" hidden>
+      <legend style="display:block">Add to your order</legend>
+      <div class="notice" id="aoWaiting" hidden style="margin-bottom:12px">
+        <b>Waiting for payment</b>
+        <p id="aoWaitingWhat"></p>
+        <a class="cta" id="aoWaitingPay" href="#" style="display:block;text-align:center;text-decoration:none;margin-top:10px">Pay now</a>
+        <p style="margin-top:8px">Or choose again below — your new choice replaces this one.</p>
+      </div>
+      <div id="aoList"></div>
+      <div id="aoSummary" hidden style="margin-top:14px">
+        <div id="aoLines"></div>
+        <div class="total">
+          <span>Amount to pay</span>
+          <span class="v" id="aoTotal">—</span>
+        </div>
+        <button class="cta" id="aoPay" type="button" disabled>Choose items above</button>
+        <p class="err" id="aoErr" hidden></p>
+        <p class="fine">Shipping is recalculated with your new items, the same way our checkout does.
+          The amount shown is the total you'll be charged, tax included. Nothing changes until you pay.</p>
+      </div>
+    </div>
+    </div>
   </main>
 </div>
 
@@ -255,12 +315,17 @@
       box.appendChild(label);
     });
     $('pricing').hidden = names.length === 0;
+    renderAddOns(data, true);
     $('loading').hidden = true;
     $('view').hidden = false;
   }
 
+  var chosenUpgrade = function () { return null; };
+  var addOnRefresh = null;
+
   function render(data) {
     $('pricing').hidden = true;
+    renderAddOns(data);
     drawHeader(data);
 
     var sh = data.shipping || {};
@@ -303,7 +368,9 @@
         var n = picked ? parseInt(picked.value, 10) : 0;
         return n > 0 ? ups[n - 1] : null;
       };
+      chosenUpgrade = chosen;
       var update = function () {
+        if (addOnRefresh) addOnRefresh();
         var u = chosen();
         set('total', money(u ? u.total : 0));
         $('send').disabled = !u;
@@ -353,11 +420,8 @@
               set('send', 'The amount changed — pay ' + money(u.total) + ' and upgrade');
               return;
             }
-            if (res.status === 409 && res.b.error === 'already_paid') {
-              set('send', 'Your payment is already in — refresh in a minute');
-              return;
-            }
-            set('send', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+            // Each failure has its own words from the server (Kai, 2026-10-08).
+            set('send', res.b.reason || (res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us'));
           })
           .catch(function () { set('send', 'We couldn’t reach our system — please try again'); $('send').disabled = false; });
       });
@@ -380,8 +444,8 @@
     'WV','WI','WY'];
 
   var QUOTE_ERRORS = {
-    address_incomplete: 'Please fill in the street, city, state and ZIP code.',
-    not_convertible: 'This order can no longer be changed online. Please contact us.',
+    address_incomplete: 'Please fill in the street, city, state and ZIP code. If you have any questions, please contact our team.',
+    not_convertible: 'This order can no longer be changed online. If you have any questions, please contact our team.',
     service_not_offered: 'Please choose one of the services above.',
   };
 
@@ -522,12 +586,173 @@
             set('dSend', 'The amount changed — pay ' + money(opt.total) + ' and ship it');
             return;
           }
-          set('dSend', res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us');
+          set('dSend', res.b.reason || (res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us'));
         })
         .catch(function () { set('dSend', 'We couldn’t reach our system — please try again'); $('dSend').disabled = false; });
     });
 
     $('deliver').hidden = false;
+  }
+  // ── add-ons ──────────────────────────────────────────────────────────
+  // preview: the quick view's list, shown with everything else; the buttons
+  // wake up when the priced view arrives a moment later.
+  function renderAddOns(data, preview) {
+    var products = data.addOns || [];
+    var box = $('aoList');
+    // keep open whatever the customer opened while prices were loading
+    var wasOpen = {};
+    Array.prototype.forEach.call(box.querySelectorAll('details[open]'), function (d) { wasOpen[d.dataset.id] = true; });
+    box.textContent = '';
+    if (!products.length) { $('addons').hidden = true; return; }
+    var sh = data.shipping || {};
+    var ap = sh.awaitingPayment || null;
+    if (ap && ap.addOns && ap.addOns.length) {
+      set('aoWaitingWhat', ap.addOns.map(function (a) {
+        return (a.title && a.title !== a.product ? a.product + ' ' + a.title : a.product) + ' × ' + a.quantity;
+      }).join(', ') + (ap.to !== ap.from ? ' · shipping ' + ap.to : '') + ' — ' + money(ap.total));
+      set('aoWaitingPay', 'Pay ' + money(ap.total));
+      $('aoWaitingPay').href = ap.paymentUrl;
+      $('aoWaiting').hidden = false;
+    }
+    var qty = {};          // variantId -> quantity
+    products.forEach(function (p) {
+      var wrap = document.createElement('details'); wrap.className = 'ao-prod';
+      wrap.dataset.id = p.productId || p.title;
+      if (wasOpen[wrap.dataset.id]) wrap.open = true;
+      var head = document.createElement('summary'); head.className = 'ao-head';
+      if (p.image) { var img = document.createElement('img'); img.src = p.image; img.alt = ''; head.appendChild(img); }
+      var t = document.createElement('span'); t.className = 't';
+      var tb = document.createElement('b'); tb.textContent = p.title; t.appendChild(tb);
+      var low = Math.min.apply(null, p.options.map(function (o) { return o.price; }));
+      var from = document.createElement('span'); from.className = 'from';
+      from.textContent = (p.options.length > 1 ? p.options.length + ' sizes · from ' : '') + money(low / 100);
+      t.appendChild(from); head.appendChild(t);
+      var cnt = document.createElement('span'); cnt.className = 'cnt'; cnt.hidden = true; head.appendChild(cnt);
+      wrap.appendChild(head);
+      var opts = document.createElement('div'); opts.className = 'ao-opts';
+      wrap.appendChild(opts);
+      // how many of this product are chosen, shown on the closed row
+      var count = function () {
+        var n = p.options.reduce(function (sum, o) { return sum + (qty[o.variantId] || 0); }, 0);
+        cnt.textContent = n + ' added'; cnt.hidden = n === 0;
+      };
+      p.options.forEach(function (o) {
+        var row = document.createElement('div'); row.className = 'ao-row';
+        var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = o.title;
+        var pr = document.createElement('span'); pr.className = 'pr'; pr.textContent = money(o.price / 100);
+        var q = document.createElement('div'); q.className = 'qty';
+        var minus = document.createElement('button'); minus.type = 'button'; minus.textContent = '−'; minus.setAttribute('aria-label', 'Fewer ' + o.title);
+        var input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '1'; input.value = '0';
+        input.inputMode = 'numeric'; input.setAttribute('aria-label', 'Quantity of ' + p.title + ' ' + o.title);
+        var plus = document.createElement('button'); plus.type = 'button'; plus.textContent = '+'; plus.setAttribute('aria-label', 'More ' + o.title);
+        if (preview) { minus.disabled = plus.disabled = input.disabled = true; }
+        var setQ = function (n) {
+          n = Math.max(0, Math.floor(Number(n) || 0));
+          input.value = String(n);
+          if (n > 0) qty[o.variantId] = n; else delete qty[o.variantId];
+          count();
+          schedule();
+        };
+        minus.addEventListener('click', function () { setQ(Number(input.value) - 1); });
+        plus.addEventListener('click', function () { setQ(Number(input.value) + 1); });
+        input.addEventListener('change', function () { setQ(input.value); });
+        q.appendChild(minus); q.appendChild(input); q.appendChild(plus);
+        row.appendChild(nm); row.appendChild(pr); row.appendChild(q);
+        opts.appendChild(row);
+      });
+      box.appendChild(wrap);
+    });
+    $('addons').hidden = false;
+    if (preview) return;
+
+    var current = null;    // the last priced selection
+    var seq = 0;
+    var timer = null;
+    var selection = function () {
+      return Object.keys(qty).map(function (id) { return { variantId: id, quantity: qty[id] }; });
+    };
+    var service = function () { var u = chosenUpgrade(); return u ? u.to : null; };
+    var showErr = function (msg) { set('aoErr', msg || ''); $('aoErr').hidden = !msg; };
+    var line = function (k, v) {
+      var d = document.createElement('div'); d.className = 'sumline';
+      var a = document.createElement('span'); a.textContent = k;
+      var b = document.createElement('span'); b.textContent = v;
+      d.appendChild(a); d.appendChild(b); return d;
+    };
+    var draw = function (q) {
+      var lines = $('aoLines'); lines.textContent = '';
+      q.items.forEach(function (i) {
+        lines.appendChild(line((i.title && i.title !== i.product ? i.product + ' ' + i.title : i.product) + ' × ' + i.quantity, money(i.unit * i.quantity)));
+      });
+      lines.appendChild(line('Shipping' + (q.shippingService ? ' (' + q.shippingService + ')' : ''),
+        (q.shipping < 0 ? '−' : '+') + money(Math.abs(q.shipping))));
+      lines.appendChild(line('Tax', money(q.tax)));
+      set('aoTotal', money(q.total));
+      $('aoPay').disabled = false;
+      set('aoPay', 'Pay ' + money(q.total) + ' and add to my order');
+    };
+    function price() {
+      var sel = selection();
+      var mine = ++seq;
+      showErr('');
+      var upTotal = $('upgrade').querySelector('.total');
+      if (!sel.length) {
+        current = null;
+        $('aoSummary').hidden = true;
+        $('send').hidden = false;
+        if (upTotal) upTotal.hidden = false;
+        return;
+      }
+      // With items chosen, this card pays for everything (items + any faster
+      // shipping picked above): one total, one button.
+      $('send').hidden = true;
+      if (upTotal) upTotal.hidden = true;
+      $('aoSummary').hidden = false;
+      $('aoPay').disabled = true;
+      set('aoPay', 'Calculating…');
+      set('aoTotal', '…');
+      fetch('/api/my-order/quote', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ o: o, s: s, addOns: sel, service: service() }),
+      })
+        .then(function (r) { return r.json().then(function (b) { return { status: r.status, b: b }; }); })
+        .then(function (res) {
+          if (mine !== seq) return;
+          if (res.status === 200) { current = { sel: sel, svc: service(), q: res.b }; draw(res.b); return; }
+          current = null;
+          set('aoTotal', '—'); set('aoPay', 'Choose items above');
+          showErr(res.b.reason || 'We couldn’t price that selection. Please try again.');
+        })
+        .catch(function () { if (mine === seq) showErr('We couldn’t reach our system. Please try again.'); });
+    }
+    function schedule() { clearTimeout(timer); timer = setTimeout(price, 350); }
+    addOnRefresh = function () { if (selection().length) schedule(); };
+
+    $('aoPay').addEventListener('click', function () {
+      if (!current) return;
+      $('aoPay').disabled = true;
+      set('aoPay', 'Opening secure checkout…');
+      fetch('/api/my-order/request', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ o: o, s: s, addOns: current.sel, service: current.svc, expectedTotal: current.q.total }),
+      })
+        .then(function (r) { return r.text().then(function (t) { var b = {}; try { b = JSON.parse(t); } catch (e) { b = {}; } return { status: r.status, b: b }; }); })
+        .then(function (res) {
+          if (res.status === 200 && res.b.paymentUrl) { window.location.href = res.b.paymentUrl; return; }
+          if (res.status === 200) { set('aoPay', 'Invoice sent — check your email'); return; }
+          if (res.status === 409 && res.b.error === 'price_changed') {
+            current.q = res.b; draw(res.b);
+            set('aoPay', 'The amount changed — pay ' + money(res.b.total) + ' and add to my order');
+            return;
+          }
+          set('aoPay', 'Pay ' + money(current.q.total) + ' and add to my order');
+          $('aoPay').disabled = false;
+          showErr(res.b.reason || (res.status === 503 ? 'Not available yet' : 'Something went wrong — please contact us'));
+        })
+        .catch(function () { set('aoPay', 'Pay ' + money(current.q.total) + ' and add to my order'); $('aoPay').disabled = false; showErr('We couldn’t reach our system — please try again'); });
+    });
   }
 })();
 </script>

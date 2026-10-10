@@ -20,7 +20,8 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
 
-import { fetchOrderForPricing, quoteShippingChange, deliveryEstimates } from '../../shared/shopify-pricing.mjs';
+import { fetchOrderForPricing, quoteShippingChange, deliveryEstimates, quoteOrderChange } from '../../shared/shopify-pricing.mjs';
+import { fetchAddOnCatalog } from '../../shared/addon-catalog.mjs';
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { makeHandler } from './routes.mjs';
@@ -63,6 +64,18 @@ async function quote(args) {
   }
 }
 
+// Add-ons (Kai, 2026-10-08): the list from Shopify, and the price of a selection
+// from a staged edit (never committed here).
+const loadAddOns = async () => fetchAddOnCatalog({ ...(await shopifyCreds()) });
+async function quoteAddOns(args) {
+  try {
+    return await quoteOrderChange({ ...(await shopifyCreds()), ...args });
+  } catch (err) {
+    console.warn(JSON.stringify({ msg: 'Shopify add-on quote failed', err: String(err) }));
+    return { ok: false, reason: 'shopify_error' };
+  }
+}
+
 async function estimates(args) {
   try {
     return await deliveryEstimates({ ...(await shopifyCreds()), ...args });
@@ -78,7 +91,8 @@ async function loadPending(orderName) {
   return res?.Item ?? null;
 }
 
-const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending });
+const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending, loadAddOns, quoteAddOns,
+  addOnOrders: process.env.ADDON_ORDERS ?? '' });
 
 // { warmup: true } from the 5-minute schedule: load the Shopify token so the
 // next customer does not wait for it, and return. Nothing else is touched.

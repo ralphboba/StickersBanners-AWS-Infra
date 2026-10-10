@@ -31,7 +31,7 @@ describe('upgrade log', () => {
       logItem('paid', C('S64262', 'FedEx 1-Day', 7355, { test: true }), at),
     ];
     const s = summarize(items);
-    assert.deepEqual(s, { requested: 3, paid: 2, paidShippingCents: 5124, byService: { 'FedEx 3-Days': 1, 'FedEx 2-Days': 1 }, test: 1 });
+    assert.deepEqual(s, { requested: 3, paid: 2, paidShippingCents: 5124, addOnOrders: 0, paidItemsCents: 0, byService: { 'FedEx 3-Days': 1, 'FedEx 2-Days': 1 }, test: 1 });
     assert.equal(dailyMessage('2026-10-03', s),
       'Shipping upgrades Sat, Oct 3: 2 paid · +$51.24 shipping (FedEx 3-Days 1, FedEx 2-Days 1) · 3 requested · 1 test order not counted');
   });

@@ -11,7 +11,8 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dyn
 
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
-import { fetchOrderForPricing, quoteShippingChange } from '../../shared/shopify-pricing.mjs';
+import { fetchOrderForPricing, quoteShippingChange, quoteOrderChange } from '../../shared/shopify-pricing.mjs';
+import { fetchAddOnCatalog } from '../../shared/addon-catalog.mjs';
 import { commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
 import { makeOrderRowLoader } from '../../shared/order-row.mjs';
@@ -37,6 +38,14 @@ const routes = makeHandler({
     }
   },
   estimates: async () => null,
+  addOnOrders: process.env.ADDON_ORDERS ?? '',
+  loadAddOns: async () => fetchAddOnCatalog({ ...(await creds()) }),
+  quoteAddOns: async (args) => {
+    try { return await quoteOrderChange({ ...(await creds()), ...args }); } catch (err) {
+      console.warn(JSON.stringify({ msg: 'add-on quote failed', err: String(err) }));
+      return { ok: false, reason: 'shopify_error' };
+    }
+  },
   loadPending: async (orderName) => (await ddb.send(new GetCommand({
     TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'CHANGE' } })))?.Item ?? null,
   // One open change per order: a second pending record is refused by the

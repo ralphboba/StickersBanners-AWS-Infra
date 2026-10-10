@@ -36,6 +36,7 @@ export function logItem(kind, change, atMs) {
     SK: `${at}#${kind}#${change.orderName}#${change.ref}`,
     kind, at, orderName: change.orderName, ref: change.ref, from: change.from, to: change.to,
     shippingCents: change.shippingCents ?? 0, taxCents: change.taxCents ?? 0, test: Boolean(change.test),
+    ...(change.addOns?.length ? { itemsCents: change.itemsCents ?? 0, addOns: change.addOns.length } : {}),
   };
 }
 
@@ -45,11 +46,14 @@ export function summarize(items) {
   const firstPerOrder = (kind) => [...new Map(real.filter((i) => i.kind === kind).map((i) => [i.orderName, i])).values()];
   const paid = firstPerOrder('paid');
   const byService = {};
-  for (const p of paid) byService[p.to] = (byService[p.to] ?? 0) + 1;
+  for (const p of paid) if (p.from !== p.to) byService[p.to] = (byService[p.to] ?? 0) + 1;
   return {
     requested: firstPerOrder('requested').length,
     paid: paid.length,
     paidShippingCents: paid.reduce((s, p) => s + (p.shippingCents ?? 0), 0),
+    // Orders that added products (Kai, 2026-10-08), and what the products came to.
+    addOnOrders: paid.filter((p) => p.addOns > 0).length,
+    paidItemsCents: paid.reduce((s, p) => s + (p.itemsCents ?? 0), 0),
     byService,
     test: new Set(items.filter((i) => i.test).map((i) => i.orderName)).size,
   };
@@ -61,6 +65,7 @@ export function dailyMessage(date, s) {
   const services = Object.entries(s.byService).sort((a, b) => b[1] - a[1]).map(([to, n]) => `${to} ${n}`).join(', ');
   return `Shipping upgrades ${day}: ${s.paid} paid`
     + (s.paid ? ` · +$${centsToAmount(s.paidShippingCents)} shipping (${services})` : '')
+    + (s.addOnOrders ? ` · ${s.addOnOrders} with add-ons +$${centsToAmount(s.paidItemsCents)}` : '')
     + ` · ${s.requested} requested`
     + (s.test ? ` · ${s.test} test order${s.test === 1 ? '' : 's'} not counted` : '');
 }
@@ -77,7 +82,8 @@ export function dailyEmail(date, items) {
   const paidOrders = new Map(real.filter((i) => i.kind === 'paid').map((i) => [i.orderName, i]));
   const unpaid = [...new Map(real.filter((i) => i.kind === 'requested' && !paidOrders.has(i.orderName))
     .map((i) => [i.orderName, i])).values()];
-  const row = (i) => `  ${i.orderName}  ${i.from} -> ${i.to}  +$${centsToAmount(i.shippingCents ?? 0)}`;
+  const row = (i) => `  ${i.orderName}  ${i.from} -> ${i.to}  +$${centsToAmount(i.shippingCents ?? 0)}`
+    + (i.addOns ? `  + ${i.addOns} add-on${i.addOns === 1 ? '' : 's'} $${centsToAmount(i.itemsCents ?? 0)}` : '');
   const body = [
     line, '',
     `Paid (${paidOrders.size}):`, ...([...paidOrders.values()].map(row)), ...(paidOrders.size ? [] : ['  none']), '',

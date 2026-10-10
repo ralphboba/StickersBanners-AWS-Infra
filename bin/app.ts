@@ -158,6 +158,9 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   shippingChangeTestOrders: app.node.tryGetContext('testOrders') as string | undefined,
   // `--context shippingChange=live` arms the same writes for EVERY order (go-live).
   shippingChangeLive: app.node.tryGetContext('shippingChange') === 'live',
+  // Add-ons: --context addOnOrders=S64262 (those orders only) or
+  // --context addOns=live (every order). Neither = off.
+  addOnOrders: app.node.tryGetContext('addOns') === 'live' ? '*' : (app.node.tryGetContext('addOnOrders') as string | undefined),
   upgradeReportEmail: 'kai@stickersbanners.com',
   description: `StickersBanners Lambda compute (${config.env})`,
 });
