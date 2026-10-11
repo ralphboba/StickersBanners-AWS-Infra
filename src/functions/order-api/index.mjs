@@ -7,6 +7,10 @@
 //                                 while it waits for the customer)
 //   POST /orders/{name}/size      { choice: swap|keep } for an order resize held
 //                                 as size-swapped; re-runs it (size-decision.mjs)
+//   POST /orders/{name}/upload    { itemNo, filename, contentType } -> a one-time
+//                                 upload URL for a file the office edited
+//   POST /orders/{name}/release   { mode, items } for an order held for special
+//                                 instructions; re-runs it (instructions.mjs)
 //
 // Also callable directly with { orderName } for scripts/tests.
 
@@ -18,11 +22,15 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { getGroup } from '../../shared/secrets.mjs';
 import { customerProofLink } from './customer-link.mjs';
 import { applySizeDecision } from './size-decision.mjs';
+import { applyRelease, uploadKey } from './instructions.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const sqs = new SQSClient({});
 const JOBS_TABLE = process.env.JOBS_TABLE;
 const INTAKE_QUEUE_URL = process.env.INTAKE_QUEUE_URL;
+// Where the office's edited files go (staff/{order}/{item}/...). Resize reads
+// s3:// artwork from this bucket.
+const UPLOADS_BUCKET = process.env.UPLOADS_BUCKET;
 
 // Statuses mirror the OrderDesk folders staff already know.
 const STATUSES = [
@@ -120,6 +128,69 @@ export async function handler(event) {
       MessageDeduplicationId: `${orderName}-size-${Date.now()}`,
     }));
     return resp(200, { orderName, status: 'in_queue', decision: out.decision });
+  }
+
+  // --- staff upload: POST /orders/{name}/upload  { itemNo, filename, contentType } ---
+  // A one-time URL the dashboard PUTs the edited file to, straight into S3
+  // (files run to hundreds of MB; API Gateway takes 10). Staff only: this
+  // route sits behind the Cognito authorizer. Customers have no upload path.
+  const isUpload = method === 'POST'
+    && (event?.rawPath?.endsWith('/upload') || event?.routeKey?.includes('/upload'));
+  if (isUpload) {
+    if (!orderName) return resp(400, { error: 'missing order name' });
+    if (!UPLOADS_BUCKET) return resp(503, { error: 'uploads are not configured' });
+    let body = {};
+    try { body = JSON.parse(event.body || '{}'); } catch { /* ignore */ }
+    const cur = await ddb.send(
+      new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } }),
+    );
+    if (!cur.Item) return resp(404, { error: 'not found', orderName });
+    if (cur.Item.mirror) return resp(403, { error: "this order is Linh's program's, not ours" });
+    const k = uploadKey(orderName, body.itemNo, body.filename);
+    if (k.error) return resp(400, { error: k.error });
+    const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    const url = await getSignedUrl(new S3Client({}), new PutObjectCommand({
+      Bucket: UPLOADS_BUCKET, Key: k.key, ContentType: body.contentType || 'application/octet-stream',
+    }), { expiresIn: 3600 });
+    return resp(200, { url, key: k.key, contentType: body.contentType || 'application/octet-stream' });
+  }
+
+  // --- special instructions handled: POST /orders/{name}/release  { mode, items } ---
+  const isRelease = method === 'POST'
+    && (event?.rawPath?.endsWith('/release') || event?.routeKey?.includes('/release'));
+  if (isRelease) {
+    if (!orderName) return resp(400, { error: 'missing order name' });
+    let body = {};
+    try { body = JSON.parse(event.body || '{}'); } catch { /* ignore */ }
+    const cur = await ddb.send(
+      new GetCommand({ TableName: JOBS_TABLE, Key: { PK: `ORDER#${orderName}`, SK: 'META' } }),
+    );
+    const claims = event?.requestContext?.authorizer?.jwt?.claims ?? {};
+    const by = claims.email || claims['cognito:username'] || claims.username || 'staff';
+    const out = applyRelease(cur.Item, body, { by, uploadsBucket: UPLOADS_BUCKET });
+    if (out.error) return resp(out.code, { error: out.error, orderName });
+
+    // Back to In Queue, only if it is still the hold we just read: two people
+    // clicking at once must not start two runs.
+    await ddb.send(new UpdateCommand({
+      TableName: JOBS_TABLE,
+      Key: { PK: `ORDER#${orderName}`, SK: 'META' },
+      UpdateExpression: 'SET #s = :q, GSI1PK = :g, #i = :items, instructionsRelease = :r, staffRelease = :t REMOVE #h, stage',
+      ConditionExpression: '#s = :held AND #h.reason = :why',
+      ExpressionAttributeNames: { '#s': 'status', '#i': 'items', '#h': 'hold' },
+      ExpressionAttributeValues: {
+        ':q': 'in_queue', ':g': 'STATUS#in_queue', ':items': out.items, ':r': out.release, ':t': true,
+        ':held': 'needs_review', ':why': cur.Item.hold.reason,
+      },
+    }));
+    await sqs.send(new SendMessageCommand({
+      QueueUrl: INTAKE_QUEUE_URL,
+      MessageBody: JSON.stringify(out.job),
+      MessageGroupId: 'intake',
+      MessageDeduplicationId: `${orderName}-release-${Date.now()}`,
+    }));
+    return resp(200, { orderName, status: 'in_queue', release: out.release });
   }
 
   // --- single order ---

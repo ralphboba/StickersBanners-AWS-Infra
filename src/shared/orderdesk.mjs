@@ -579,6 +579,9 @@ export function cleanOrder(order) {
       hasSpecialProduct: isSpecialProduct(it.name),
       hasSeeThru: isSeeThru(it.name),
       hasInstructions: hasInstructionsText(instructions),
+      // The text itself, for the person who handles the hold on the dashboard
+      // (Special Instructions folder). Capped: it is free text from checkout.
+      ...(hasInstructionsText(instructions) ? { instructions: String(instructions).trim().slice(0, 2000) } : {}),
       // Physical goods with no artwork — dropped from the order below.
       hardware: isHardwareSku(sku, it.name),
       // Flag a product the system hasn't been set up for, so staff can review it.

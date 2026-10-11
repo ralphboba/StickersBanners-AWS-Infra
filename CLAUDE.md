@@ -23,7 +23,10 @@ authority: **Linh** (legacy author).
 - **Customers approve, but never reject and never upload.** Linh: "i said i
   didn't see the point in disapproving, not not letting them approve … right now
   they'd still need to approve via the portal." Revisions come back by email.
-  Do NOT add a reject button or a customer upload path.
+  Do NOT add a reject button or a customer upload path. (Staff-only exception,
+  Kai 2026-10-11: the dashboard's Special Instructions folder lets the office
+  upload an edited file and fix size/finishing, then re-run the order —
+  `order-api/instructions.mjs`, Cognito-only `POST /orders/{name}/upload|release`.)
   Today approval happens on Linh's `proof.stickersbanners.com`, which posts to
   HIS program — so we also have our own path for when it is switched off:
   `web/proof.html` + public `GET /proof` / `POST /proof/approve`, authenticated

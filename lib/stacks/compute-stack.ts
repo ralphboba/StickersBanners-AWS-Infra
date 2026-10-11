@@ -217,6 +217,8 @@ export class ComputeStack extends cdk.Stack {
     );
     this.grantSecretsRead(this.notifyConsumer, config);
 
+    const uploadsBucketName = `${config.prefix}-uploads-${this.account}`;
+
     // --- order-api: read-only job status ---
     this.orderApi = new lambda.Function(this, 'OrderApi', {
       ...base,
@@ -229,9 +231,18 @@ export class ComputeStack extends cdk.Stack {
         SB_ENV: config.env,
         // Re-runs an order after staff answer a size-swapped hold.
         INTAKE_QUEUE_URL: intakeQueue.queueUrl,
+        // The office's edited files for special-instructions orders.
+        UPLOADS_BUCKET: uploadsBucketName,
       },
-      description: 'Order/job status lookups, demo-only moves, size-swap decisions',
+      description: 'Order/job status lookups, demo-only moves, size-swap decisions, special-instructions release',
     });
+    // Signs the dashboard's upload URL; only under staff/, never the
+    // customers' own uploads.
+    this.orderApi.addToRolePolicy(new iam.PolicyStatement({
+      sid: 'StaffUploads',
+      actions: ['s3:PutObject'],
+      resources: [`arn:aws:s3:::${uploadsBucketName}/staff/*`],
+    }));
     // Read for lookups; write is used ONLY by the demo-only /move route, which is
     // hard-guarded in the handler to DEMO-*/ZZ-* orders.
     jobsTable.grantReadWriteData(this.orderApi);

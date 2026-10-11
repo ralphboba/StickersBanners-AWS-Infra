@@ -114,6 +114,24 @@
   .btn.approve { background:var(--s-done); color:#fff; } .btn.reject { background:transparent; color:var(--s-hold); border:1px solid var(--s-hold); }
   .btn:disabled { opacity:.5; cursor:default; }
   .note { font-size:12px; color:var(--faint); margin-top:9px; }
+  /* Special Instructions: staff edit + release (instructions.mjs) */
+  .si { background:#fff7e0; border:1px solid #f0c766; border-radius:10px; padding:11px 13px; margin:4px 0 14px; }
+  .si .silab { font-size:11px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
+  .si .sitxt { font-size:14.5px; font-weight:600; color:#1f2937; white-space:pre-wrap; word-break:break-word; }
+  .si .sitxt + .sitxt { margin-top:6px; }
+  .si-item { font-size:13px; padding:8px 0 12px; border-bottom:1px solid var(--line); }
+  .si-item:last-child { border-bottom:0; }
+  .si-row { display:flex; gap:6px; align-items:center; margin:7px 0; flex-wrap:wrap; }
+  .si-row .k { font-size:12px; color:var(--faint); width:62px; }
+  .si-in { border:1px solid var(--line); background:var(--surface-2); color:var(--ink); border-radius:7px; padding:5px 8px; font:inherit; font-size:12.5px; }
+  input.si-in { width:62px; text-align:center; } select.si-in.wide { flex:1; min-width:0; }
+  .si-in.chg { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .si-file { display:flex; gap:10px; align-items:center; margin-top:4px; }
+  .si-file .lnk { color:var(--accent); font-weight:600; font-size:12.5px; text-decoration:none; }
+  .si-up { display:inline-block; margin-top:5px; border:1.5px dashed #9fb3cc; border-radius:7px; padding:3px 9px; font-size:12px; color:var(--muted); cursor:pointer; }
+  .si-up.done { border:1px solid var(--s-done); color:var(--s-done); background:#ecfdf3; font-weight:600; }
+  .si-up.busy { border-style:solid; color:var(--accent); }
+  .btn.plain { background:var(--surface); border:1px solid #b9c6d6; color:var(--ink); }
   .scrim { position:fixed; inset:0; background:rgba(8,14,22,.38); opacity:0; pointer-events:none; transition:opacity .2s; z-index:15; }
   .scrim.open { opacity:1; pointer-events:auto; }
   @media (max-width:720px){ .shell{ grid-template-columns:1fr; } .rail{ display:none; } }
@@ -179,6 +197,10 @@ const FOLDERS = [
   // apart so they are not lost among the intake holds. Proof orders are not
   // stopped -- they go to Proofing with a "size?" mark instead.
   { key:'size_check',      name:'↔ Size Check',            color:'--s-review', of:'needs_review' },
+  // Orders the intake gate held because the customer typed special
+  // instructions (Kai, 2026-10-11). Staff read them, fix what they ask for
+  // (size, finishing, an edited file) and send the order on -- instructions.mjs.
+  { key:'special_instructions', name:'✎ Special Instructions', color:'--s-print', of:'needs_review' },
   { key:'awaiting_admin',  name:'Awaiting Admin Process',  color:'--s-admin' },
   { key:'awaiting_payment',name:'Awaiting Payment',        color:'--s-pay'   },
   { sep:true },
@@ -275,6 +297,10 @@ function renderFolders(){
 // calls on every 20s refresh, each paging a whole status just to read .count —
 // that burst is what made the API return 503 now and then.
 const isSizeCheck = (o)=> o.hold?.reason==='size-swapped' && !o.mirror;
+const isSpecialInstr = (o)=> o.hold?.reason==='special-instructions' && !o.mirror;
+const CARVED = { size_check:isSizeCheck, special_instructions:isSpecialInstr };
+const isCarved = (o)=> Object.values(CARVED).some(fn=>fn(o));
+const instrText = (o)=> (o.items||[]).map(it=>it.instructions).filter(Boolean).join(' | ');
 async function loadCounts(){
   try{
     const d=await api('/orders?counts=1');
@@ -283,8 +309,9 @@ async function loadCounts(){
     try{
       const nr=await api('/orders?status=needs_review');
       counts.size_check=nr.orders.filter(isSizeCheck).length;
-      counts.needs_review=nr.count-counts.size_check;
-    }catch{ counts.size_check='—'; }
+      counts.special_instructions=nr.orders.filter(isSpecialInstr).length;
+      counts.needs_review=nr.count-counts.size_check-counts.special_instructions;
+    }catch{ counts.size_check='—'; counts.special_instructions='—'; }
   }catch{
     // Fallback for a dashboard deployed ahead of the API. Remove once the
     // counts endpoint has shipped everywhere.
@@ -330,7 +357,7 @@ async function loadFolder(){
   try {
     data=await api(`/orders?status=${f.of||current}`);
     if(f.of || current==='needs_review'){
-      const orders=data.orders.filter(o=> f.of ? isSizeCheck(o) : !isSizeCheck(o));
+      const orders=data.orders.filter(o=> f.of ? CARVED[current](o) : !isCarved(o));
       data={...data, orders, count:orders.length};
     }
   }
@@ -351,9 +378,12 @@ async function loadFolder(){
       <td class="fac">${esc(o.routing?.facility||'—')}</td>
       <td>${o.needsProof?'<span class="proofyes">● needs proof</span>':'<span class="proofno">—</span>'}</td>
       <td class="mono" style="color:var(--muted)">${fmtDate(o.createdAt)}</td>
-      <td><span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span>${holdPill(o)}${sizePill(o)}</td>
+      <td>${current==='special_instructions'
+        ? `<span title="${esc(instrText(o))}" style="display:inline-block;max-width:340px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;color:var(--muted);font-size:12.5px">“${esc(instrText(o)||'open the order to read them')}”</span>`
+        : `<span class="folder-pill" style="color:var(${f.color});font-weight:600;font-size:12px">${f.name}${o.status==='printing'&&o.stage?` <span style="color:var(--muted);font-weight:500">· ${esc(o.stage)}</span>`:''}</span>${holdPill(o)}${sizePill(o)}`}</td>
     </tr>`).join('');
   $('rows').innerHTML=rows;
+  document.querySelector('thead th:last-child').textContent = current==='special_instructions' ? 'Instructions' : 'Status';
   $('empty').hidden=data.orders.length>0;
   document.querySelectorAll('#rows tr').forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.n));
 }
@@ -458,6 +488,38 @@ async function showDetail(name){
       ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
       <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
     </div>`).join('')}</div>` : '';
+  // Special instructions: a person reads them, fixes what they ask for, and
+  // sends the order on. It then runs from the top with the changes
+  // (src/functions/order-api/instructions.mjs).
+  const siHold = o.status==='needs_review' && isSpecialInstr(o);
+  const siItems = siHold ? (o.items||[]).map((it,i)=>({...it, no:String(it.itemNo??i+1)})) : [];
+  const siTexts = siItems.filter(it=>it.instructions);
+  const siBox = siHold ? `<div class="si"><div class="silab">Customer's special instructions</div>
+      ${siTexts.length ? siTexts.map(it=>`<div class="sitxt">${siItems.length>1?`<span style="color:var(--muted);font-weight:500">Item ${esc(it.no)}: </span>`:''}“${esc(it.instructions)}”</div>`).join('')
+        : `<div class="sitxt" style="font-weight:500;color:var(--muted)">The text was not recorded for this order — read it in OrderDesk.</div>`}</div>` : '';
+  const finOpts=(cur)=>{ const list=[...SI_FINISH]; if(cur && !list.includes(cur)) list.unshift(cur);
+    return list.map(v=>`<option value="${esc(v)}"${v===cur?' selected':''}>${esc(v)}</option>`).join(''); };
+  const siEditor = siHold ? siItems.map(it=>{ const art=it.customerArtworkUrl||it.artworkUrl||'';
+    const isWeb=/^https?:/i.test(art);
+    return `<div class="si-item" data-no="${esc(it.no)}">
+      <b>${esc(it.quantity)}× ${esc(it.name||it.sku)}</b>
+      <div class="si-row"><span class="k">Size</span>
+        <input class="si-in" data-f="width" data-o="${esc(it.width)}" value="${esc(it.width)}">×
+        <input class="si-in" data-f="height" data-o="${esc(it.height)}" value="${esc(it.height)}">
+        <select class="si-in" data-f="unit" data-o="${esc(it.unit||'ft')}"><option${(it.unit||'ft')==='ft'?' selected':''}>ft</option><option${it.unit==='in'?' selected':''}>in</option></select></div>
+      <div class="si-row"><span class="k">Finishing</span>
+        <select class="si-in wide" data-f="finishing" data-o="${esc(it.finishingRaw||'')}">${finOpts(it.finishingRaw||'')}</select></div>
+      <div class="si-row"><span class="k">Grommets</span>
+        <select class="si-in wide" data-f="grommets" data-o="">${SI_GROMMETS.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select></div>
+      <div class="si-file"><div style="font-size:12.5px">
+        ${isWeb?`<a class="lnk" href="${esc(art)}" target="_blank" rel="noopener">⬇ Download customer file</a>`:'<span style="color:var(--faint)">Customer file not linkable</span>'}
+        <span style="color:var(--faint)"> · .${esc(it.artworkExt||'?')}</span><br>
+        <label class="si-up" data-up="${esc(it.no)}">⬆ Upload edited file<input type="file" hidden></label></div></div>
+    </div>`; }).join('') : '';
+  const siAct = siHold ? `<div class="proofbox"><div class="lab">Handle the instructions, then start the order. It runs from the start with your changes: resize, finishing, then ${o.needsProof?'<b>a proof email to the customer</b> (they asked for one) and their approval':'<b>no proof</b> (the customer did not ask for one)'} before it goes to ${esc(o.routing?.facility||'the facility')}.</div>
+      <div class="btns"><button class="btn plain" id="siasis">Process as is</button><button class="btn approve" id="sigo">Process with changes</button></div>
+      <div class="note">Blue = changed. An uploaded file replaces the customer's file for that item only.</div>
+      <div class="err" id="siErr"></div></div>` : '';
   const demo = isDemo(o.orderName);
   const canSend = o.needsProof && o.status==='proofing' && !demo;
   // Demo controls: step this synthetic order forward/back through the pipeline.
@@ -481,7 +543,9 @@ async function showDetail(name){
       <dt>Total</dt><dd>$${esc(o.totals?.grandTotal??'—')} ${esc(o.totals?.currency||'')}</dd>
       <dt>Created</dt><dd>${fmtDate(o.createdAt)}</dd>
     </dl>
-    <div style="border-top:1px solid var(--line);padding-top:12px">${items||'<span style="color:var(--faint)">No line items</span>'}</div>
+    ${siBox}
+    <div style="border-top:1px solid var(--line);padding-top:12px">${siHold ? siEditor : (items||'<span style="color:var(--faint)">No line items</span>')}</div>
+    ${siAct}
     ${proofSection}
     ${canSend?`<div class="proofbox"><div class="lab">In Proofing. Send to production once the customer has confirmed the proof (revisions come in by email).</div>
       <div class="btns"><button class="btn approve" id="send">Send to production</button></div>
@@ -504,12 +568,72 @@ async function showDetail(name){
     $('szswap').onclick=()=>decide('swap', flagged.length===1?`print as ${flagged[0].swapped}`:'swap the flagged items');
     $('szkeep').onclick=()=>decide('keep','print as ordered (artwork stretched)');
   }
+  if(siHold) wireRelease(o, siItems);
   if(canSend){
     $('send').onclick=async()=>{ try{ $('send').disabled=true;
       await api(`/orders/${encodeURIComponent(name)}/approve`,{method:'POST',body:'{}'});
       closeDrawer(); loadFolder(); loadCounts();
     }catch(e){ $('actErr').textContent=e.message; $('send').disabled=false; } };
   }
+}
+// Special instructions (instructions.mjs): the store's finishing options and
+// where grommet marks go. The print file never marks corners, so "corners
+// only" means no marks at all.
+const SI_FINISH=['Hem & Grommets','Hem Only','No Hem / Grommets Only','No Hem & No Grommets',
+  'Pole Pockets (Top Only)','Pole Pockets (Bottom Only)','Pole Pockets (Top and Bottom)'];
+const SI_GROMMETS=[['','As the finishing option'],['all','All 4 sides'],['top','Top only'],['bottom','Bottom only'],
+  ['top-bottom','Top and bottom'],['left-right','Left and right'],['corners','4 corners only'],['none','No grommets']];
+function wireRelease(o, siItems){
+  const uploads={};
+  const box=$('drawer');
+  // Blue when changed from what the customer ordered.
+  box.querySelectorAll('.si-item .si-in').forEach(el=>{
+    const mark=()=>el.classList.toggle('chg', String(el.value)!==String(el.dataset.o));
+    el.addEventListener('input',mark); el.addEventListener('change',mark);
+  });
+  // Upload: a one-time URL from the API, then straight to S3 with progress.
+  box.querySelectorAll('.si-up').forEach(lab=>{
+    const input=lab.querySelector('input'); const no=lab.dataset.up;
+    input.onchange=async()=>{
+      const file=input.files[0]; if(!file) return;
+      lab.classList.add('busy'); lab.firstChild.textContent='Uploading… ';
+      try{
+        const u=await api(`/orders/${encodeURIComponent(o.orderName)}/upload`,{method:'POST',
+          body:JSON.stringify({itemNo:no, filename:file.name, contentType:file.type||'application/octet-stream'})});
+        await new Promise((res,rej)=>{ const x=new XMLHttpRequest(); x.open('PUT',u.url); x.setRequestHeader('content-type',u.contentType);
+          x.upload.onprogress=e=>{ if(e.lengthComputable) lab.firstChild.textContent=`Uploading… ${Math.round(e.loaded*100/e.total)}% `; };
+          x.onload=()=> x.status<300?res():rej(new Error(`upload failed (${x.status})`)); x.onerror=()=>rej(new Error('upload failed')); x.send(file); });
+        uploads[no]=u.key;
+        lab.classList.remove('busy'); lab.classList.add('done');
+        lab.firstChild.textContent=`✓ ${file.name} · ${(file.size/1048576).toFixed(file.size>1048576?0:1)} MB `;
+      }catch(e){ lab.classList.remove('busy'); lab.firstChild.textContent='⬆ Upload edited file '; $('siErr').textContent=e.message; }
+    };
+  });
+  const send=async(body,label)=>{
+    if(!confirm(`${o.orderName}: ${label}?\nThe order will be processed from the start.`)) return;
+    $('siasis').disabled=true; $('sigo').disabled=true; $('siErr').textContent='';
+    try{ await api(`/orders/${encodeURIComponent(o.orderName)}/release`,{method:'POST',body:JSON.stringify(body)});
+      closeDrawer(); loadFolder(); loadCounts();
+    }catch(e){ $('siErr').textContent=e.message; $('siasis').disabled=false; $('sigo').disabled=false; }
+  };
+  $('siasis').onclick=()=>{
+    if(box.querySelector('.si-in.chg')||Object.keys(uploads).length){
+      if(!confirm('You changed something. "Process as is" ignores your changes. Continue?')) return; }
+    send({mode:'as-is'},'process as ordered');
+  };
+  $('sigo').onclick=()=>{
+    const items=[];
+    box.querySelectorAll('.si-item').forEach(row=>{
+      const no=row.dataset.no; const v=(f)=>row.querySelector(`[data-f="${f}"]`); const e={itemNo:no};
+      if(['width','height','unit'].some(f=>v(f).classList.contains('chg'))){ e.width=Number(v('width').value); e.height=Number(v('height').value); e.unit=v('unit').value; }
+      if(v('finishing').classList.contains('chg')) e.finishing=v('finishing').value;
+      if(v('grommets').value) e.grommets=v('grommets').value;
+      if(uploads[no]) e.uploadKey=uploads[no];
+      if(Object.keys(e).length>1) items.push(e);
+    });
+    if(!items.length){ $('siErr').textContent='Nothing was changed — use "Process as is".'; return; }
+    send({mode:'changes',items},'process with your changes');
+  };
 }
 function closeDrawer(){ $('drawer').classList.remove('open'); $('scrim').classList.remove('open'); }
 $('scrim').onclick=closeDrawer;

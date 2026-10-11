@@ -55,7 +55,9 @@ describe('ApiStack', () => {
       'POST /orders/{name}/approve',
       'POST /orders/{name}/move',
       'POST /orders/{name}/reject',
+      'POST /orders/{name}/release',
       'POST /orders/{name}/size',
+      'POST /orders/{name}/upload',
       'POST /proof/approve',
       'POST /webhook/orderdesk',
       'POST /webhook/shopify-paid',
@@ -124,6 +126,8 @@ describe('ApiStack', () => {
   test('no public route can reject a proof or upload a file', () => {
     // Linh's non-negotiables. The only reject is POST /orders/{name}/reject,
     // which is staff-only behind Cognito; nothing accepts customer uploads.
+    // The one upload route is for the office's edited files (special
+    // instructions, 2026-10-11) and is staff-only behind Cognito too.
     const template = synth();
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const publicKeys = routes
@@ -139,7 +143,9 @@ describe('ApiStack', () => {
       'POST /webhook/shopify-paid',
     ]);
     const allKeys = routes.map((r) => r.Properties.RouteKey);
-    expect(allKeys.filter((k) => /upload/i.test(k))).toEqual([]);
+    expect(allKeys.filter((k) => /upload/i.test(k))).toEqual(['POST /orders/{name}/upload']);
+    const upload = routes.find((r) => r.Properties.RouteKey === 'POST /orders/{name}/upload')!;
+    expect(upload.Properties.AuthorizationType).toBe('JWT');
     expect(allKeys.filter((k) => /reject/i.test(k))).toEqual(['POST /orders/{name}/reject']);
   });
 

@@ -145,6 +145,18 @@ export class ApiStack extends cdk.Stack {
       authorizer,
     });
 
+    // Special instructions, handled by staff: a one-time upload URL for a file
+    // the office edited, and the release that re-runs the order with the
+    // changes. Staff only (Cognito) -- customers still have no upload path.
+    for (const action of ['upload', 'release']) {
+      this.httpApi.addRoutes({
+        path: `/orders/{name}/${action}`,
+        methods: [apigw.HttpMethod.POST],
+        integration: orderApiIntegration,
+        authorizer,
+      });
+    }
+
     // Proof review: separate approve/reject routes (clear intent + room for
     // per-route authorization later). Both resume the paused pipeline.
     const approvalIntegration = new HttpLambdaIntegration('ApprovalIntegration', approvalFn);
@@ -167,7 +179,8 @@ export class ApiStack extends cdk.Stack {
     //
     // Only these two route keys exist. There is no customer reject and no
     // customer upload: the staff-only POST /orders/{name}/reject above stays
-    // behind Cognito, and no upload route exists anywhere in the API.
+    // behind Cognito, and the only upload route (/orders/{name}/upload, for the
+    // office's edited files) is staff-only behind Cognito too.
     const proofIntegration = new HttpLambdaIntegration('ProofApprovalIntegration', proofApprovalFn);
     this.httpApi.addRoutes({
       path: '/proof',

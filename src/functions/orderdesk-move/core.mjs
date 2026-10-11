@@ -35,8 +35,13 @@ export function planMove(job, step, ids = folderIds()) {
   if (!STEPS.includes(step)) return { skip: `unknown step ${step}` };
   if (!job?.source?.orderDeskId) return { skip: 'no OrderDesk id on the job' };
 
+  // A person released this order from a staff folder (special instructions
+  // handled on the dashboard, instructions.mjs): it is still sitting where it
+  // was held, and sending it on is exactly what they asked for.
+  const released = job.staffRelease === true ? [ids.manual, ids.sales] : [];
+
   if (step === 'proofing') {
-    return { folder: 'proofing', folderId: ids.proofing, expectFrom: [ids.processing] };
+    return { folder: 'proofing', folderId: ids.proofing, expectFrom: [ids.processing, ...released] };
   }
   if (step === 'review') {
     return { folder: 'review', folderId: ids.review, expectFrom: [ids.proofing] };
@@ -48,7 +53,7 @@ export function planMove(job, step, ids = folderIds()) {
     folderId: ids[facility],
     // After approval it waits in Pending Review; a no-proof order never left
     // Processing.
-    expectFrom: job.needsProof ? [ids.review] : [ids.processing],
+    expectFrom: job.needsProof ? [ids.review] : [ids.processing, ...released],
   };
 }
 
