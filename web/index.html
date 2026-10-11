@@ -160,6 +160,9 @@
       <input id="searchbox" type="text" placeholder="Search order #…" autocomplete="off"
         style="padding:7px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font-size:13px;width:190px;outline:none">
       <button id="searchbtn" class="signout" style="cursor:pointer">Search</button>
+      <input id="datebox" type="date" title="Show only orders created on this day"
+        style="padding:6px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font-size:13px;margin-left:6px">
+      <button id="dateclear" class="signout" style="cursor:pointer" hidden>All dates</button>
       <span id="searchmsg" style="font-size:12px;color:var(--danger,#a63232)"></span>
     </div>
     <span class="spacer"></span>
@@ -353,7 +356,13 @@ async function loadFolder(){
   }
   $('loading').hidden=true;
   counts[current]=data.count; renderFolders();
-  $('headsub').textContent=`${data.count} order${data.count!==1?'s':''}`;
+  // Date picker next to Search: only orders created that (local) day.
+  const day=$('datebox').value;
+  if(day){ const orders=data.orders.filter(o=>o.createdAt && localDay(o.createdAt)===day);
+    data={...data, orders}; }
+  $('headsub').textContent = day
+    ? `${data.orders.length} of ${data.count} order${data.count!==1?'s':''} · created ${new Date(day+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}`
+    : `${data.count} order${data.count!==1?'s':''}`;
   const rows=data.orders.map(o=>`
     <tr data-n="${esc(o.orderName)}">
       <td class="ordno mono">${esc(o.orderName)}${o.hasUnknownSku?` <span title="Unknown SKU — not set up yet, needs review" style="color:#a63232;font-weight:700">⚠</span>`:''}</td>
@@ -449,28 +458,39 @@ async function showDetail(name){
   const flagged = swapHold ? (o.hold.items||[]) : [];
   const pockets = flagged.some(f=>f.hasPockets);
   const artUrl = (no)=>{ const it=(o.items||[]).find((x,i)=>String(x.itemNo??i+1)===String(no)); return it?.artworkUrl||''; };
+  // Size Check, spelled out: width and height of what was ordered and of the
+  // customer's file, side by side, with what each button would print.
+  const sizeCard = (f)=>{
+    const m=String(f.ordered||'').match(/^\s*([\d.]+)\s*x\s*([\d.]+)\s*(\w+)/i);
+    const [ow,oh,u]=m?[m[1],m[2],m[3]]:['?','?',''];
+    const [fw,fh]=f.fileSize||['?','?'];
+    const shape=(w,h)=>{ w=Number(w); h=Number(h); if(!(w>0&&h>0)) return ''; const k=34/Math.max(w,h);
+      return `<span style="display:inline-block;vertical-align:middle;width:${Math.max(6,w*k)}px;height:${Math.max(6,h*k)}px;border:1.5px solid currentColor;border-radius:2px;margin-right:8px"></span>`; };
+    const tall=(w,h)=> Number(w)>Number(h)?'wide':Number(w)<Number(h)?'tall':'square';
+    const row=(lab,html)=>`<div style="margin:7px 0"><div style="color:var(--faint);font-size:11.5px;margin-bottom:2px">${lab}</div><div style="display:flex;align-items:center">${html}</div></div>`;
+    const url=artUrl(f.itemNo);
+    return `<div style="font-size:13px;margin:8px 0;padding:10px;border:1px solid var(--line);border-radius:8px">
+      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}
+      ${row('Customer ordered',`${shape(ow,oh)}<span><b>${esc(ow)} ${esc(u)} wide × ${esc(oh)} ${esc(u)} tall</b> <span style="color:var(--muted)">(${tall(ow,oh)})</span></span>`)}
+      ${row("Customer's file",`${shape(fw,fh)}<span><b>${esc(fw)} px wide × ${esc(fh)} px tall</b> <span style="color:var(--muted)">(${tall(fw,fh)})</span>${url?` · <a href="${esc(url)}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}</span>`)}
+      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);color:var(--muted);font-size:12.5px;line-height:1.55">
+        <b style="color:var(--ink)">Keep as ordered</b> → prints <b>${esc(ow)} ${esc(u)} wide × ${esc(oh)} ${esc(u)} tall</b>; the artwork is stretched out of shape ${esc(f.stretchAsOrdered)}×.<br>
+        <b style="color:var(--ink)">Swap</b> → prints <b>${esc(oh)} ${esc(u)} wide × ${esc(ow)} ${esc(u)} tall</b>; the artwork ${Number(f.stretchIfSwapped)<=1.05?'fits':`is stretched ${esc(f.stretchIfSwapped)}×`}.
+        <span style="color:var(--faint)">(1.00× = fits exactly)</span>
+        ${f.hasPockets?'<br><span style="color:var(--s-hold)">Has pole pockets / stand base — confirm the layout with the customer before swapping.</span>':''}
+      </div></div>`;
+  };
   const sizeBox = swapHold ? `<div class="proofbox">
-    <div class="lab"><b>Size may be swapped.</b> The customer's file is the other way round from what they ordered. Pick which one to print — the order then runs again from the start.</div>
-    ${flagged.map(f=>`<div style="font-size:13px;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
-      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}<br>
-      Ordered <b>${esc(f.ordered)}</b> · file is <b>${esc(f.file)}</b> (${esc(f.fileSize?.[0])}×${esc(f.fileSize?.[1])})
-      ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
-      <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
-      ${f.hasPockets?'<br><span style="color:var(--s-hold)">Has pole pockets / stand base — confirm the layout with the customer before swapping.</span>':''}
-    </div>`).join('')}
+    <div class="lab"><b>Size may be swapped.</b> The customer's file is the other way round from what they ordered — wide where the order is tall, or tall where it is wide. Pick which one to print; the order then runs again from the start.</div>
+    ${flagged.map(sizeCard).join('')}
     <div class="btns">
-      <button class="btn approve" id="szswap" ${pockets?'disabled title="Has pole pockets — confirm with the customer first"':''}>Swap to ${flagged.length===1?esc(flagged[0].swapped):'the file\'s way round'}</button>
-      <button class="btn reject" id="szkeep">Keep as ordered</button>
+      <button class="btn approve" id="szswap" ${pockets?'disabled title="Has pole pockets — confirm with the customer first"':''}>Swap${flagged.length===1?(()=>{const m=String(flagged[0].ordered||'').match(/^\s*([\d.]+)\s*x\s*([\d.]+)\s*(\w+)/i);return m?` — ${esc(m[2])}×${esc(m[1])} ${esc(m[3])} (W×H)`:'';})():''}</button>
+      <button class="btn reject" id="szkeep">Keep as ordered${flagged.length===1?(()=>{const m=String(flagged[0].ordered||'').match(/^\s*([\d.]+)\s*x\s*([\d.]+)\s*(\w+)/i);return m?` — ${esc(m[1])}×${esc(m[2])} ${esc(m[3])} (W×H)`:'';})():''}</button>
     </div>
     <div class="err" id="szErr"></div></div>` : '';
   const swapNote = o.sizeSwap && !swapHold ? `<div class="proofbox">
     <div class="lab"><b>Size may be swapped.</b> This is a proof order, so it was not stopped: the proof shows it as ordered. Check the proof — the customer may want it the other way round.</div>
-    ${(o.sizeSwap.items||[]).map(f=>`<div style="font-size:13px;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:8px">
-      <b>Item ${esc(f.itemNo)}</b> ${esc(f.name||'')}<br>
-      Ordered <b>${esc(f.ordered)}</b> · file is <b>${esc(f.file)}</b> (${esc(f.fileSize?.[0])}×${esc(f.fileSize?.[1])})
-      ${artUrl(f.itemNo)?` · <a href="${esc(artUrl(f.itemNo))}" target="_blank" rel="noopener" style="color:var(--accent)">open file ↗</a>`:''}<br>
-      <span style="color:var(--muted)">As ordered the artwork is stretched ${esc(f.stretchAsOrdered)}×; as ${esc(f.swapped)} it is ${esc(f.stretchIfSwapped)}×.</span>
-    </div>`).join('')}</div>` : '';
+    ${(o.sizeSwap.items||[]).map(sizeCard).join('')}</div>` : '';
   // Special instructions: a person reads them, fixes what they ask for, and
   // sends the order on. It then runs from the top with the changes
   // (src/functions/order-api/instructions.mjs).
@@ -653,6 +673,10 @@ async function searchOrder(){
   }
 }
 $('searchbtn').onclick=searchOrder;
+/** YYYY-MM-DD of a timestamp in the viewer's own time zone. */
+function localDay(iso){ const d=new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+$('datebox').onchange=()=>{ $('dateclear').hidden=!$('datebox').value; loadFolder(); };
+$('dateclear').onclick=()=>{ $('datebox').value=''; $('dateclear').hidden=true; loadFolder(); };
 $('searchbox').addEventListener('keydown',e=>{ if(e.key==='Enter') searchOrder(); });
 
 $('signout').onclick=()=>{ clearSession(); location.reload(); };
