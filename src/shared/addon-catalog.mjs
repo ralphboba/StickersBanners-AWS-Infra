@@ -51,7 +51,12 @@ export function addOnsFrom(products = []) {
     if (!options.length) continue;
     out.push({ productId: p.id, title: p.title, image: p.featuredImage?.url ?? null, options });
   }
-  return out;
+  // A stand sold on its own and also as a size of "Banner Stands" is listed
+  // once, inside the bigger product (Kai, 2026-10-11: "Banner Stands 안에있어").
+  // Same SKU = same item; a product whose every SKU is offered by a product
+  // with more options is left out.
+  return out.filter((p) => !out.some((q) => q !== p && q.options.length > p.options.length
+    && p.options.every((o) => o.sku && q.options.some((x) => x.sku === o.sku))));
 }
 
 let cache = { at: 0, list: null };
