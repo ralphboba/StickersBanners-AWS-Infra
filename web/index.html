@@ -356,7 +356,10 @@ async function loadFolder(){
   }
   $('loading').hidden=true;
   counts[current]=data.count; renderFolders();
-  // Date picker next to Search: only orders created that (local) day.
+  // Date picker next to Search: only orders created that (local) day. It
+  // opens on today (Kai, 2026-10-11) and follows the calendar while it is
+  // still on "today" -- a page left open overnight moves to the new day.
+  if(dateIsToday && $('datebox').value!==localDay(new Date())){ $('datebox').value=localDay(new Date()); $('dateclear').hidden=false; }
   const day=$('datebox').value;
   if(day){ const orders=data.orders.filter(o=>o.createdAt && localDay(o.createdAt)===day);
     data={...data, orders}; }
@@ -675,8 +678,10 @@ async function searchOrder(){
 $('searchbtn').onclick=searchOrder;
 /** YYYY-MM-DD of a timestamp in the viewer's own time zone. */
 function localDay(iso){ const d=new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-$('datebox').onchange=()=>{ $('dateclear').hidden=!$('datebox').value; loadFolder(); };
-$('dateclear').onclick=()=>{ $('datebox').value=''; $('dateclear').hidden=true; loadFolder(); };
+let dateIsToday=true;
+$('datebox').onchange=()=>{ dateIsToday = $('datebox').value===localDay(new Date());
+  $('dateclear').hidden=!$('datebox').value; loadFolder(); };
+$('dateclear').onclick=()=>{ dateIsToday=false; $('datebox').value=''; $('dateclear').hidden=true; loadFolder(); };
 $('searchbox').addEventListener('keydown',e=>{ if(e.key==='Enter') searchOrder(); });
 
 $('signout').onclick=()=>{ clearSession(); location.reload(); };
