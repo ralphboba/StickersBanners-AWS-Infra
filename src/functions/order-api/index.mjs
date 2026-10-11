@@ -8,7 +8,7 @@
 //   POST /orders/{name}/size      { choice: swap|keep } for an order resize held
 //                                 as size-swapped; re-runs it (size-decision.mjs)
 //   POST /orders/{name}/upload    { itemNo, filename, contentType } -> a one-time
-//                                 upload URL for a file the office edited
+//                                 upload URL for the office's final print file
 //   POST /orders/{name}/release   { mode, items } for an order held for special
 //                                 instructions; re-runs it (instructions.mjs)
 //
@@ -176,11 +176,14 @@ export async function handler(event) {
     await ddb.send(new UpdateCommand({
       TableName: JOBS_TABLE,
       Key: { PK: `ORDER#${orderName}`, SK: 'META' },
-      UpdateExpression: 'SET #s = :q, GSI1PK = :g, #i = :items, instructionsRelease = :r, staffRelease = :t REMOVE #h, stage',
+      // manualFiles is read by the containers from this row (jobload.py):
+      // resize only previews, finish sends the attached files as they are.
+      UpdateExpression: 'SET #s = :q, GSI1PK = :g, #i = :items, instructionsRelease = :r, staffRelease = :t, manualFiles = :m REMOVE #h, stage',
       ConditionExpression: '#s = :held AND #h.reason = :why',
       ExpressionAttributeNames: { '#s': 'status', '#i': 'items', '#h': 'hold' },
       ExpressionAttributeValues: {
         ':q': 'in_queue', ':g': 'STATUS#in_queue', ':items': out.items, ':r': out.release, ':t': true,
+        ':m': out.job.manualFiles === true,
         ':held': 'needs_review', ':why': cur.Item.hold.reason,
       },
     }));

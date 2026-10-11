@@ -4,7 +4,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyRelease, uploadKey, uploadPrefix, FINISH_CHOICES, GROMMET_SIDES } from '../../src/functions/order-api/instructions.mjs';
+import { applyRelease, uploadKey, uploadPrefix, uploadedName } from '../../src/functions/order-api/instructions.mjs';
 import { planMove } from '../../src/functions/orderdesk-move/core.mjs';
 import { ORDERDESK_FOLDERS } from '../../src/shared/intake-gate.mjs';
 import { cleanOrder } from '../../src/shared/orderdesk.mjs';
@@ -36,64 +36,41 @@ describe('who can be released', () => {
 });
 
 describe('as is', () => {
-  test('the items are untouched and the job carries the release', () => {
+  test('the items are untouched and the job runs as an ordinary order', () => {
     const r = applyRelease(META, { mode: 'as-is' }, ctx);
     assert.deepEqual(r.items, META.items);
     assert.equal(r.job.staffRelease, true);
+    assert.equal(r.job.manualFiles, undefined);
     assert.equal(r.job.instructionsRelease.mode, 'as-is');
     assert.equal(r.job.testLane, true);
     for (const k of ['PK', 'SK', 'GSI1PK', 'status', 'hold']) assert.equal(k in r.job, false, k);
   });
 });
 
-describe('with changes', () => {
-  test('size, finishing and grommets are applied and recorded', () => {
-    const r = applyRelease(META, { mode: 'changes', items: [
-      { itemNo: 2, width: 4, height: 3, unit: 'ft', grommets: 'corners' },
-    ] }, ctx);
-    const it = r.items[1];
-    assert.equal(it.width, 4); assert.equal(it.height, 3);
-    assert.deepEqual(it.finishingObj.grommets.sides, []);
-    assert.equal(it.orientationChecked, true);
-    assert.deepEqual(r.items[0], META.items[0]);
-    assert.deepEqual(r.release.items, [{ itemNo: 2, size: { from: '3x4 ft', to: '4x3 ft' }, grommets: 'corners' }]);
-  });
+describe('final files attached by the office', () => {
+  const k1 = `${uploadPrefix('S67674')}1/111-final_1.pdf`;
+  const k2 = `${uploadPrefix('S67674')}2/222-final_2.psd`;
 
-  test('pole pocket on top, grommets along the bottom', () => {
-    const r = applyRelease(META, { mode: 'changes', items: [{ itemNo: 1, grommets: 'bottom' }] }, ctx);
-    const obj = r.items[0].finishingObj;
-    assert.equal(obj.specialFinishing, 'PPTO');
-    assert.deepEqual(obj.grommets.sides, ['bottom']);
-    assert.ok(obj.grommets.widthGrommets >= 2);
-  });
-
-  test('a new finishing option is recomputed the way intake would', () => {
-    const r = applyRelease(META, { mode: 'changes', items: [{ itemNo: 2, finishing: 'Pole Pockets (Top and Bottom)' }] }, ctx);
-    assert.equal(r.items[1].finishingObj.specialFinishing, 'PPTB');
-    assert.equal(r.items[1].finishingRaw, 'Pole Pockets (Top and Bottom)');
-    assert.equal(applyRelease(META, { mode: 'changes', items: [{ itemNo: 2, finishing: 'Glitter' }] }, ctx).code, 400);
-  });
-
-  test('an uploaded file replaces the customer file for that item only', () => {
-    const key = `${uploadPrefix('S67674')}1/123-edited.psd`;
-    const r = applyRelease(META, { mode: 'changes', items: [{ itemNo: 1, uploadKey: key }] }, ctx);
-    assert.equal(r.items[0].artworkUrl, `s3://sb-dev-uploads-1/${key}`);
-    assert.equal(r.items[0].artworkExt, 'psd');
+  test('every item takes its file; the job is marked manual', () => {
+    const r = applyRelease(META, { mode: 'final', items: [{ itemNo: 1, uploadKey: k1 }, { itemNo: '2', uploadKey: k2 }] }, ctx);
+    assert.equal(r.job.manualFiles, true);
+    assert.equal(r.items[0].artworkUrl, `s3://sb-dev-uploads-1/${k1}`);
+    assert.equal(r.items[0].artworkExt, 'pdf');
+    assert.equal(r.items[0].finalFileName, 'final_1.pdf');
     assert.equal(r.items[0].customerArtworkUrl, META.items[0].artworkUrl);
-    assert.equal(r.items[1].artworkUrl, META.items[1].artworkUrl);
-    assert.equal(r.release.items[0].file, 'edited.psd');
+    assert.equal(r.items[1].artworkExt, 'psd');
+    // size and finishing stay as ordered -- nothing is resized or marked
+    assert.equal(r.items[1].width, 3);
+    assert.deepEqual(r.items[1].finishingObj, META.items[1].finishingObj);
+    assert.deepEqual(r.release.items, [{ itemNo: 1, file: 'final_1.pdf' }, { itemNo: 2, file: 'final_2.psd' }]);
   });
 
-  test('refuses bad input', () => {
-    const bad = (e) => applyRelease(META, { mode: 'changes', items: [e] }, ctx).code;
-    assert.equal(bad({ itemNo: 2, width: 0, height: 3 }), 400);
-    assert.equal(bad({ itemNo: 2, width: 60, height: 3, unit: 'ft' }), 400); // 720 in
-    assert.equal(bad({ itemNo: 2, unit: 'cm' }), 400);
-    assert.equal(bad({ itemNo: 9, width: 1, height: 1 }), 400);
-    assert.equal(bad({ itemNo: 1, uploadKey: 'staff/S99999/1/1-x.pdf' }), 400); // another order's file
-    assert.equal(bad({ itemNo: 1, uploadKey: `${uploadPrefix('S67674')}2/1-x.pdf` }), 400); // another item's file
-    assert.equal(bad({ itemNo: 2, grommets: 'diagonal' }), 400);
-    assert.equal(applyRelease(META, { mode: 'changes', items: [{ itemNo: 2, width: 3, height: 4, unit: 'ft' }] }, ctx).code, 400); // no change
+  test('refuses a missing, foreign or unprintable file', () => {
+    const go = (items) => applyRelease(META, { mode: 'final', items }, ctx);
+    assert.match(go([{ itemNo: 1, uploadKey: k1 }]).error, /item 2/);
+    assert.equal(go([{ itemNo: 1, uploadKey: 'staff/S99999/1/1-x.pdf' }, { itemNo: 2, uploadKey: k2 }]).code, 400);
+    assert.equal(go([{ itemNo: 1, uploadKey: k2 }, { itemNo: 2, uploadKey: k2 }]).code, 400);
+    assert.equal(go([{ itemNo: 1, uploadKey: `${uploadPrefix('S67674')}1/1-x.docx` }, { itemNo: 2, uploadKey: k2 }]).code, 400);
   });
 });
 
@@ -105,14 +82,7 @@ describe('upload keys', () => {
     assert.match(uploadKey('S67674', 2, 'notes.docx').error, /cannot be printed/);
     assert.match(uploadKey('S67674', 'x', 'a.pdf').error, /itemNo/);
     assert.equal(uploadKey('../S1', 1, '../../a.pdf').key.startsWith('staff/S1/1/'), true);
-  });
-
-  test('every finishing choice maps to a real finish', () => {
-    for (const f of FINISH_CHOICES) {
-      const r = applyRelease(META, { mode: 'changes', items: [{ itemNo: 2, finishing: f, width: 3, height: 5, unit: 'ft' }] }, ctx);
-      assert.ok(!r.error, f);
-    }
-    assert.deepEqual(GROMMET_SIDES.corners, []);
+    assert.equal(uploadedName(k.key), 'My_Banner__final_.psd');
   });
 });
 

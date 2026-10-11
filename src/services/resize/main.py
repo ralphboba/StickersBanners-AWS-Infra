@@ -25,6 +25,7 @@ from converter import check_pdf_pages, get_dimensions, infer_unit, process_image
 from artwork import artwork_extension, corrected_extension
 from fetch import download
 from orientation import orientation_mismatch, source_size, swap_action
+from manual import is_manual, preview_inches
 
 
 class HeldForReview(RuntimeError):
@@ -184,7 +185,10 @@ def main():
             name = f"{item_no}-1"  # legacy naming: {item}-{file}
             fetched.append((item, item_no, fetch_artwork(item, scratch, name)))
 
-        swapped = swapped_items(fetched)
+        # Final files attached by the office: no size check, no resize to the
+        # order -- only a preview for the proof page (manual.py).
+        manual = is_manual(job)
+        swapped = [] if manual else swapped_items(fetched)
         action = swap_action(bool(job.get("needsProof")), swapped)
         if action:
             lines = [f"Item {s['itemNo']}: the file is {s['file']} "
@@ -200,6 +204,13 @@ def main():
             name = f"{item_no}-1"
             output = os.path.join(scratch, f"{name}v1.tif")
             width, height, unit = item_size(item)
+            if manual:
+                ordered = get_dimensions(width, height, unit)
+                width, height = preview_inches(
+                    source_size(local, os.path.splitext(local)[1].lstrip(".")),
+                    (ordered[0] / 72.0, ordered[1] / 72.0))
+                unit = "in"
+                print(f"resize: {name} is a final file; preview only ({width:.1f}x{height:.1f} in)")
             process_image(
                 file_path=local,
                 width=width,

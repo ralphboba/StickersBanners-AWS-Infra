@@ -65,3 +65,23 @@ def final_tif_name(order_name, item_no, finishing_obj):
     if qty > 1:
         desc = f"{desc} qty {qty}".strip()
     return f"{order_name}-{item_no} {desc}.tif"
+
+
+def manual_final_name(order_name, item_no, filename):
+    """Name of a final file the office attached (special instructions).
+
+    "{orderId}-{itemNo} {their file name}", e.g. "S67674-2-1 final.pdf": the
+    order and item lead, as on every other print file, so the facility can find
+    it; the rest is what the office called it, extension included -- the file
+    is sent exactly as attached, so it keeps its own format.
+    """
+    name = str(filename or "").split("/")[-1].strip() or "file"
+    return f"{order_name}-{item_no} {name}"
+
+
+def s3_key_of(url):
+    """The object key of an s3://bucket/key artwork URL, or None."""
+    url = str(url or "")
+    if not url.startswith("s3://"):
+        return None
+    return url[len("s3://"):].split("/", 1)[-1]

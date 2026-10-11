@@ -24,7 +24,7 @@ import boto3
 from jobload import load_job
 from PIL import Image
 
-from finishing_config import build_finishing_obj, final_tif_name
+from finishing_config import build_finishing_obj, final_tif_name, manual_final_name, s3_key_of
 from grommets import GrommetsAdder
 from guides import compute_guides, guides_key
 from pole_pockets import PolePocketsAdder
@@ -37,6 +37,7 @@ ddb = boto3.resource("dynamodb")
 PROCESSED_BUCKET = os.environ["PROCESSED_BUCKET"]
 FINISHED_BUCKET = os.environ["FINISHED_BUCKET"]
 JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
+UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "")
 
 
 def create_proof_file(source_path, proof_path):
@@ -96,11 +97,55 @@ def upload_guides(order_name, item_no, src, finishing_obj):
         print(f"finish: guides skipped for {order_name}/{item_no}: {exc}", file=sys.stderr)
 
 
+def clear_finished(order_name):
+    """Remove what an earlier run left in finished/{order}/ -- transfer sends
+    everything there, and a final file must not travel with old print files."""
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=FINISHED_BUCKET, Prefix=f"{order_name}/"):
+        for obj in page.get("Contents", []):
+            s3.delete_object(Bucket=FINISHED_BUCKET, Key=obj["Key"])
+
+
+def finish_manual(order_name, items):
+    """Final files the office attached (special instructions, instructions.mjs).
+
+    No grommets, no pole pockets, no guides: each file goes to the facility
+    exactly as attached, named "{order}-{item} {their name}". Only the invoice
+    thumbnail is made, from resize's preview.
+    """
+    clear_finished(order_name)
+    produced = []
+    with tempfile.TemporaryDirectory() as scratch:
+        for i, item in enumerate(items, start=1):
+            item_no = f"{item.get('itemNo', i)}-1"
+            preview = os.path.join(scratch, f"{item_no}v1.tif")
+            s3.download_file(PROCESSED_BUCKET, f"{order_name}/{item_no}v1.tif", preview)
+            thumb = os.path.join(scratch, f"{item_no}.jpg")
+            create_proof_file(preview, thumb)
+            s3.upload_file(thumb, FINISHED_BUCKET, f"{order_name}/{item_no}.jpg")
+
+            key = s3_key_of(item.get("artworkUrl"))
+            if not key:
+                raise RuntimeError(f"item {item_no} has no attached final file")
+            final = os.path.join(scratch, f"final-{item_no}")
+            s3.download_file(UPLOADS_BUCKET, key, final)
+            name = manual_final_name(order_name, item_no, item.get("finalFileName") or key)
+            s3.upload_file(final, FINISHED_BUCKET, f"{order_name}/{name}")
+            produced.append(f"{order_name}/{name}")
+            print(f"finish: final file as attached -> s3://{FINISHED_BUCKET}/{order_name}/{name}")
+    return produced
+
+
 def main():
     order_name = os.environ["ORDER_NAME"]
     set_stage(order_name, "finishing")
     job = load_job(order_name)
     items = job.get("items", [])
+    if job.get("manualFiles") is True:
+        produced = finish_manual(order_name, items)
+        record_step(order_name, "done", detail=json.dumps(produced))
+        print(json.dumps({"orderName": order_name, "produced": produced, "manual": True}))
+        return
     grommet = GrommetsAdder()
     pockets = PolePocketsAdder()
     produced = []
