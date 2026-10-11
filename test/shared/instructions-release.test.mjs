@@ -100,7 +100,7 @@ describe('with changes', () => {
 describe('upload keys', () => {
   test('a printable file under the order and item', () => {
     const k = uploadKey('S67674', 2, 'My Banner (final).psd', 5);
-    assert.equal(k.key, 'staff/S67674/2/5-My Banner _final_.psd');
+    assert.equal(k.key, 'staff/S67674/2/5-My_Banner__final_.psd');
     assert.equal(k.ext, 'psd');
     assert.match(uploadKey('S67674', 2, 'notes.docx').error, /cannot be printed/);
     assert.match(uploadKey('S67674', 'x', 'a.pdf').error, /itemNo/);

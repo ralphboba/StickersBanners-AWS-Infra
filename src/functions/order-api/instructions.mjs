@@ -65,7 +65,8 @@ export function uploadKey(orderName, itemNo, filename, now = Date.now()) {
     return { error: `file type .${ext || '?'} cannot be printed (use ${[...VALID_FILE_EXTS].join(', ')})` };
   }
   if (!/^\d+$/.test(String(itemNo ?? ''))) return { error: 'itemNo must be a number' };
-  const safe = base.replace(/[^A-Za-z0-9._ -]/g, '_').slice(-120);
+  // No spaces or odd characters: the key travels through URLs, S3 and FTP.
+  const safe = base.replace(/[^A-Za-z0-9._-]/g, '_').slice(-120);
   return { key: `${uploadPrefix(orderName)}${itemNo}/${now}-${safe}`, ext };
 }
 
