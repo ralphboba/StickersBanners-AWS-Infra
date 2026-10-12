@@ -31,6 +31,8 @@ import re
 import struct
 import sys
 import time
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta, timezone
 
 FACILITIES = ('GA', 'NJ', 'TX', 'NV')
@@ -48,6 +50,8 @@ SETTLE_SECONDS = 10 * 60
 # Our run should be done well inside this; after it, "no files yet" is a finding.
 PENDING_GRACE_SECONDS = 3 * 3600
 KEEP_STATE_DAYS = 14
+# Bump when verdict rules change, so already-judged orders are judged again.
+STATE_VERSION = 2
 STATE_KEY = os.environ.get('COMPARE_STATE_KEY', '_linh-compare/auto/state.json')
 
 ALERT_VERDICTS = ('diff', 'failed', 'missing')
@@ -59,6 +63,7 @@ VERDICT_KO = {
     'held': '보류 (사람이 처리)',
     'manual': '사무실이 만든 파일',
     'pending': '처리 중',
+    'office': '오피스가 바꾼 주문',
 }
 # Kinds of difference, in the order the email lists them (worst first).
 KIND_KO = {
@@ -136,6 +141,101 @@ def folder_signature(files):
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+# OrderDesk folders that say which facility an order went to: the production
+# folder, then Awaiting Shipment / Awaiting Pickup (src/shared/orderdesk-folders.mjs).
+FACILITY_FOLDERS = {
+    '73068': 'GA', '3571': 'GA', '31301': 'GA',
+    '73069': 'NJ', '43256': 'NJ', '52437': 'NJ',
+    '73070': 'TX', '43257': 'TX', '52438': 'TX',
+    '674352': 'NV', '674353': 'NV', '674908': 'NV',
+    '42928': 'CA', '79040': 'CA', '82463': 'CA',
+}
+# Differences an office edit can explain. A file NAME that differs only in
+# spacing cannot: that is always ours, whatever the office did.
+OFFICE_EXPLAINS = {'content', 'file', 'facility', 'failed', 'late', 'invoice'}
+
+
+def _norm(v):
+    return re.sub(r'\s+', ' ', str(v)).strip().lower()
+
+
+def _has_number(blob, value):
+    return re.search(rf'(?<![\d.]){re.escape(str(value).strip())}(?![\d.])', blob) is not None
+
+
+def office_changes(meta, od):
+    """What the office changed in OrderDesk after we took the order in.
+
+    meta is our record from intake (cleanOrder of the order as it was then); od
+    is the order as OrderDesk has it now. Offices edit sizes, finishing and
+    files, attach notes, and move orders to another facility by hand (Kai,
+    2026-10-12) -- Linh's program then sends the edited order, ours still has
+    the original. Returns a list of Korean reasons, empty when nothing changed.
+    """
+    if not meta or not od:
+        return []
+    out = []
+    ours = meta.get('items') or []
+    theirs = od.get('order_items') or []
+    if len(ours) != len(theirs):
+        out.append(f'아이템 수가 바뀜 ({len(ours)}개 → {len(theirs)}개)')
+    for i, (a, b) in enumerate(zip(ours, theirs), start=1):
+        vals = [str(v) for v in (b.get('variation_list') or {}).values()]
+        blob = ' | '.join(_norm(v) for v in vals)
+        what = []
+        vl = b.get('variation_list') or {}
+        for field, key, label in (('rawWidth', 'width', '가로'), ('rawHeight', 'height', '세로')):
+            v = a.get(field)
+            if v in (None, ''):
+                continue
+            # WIDTH/HEIGHT fields compare one to one; a combined "Size" field
+            # only has to still contain the number.
+            own = [x for k, x in vl.items() if k.strip().lower() == key]
+            if own:
+                if not _has_number(_norm(own[0]), v):
+                    what.append(label)
+            elif not _has_number(blob, v):
+                what.append(label)
+        # Only where the item HAS a finishing field: products without one are
+        # stored as "not available" (cleanOrder's default).
+        fin_now = [x for k, x in vl.items() if 'finish' in k.lower()]
+        if fin_now and _norm(a.get('finishingRaw') or '') != _norm(fin_now[0]):
+            what.append('마감')
+        try:
+            if a.get('quantity') is not None and float(a['quantity']) != float(b.get('quantity') or 0):
+                what.append('수량')
+        except (TypeError, ValueError):
+            pass
+        # Ours is stored percent-encoded ("8ft%20banners.png"), OrderDesk's is not.
+        url = a.get('customerArtworkUrl') or a.get('artworkUrl')
+        if isinstance(url, str) and url.startswith('http') \
+                and urllib.parse.unquote(url) not in {urllib.parse.unquote(v) for v in vals}:
+            what.append('파일')
+        if what:
+            now_desc = ', '.join(f'{k} {v}' for k, v in (b.get('variation_list') or {}).items()
+                                 if not str(v).startswith('http'))[:120]
+            out.append(f'아이템 {i}: {"/".join(what)} 바뀜 (지금: {now_desc})')
+    for n in od.get('order_notes') or []:
+        out.append(f'오피스 메모 {str(n.get("date_added", ""))[:16]}: {str(n.get("content", ""))[:100]}')
+    our_fac = (meta.get('routing') or {}).get('facility')
+    od_fac = FACILITY_FOLDERS.get(str(od.get('folder_id'))) or FACILITY_FOLDERS.get(str(od.get('previous_folder_id')))
+    if our_fac and od_fac and od_fac != our_fac:
+        out.append(f'OrderDesk에서 {od_fac} 폴더로 옮겨짐 (주소 기준은 {our_fac})')
+    return out
+
+
+def apply_office(res, changes):
+    """Re-label a difference the office explains as 'office', not ours."""
+    if not changes or res['verdict'] not in ('diff', 'failed'):
+        return res
+    res['office'] = changes
+    if all(p['k'] in OFFICE_EXPLAINS for p in res['problems']):
+        res['verdict'] = 'office'
+    else:
+        res['notes'].append('오피스 수정도 있음: ' + ' / '.join(changes))
+    return res
+
+
 def compare_order(order, facility, linh_files, meta, ours_files, sample, now, folder_mtime):
     """Verdict for one order.
 
@@ -152,7 +252,7 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
 
     if not meta or meta.get('mirror'):
         res['verdict'] = 'missing'
-        problem('missing', '우리 시스템에 이 주문이 없어요 (인테이크에서 못 가져옴)')
+        problem('missing', '우리 폴링이 QTS에서 이 주문을 못 봤어요 (린 프로그램이 먼저 옮겼을 수 있음)')
         return res
 
     status = meta.get('status') or ''
@@ -295,7 +395,7 @@ def format_summary(entries, day):
     bad = sum(counts.get(v, 0) for v in ALERT_VERDICTS)
     subject = f'[린 비교] {day} 하루 요약 — {total}건 중 같음 {same}, 다름 {bad}'
     lines = [f'지난 24시간 동안 린 프로그램이 FTP에 보낸 주문 {total}건을 비교했어요.', '']
-    for v in ('match', 'diff', 'failed', 'missing', 'held', 'manual', 'pending'):
+    for v in ('match', 'diff', 'failed', 'missing', 'office', 'held', 'manual', 'pending'):
         if counts.get(v):
             lines.append(f'• {VERDICT_KO[v]}: {counts[v]}건')
     flagged = [e for e in entries if e['verdict'] in ALERT_VERDICTS]
@@ -305,6 +405,11 @@ def format_summary(entries, day):
             group = [e['order'] for e in flagged if kind in _kinds(e)]
             if group:
                 lines.append(f'• {title} {len(group)}건: {", ".join(group[:20])}' + (' …' if len(group) > 20 else ''))
+    office = [e for e in entries if e['verdict'] == 'office']
+    if office:
+        lines += ['', '오피스가 바꾼 주문 (우리 문제 아님, 확인용):']
+        for e in office[:30]:
+            lines.append(f"• {e['order']} ({e['facility']}): {' / '.join(e.get('office') or [])[:200]}")
     return subject[:99], '\n'.join(lines)
 
 
@@ -419,13 +524,37 @@ def main():
     ddb = boto3.client('dynamodb')
     sns = boto3.client('sns')
 
-    def secret(key):
-        return ssm.get_parameter(Name=f'/sb/{sb_env}/ftp/{key}', WithDecryption=True)['Parameter']['Value']
+    def secret(key, group='ftp'):
+        return ssm.get_parameter(Name=f'/sb/{sb_env}/{group}/{key}', WithDecryption=True)['Parameter']['Value']
+
+    od_creds = {}
+
+    def od_order(meta):
+        """The order as OrderDesk has it now (one GET, read-only), or None."""
+        od_id = (meta.get('source') or {}).get('orderDeskId')
+        if not od_id:
+            return None
+        try:
+            if not od_creds:
+                od_creds['store'] = secret('store-id', 'orderdesk')
+                od_creds['key'] = secret('api-key', 'orderdesk')
+            req = urllib.request.Request(
+                f'https://app.orderdesk.me/api/v2/orders/{od_id}',
+                headers={'ORDERDESK-STORE-ID': od_creds['store'], 'ORDERDESK-API-KEY': od_creds['key']})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read()).get('order')
+        except Exception as err:  # 429 included: Linh's bot shares the limit
+            print(f'compare: OrderDesk {od_id}: {err}', file=sys.stderr)
+            return None
 
     try:
         state = json.loads(s3.get_object(Bucket=state_bucket, Key=STATE_KEY)['Body'].read())
     except Exception:
         state = {}
+    if state.get('version') != STATE_VERSION:
+        # The rules changed: judge every order again (nothing was emailed yet
+        # under the old ones, or it would not matter).
+        state = {'version': STATE_VERSION, 'lastSummary': state.get('lastSummary')}
     orders_state = state.setdefault('orders', {})
 
     # Nothing counts as sent until Kai has confirmed the email subscription:
@@ -456,7 +585,7 @@ def main():
             sig = folder_signature(linh_files)
             prev = orders_state.get(order)
             if prev and prev.get('sig') == sig and prev.get('verdict') not in ('pending',) \
-                    and prev.get('ourAt') is not None:
+                    and prev.get('ourAt') is not None and not prev.get('recheck'):
                 continue
 
             item = ddb.get_item(TableName=table, Key={'PK': {'S': f'ORDER#{order}'}, 'SK': {'S': 'META'}}).get('Item')
@@ -482,19 +611,27 @@ def main():
                     return f'error:{side}'
 
             res = compare_order(order, fac, linh_files, meta, ours_files, sample, now, mtime)
+            recheck = False
+            if res['verdict'] in ('diff', 'failed') and meta:
+                od = od_order(meta)
+                if od is None:
+                    recheck = True  # OrderDesk unreachable: decide next hour, don't alert yet
+                else:
+                    apply_office(res, office_changes(meta, od))
             checked += 1
             orders_state[order] = {
                 'verdict': res['verdict'], 'facility': fac, 'problems': res['problems'],
                 'notes': res['notes'], 'source': res.get('source'), 'sig': sig,
                 'at': int(now), 'linhAt': int(mtime), 'ourAt': int(now) if ours_files else None,
+                'office': res.get('office'), 'recheck': recheck,
                 'alerted': not needs_alert(prev, res) and bool(prev and prev.get('alerted'))}
             print(json.dumps({'order': order, 'facility': fac, 'verdict': res['verdict'],
-                              'problems': res['problems']}, ensure_ascii=False))
+                              'problems': res['problems'], 'office': res.get('office')}, ensure_ascii=False))
 
     # Every finding not yet sent -- this run's, and any found while the email
     # subscription was still unconfirmed.
     alerts = [dict(v, order=k) for k, v in orders_state.items()
-              if v['verdict'] in ALERT_VERDICTS and not v.get('alerted')]
+              if v['verdict'] in ALERT_VERDICTS and not v.get('alerted') and not v.get('recheck')]
     if alerts and deliverable:
         subject, body = format_alert(alerts)
         sns.publish(TopicArn=topic, Subject=subject, Message=body)

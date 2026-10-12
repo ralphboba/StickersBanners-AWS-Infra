@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(__file__), '..', '..', 'src', 'services', 'ftp'))
 
 from linh_compare import (  # noqa: E402
-    compare_order, folder_signature, format_alert, format_summary, is_invoice,
-    needs_alert, norm_name, tiff_info,
+    apply_office, compare_order, folder_signature, format_alert, format_summary,
+    is_invoice, needs_alert, norm_name, office_changes, tiff_info,
 )
 
 NOW = 1_800_000_000
@@ -195,6 +195,62 @@ class Alerts(unittest.TestCase):
         subject, body = format_summary(entries, '10/12')
         self.assertIn('3건 중 같음 1, 다름 1', subject)
         self.assertIn('파일 이름만 다름 1건: S1', body)
+
+
+def od(width='8', height='8', finishing='Pole Pockets (Top Only)', qty=1, url='https://x/964.jpg',
+       folder='665612', prev='665612', notes=None):
+    return {'folder_id': folder, 'previous_folder_id': prev, 'order_notes': notes or [],
+            'order_items': [{'quantity': qty, 'variation_list': {
+                'SKU': 'SKUCSR', 'WIDTH': width, 'HEIGHT': height,
+                'FINISHING OPTIONS': finishing, 'UPLOADED FILE': url}}]}
+
+
+class Office(unittest.TestCase):
+    """Orders the office changed by hand after intake (Kai, 2026-10-12)."""
+
+    ours = {'routing': {'facility': 'GA'}, 'items': [{
+        'rawWidth': '8', 'rawHeight': '8', 'finishingRaw': 'Pole Pockets (Top Only)',
+        'quantity': 1, 'artworkUrl': 'https://x/964.jpg'}]}
+
+    def test_unchanged_order(self):
+        self.assertEqual(office_changes(self.ours, od()), [])
+
+    def test_encoded_url_and_no_finishing_field_are_not_changes(self):
+        ours = {'items': [{'rawWidth': '2', 'rawHeight': '3', 'finishingRaw': 'not available', 'quantity': 1,
+                           'artworkUrl': 'https://x/2026/8ft%20banners%20(2).png'}]}
+        now = {'order_items': [{'quantity': 1, 'variation_list': {
+            'SKU': 'SKUAB', 'WIDTH': '2', 'HEIGHT': '3', 'OPTION': 'Regular Vinyl (Matte)',
+            'UPLOADED FILE': 'https://x/2026/8ft banners (2).png'}}]}
+        self.assertEqual(office_changes(ours, now), [])
+
+    def test_size_changed_like_s67842(self):
+        out = office_changes(self.ours, od(width='5'))
+        self.assertEqual(len(out), 1)
+        self.assertIn('가로 바뀜', out[0])
+
+    def test_finishing_quantity_and_file(self):
+        out = office_changes(self.ours, od(finishing='PPTB', qty=2, url='https://x/new.pdf'))
+        self.assertIn('마감/수량/파일 바뀜', out[0])
+
+    def test_a_note_means_the_office_handled_it(self):
+        out = office_changes(self.ours, od(notes=[{'date_added': '2026-10-10 13:01:42', 'content': 'No file'}]))
+        self.assertIn('No file', out[0])
+
+    def test_moved_to_another_facility_folder(self):
+        out = office_changes(self.ours, od(folder='73070'))
+        self.assertEqual(out, ['OrderDesk에서 TX 폴더로 옮겨짐 (주소 기준은 GA)'])
+        # Completed: the facility it came from still tells.
+        self.assertEqual(office_changes(self.ours, od(folder='3516', prev='43256'))[0][:22], 'OrderDesk에서 NJ 폴더로 옮겨짐')
+        self.assertEqual(office_changes(self.ours, od(folder='73068')), [])
+
+    def test_office_explains_content_but_never_a_spacing_bug(self):
+        content = {'verdict': 'diff', 'notes': [], 'problems': [{'k': 'content', 't': 'x'}]}
+        self.assertEqual(apply_office(content, ['아이템 1: 가로 바뀜'])['verdict'], 'office')
+        name = {'verdict': 'diff', 'notes': [], 'problems': [{'k': 'name', 't': 'x'}, {'k': 'content', 't': 'y'}]}
+        out = apply_office(name, ['아이템 1: 가로 바뀜'])
+        self.assertEqual(out['verdict'], 'diff')
+        self.assertIn('오피스 수정도 있음', out['notes'][0])
+        self.assertFalse(needs_alert(None, {'verdict': 'office', 'problems': []}))
 
 
 if __name__ == '__main__':
