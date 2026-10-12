@@ -586,7 +586,7 @@ export function cleanOrder(order) {
       unit,
       // A sticker we make (sku-config STICKERS): its shape and print resolution.
       // Resize prints it at width x height inches x dpi, cut to the shape.
-      ...(stickerSpec(sku) ? { sticker: { shape: stickerSpec(sku).shape, dpi: stickerDpi(width, height) } } : {}),
+      ...(stickerSpec(sku, it.name) ? { sticker: { shape: stickerSpec(sku, it.name).shape, dpi: stickerDpi(width, height) } } : {}),
       finishingRaw: finish,
       finishingObj,
       artworkUrl: art.urls[0],

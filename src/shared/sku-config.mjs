@@ -280,9 +280,18 @@ export const STICKERS = {
   SKUVS: { shape: 'rect', size: null },          // Bumper Stickers
 };
 
-/** The sticker this SKU is, or null for anything that is not one we make. */
-export function stickerSpec(sku) {
-  return STICKERS[String(sku ?? '')] || null;
+/**
+ * The sticker this SKU is, or null for anything that is not one we make.
+ * A round sticker can also come in on the bumper SKU, at the order's size:
+ * S65535's "ROUND STICKERS" is SKUVS 5x5 and the office cut it round. The
+ * product name says what it is (Kai, 2026-10-12: "round sticker인데").
+ */
+export function stickerSpec(sku, name) {
+  const spec = STICKERS[String(sku ?? '')] || null;
+  if (spec?.shape === 'rect' && /\b(round|circle)\b/i.test(String(name ?? ''))) {
+    return { shape: 'circle', size: null };
+  }
+  return spec;
 }
 
 /**

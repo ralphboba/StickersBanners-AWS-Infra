@@ -38,6 +38,17 @@ test('bumper stickers take the ordered size, in inches, with no banner remaps', 
   assert.equal(b8.sticker.shape, 'rect');
 });
 
+test('a round sticker on the bumper SKU is cut round, at the ordered size', () => {
+  // S65535: "ROUND STICKERS", SKU SKUVS, 5 x 5 -- the office cut it round.
+  const round = order('ROUND STICKERS', 'SKUVS', { WIDTH: '5', HEIGHT: '5' }).items[0];
+  assert.deepEqual([round.width, round.height, round.unit], [5, 5, 'in']);
+  assert.deepEqual(round.sticker, { shape: 'circle', dpi: 650 });
+  // A bumper sticker stays a bumper sticker.
+  assert.equal(order('Bumper Stickers', 'SKUVS', { WIDTH: '5', HEIGHT: '5' }).items[0].sticker.shape, 'rect');
+  assert.equal(stickerSpec('SKUVS', 'Round Stickers').shape, 'circle');
+  assert.equal(stickerSpec('SKU-471', 'Round Stickers').shape, 'oval'); // only the bumper SKU follows the name
+});
+
 test('resolution: smaller than 5x5 is 1000, anything else 650', () => {
   assert.equal(stickerDpi(2, 2), 1000);
   assert.equal(stickerDpi(4.9, 4.9), 1000);

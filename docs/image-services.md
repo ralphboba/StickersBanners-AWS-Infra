@@ -118,6 +118,7 @@ does any order with a kiss-cut line in it).
 | Round | SKU-466/467/469/470 (2/3/4/5"), SKU-468 (size from order) | from the SKU | circle |
 | Oval | SKU-471..479 (3x2 … 8x4") | from the SKU | oval |
 | Bumper | SKUVS | the order's W x H, in **inches** | rectangle |
+| Round on the bumper SKU | SKUVS named "Round Stickers" (S65535) | the order's W x H, in inches | circle |
 
 - **Resolution**: smaller than 5x5 in (fits inside 5x5 and is not 5x5) →
   1000 dpi, anything else 650 (`stickerDpi`). Banners, adhesive and see-thru
