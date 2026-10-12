@@ -70,9 +70,13 @@ authority: **Linh** (legacy author).
     `--context addOnOrders=S64262` (those orders only, while testing) or
     `--context addOns=live` (every order). They use the same write switches
     as the shipping change (`docs/shipping-change-spec.md` §8).
-    **LIVE for every order since 2026-10-11** (Kai deployed `addOns=live`):
-    every `sb-dev-compute` deploy must carry `--context addOns=live`, or the
-    add-ons switch off. Deploy from a checkout that also has the working
+    **LIVE for every order since 2026-10-11** (Kai deployed `addOns=live`).
+  - **Default ON in dev (Kai, 2026-10-12)** — shipping change and add-ons stay
+    live when a dev deploy does not mention them (`lib/config/live-switches.ts`);
+    only `--context shippingChange=off` / `--context addOns=off` turn them off,
+    and `testOrders` / `addOnOrders` still narrow to named orders. prod: off
+    unless named. (A deploy from the other branch without the contexts had
+    switched add-ons off for every customer.) Deploy from a checkout that also has the working
     branch (`claude/stickerbanners-aws-cdk-fw49s2`) merged — a compute deploy
     without it removes `sb-dev-orderdesk-move` and the test lane (2026-10-09).
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a

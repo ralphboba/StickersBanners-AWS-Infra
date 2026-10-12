@@ -191,7 +191,9 @@ Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않�
 - 배포할 때 정한다. 기본은 **꺼짐**이다.
   - `--context addOnOrders=S64262`: 그 주문(쉼표로 여러 개 가능)에서만 보이고 받는다.
   - `--context addOns=live`: 모든 주문에서 보이고 받는다. **2026-10-11부터 이 상태(라이브).**
-    이후 `sb-dev-compute` 배포에는 항상 이 옵션을 넣는다 — 빠지면 add-on이 꺼진다.
+  - **dev는 기본이 켜짐 (Kai, 2026-10-12)**: 배포 명령에 옵션이 없어도 배송 변경과 add-on은 켜진 채로 배포된다
+    (`lib/config/live-switches.ts`). 끄려면 `--context shippingChange=off` / `--context addOns=off`.
+    (다른 브랜치에서 옵션 없이 배포해 add-on이 모든 고객에게서 꺼졌던 일 때문.) prod는 이름을 주지 않으면 꺼짐.
 - 다른 주문에서는 GET 목록이 비어 있고, quote와 request를 보내도 거절된다.
 
 ### 흐름
