@@ -46,4 +46,10 @@ export interface EnvironmentConfig {
    * keeps holding real orders. Off unless set; never set for prod.
    */
   readonly testLaneEnabled?: boolean;
+  /**
+   * Hourly read-only check of Linh's facility FTP folders against our finished
+   * files (src/services/ftp/linh_compare.py), emailed to Kai. Only useful while
+   * Linh's program is the one sending files; off unless set.
+   */
+  readonly linhCompareEnabled?: boolean;
 }

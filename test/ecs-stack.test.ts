@@ -5,7 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import { getConfig } from '../lib/config/environments';
 import { EcsStack } from '../lib/stacks/ecs-stack';
 
-function synth(envName: 'dev' | 'prod' = 'dev') {
+function synth(envName: 'dev' | 'prod' = 'dev', withSg = false) {
   const app = new cdk.App();
   const config = getConfig(envName);
   const deps = new cdk.Stack(app, 'deps', {
@@ -21,6 +21,7 @@ function synth(envName: 'dev' | 'prod' = 'dev') {
     env: { account: '123456789012', region: config.region },
     vpc,
     taskRole,
+    ...(withSg ? { securityGroup: new ec2.SecurityGroup(deps, 'Sg', { vpc }) } : {}),
   });
   return Template.fromStack(stack);
 }
@@ -58,5 +59,25 @@ describe('EcsStack', () => {
   test('prod retains ECR repos; dev destroys them', () => {
     synth('prod').allResources('AWS::ECR::Repository', { DeletionPolicy: 'Retain' });
     synth('dev').allResources('AWS::ECR::Repository', { DeletionPolicy: 'Delete' });
+  });
+
+  test('Linh comparison: dev only, hourly, read-only script, email to Kai', () => {
+    const dev = synth('dev', true);
+    dev.resourceCountIs('AWS::Scheduler::Schedule', 1);
+    dev.hasResourceProperties('AWS::Scheduler::Schedule', { ScheduleExpression: 'rate(1 hour)' });
+    dev.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      Family: 'sb-dev-linh-compare',
+      ContainerDefinitions: [{ Command: ['python', 'linh_compare.py'] }],
+    });
+    dev.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'email', Endpoint: 'kai@stickersbanners.com' });
+    // The compare task gets no PRODUCTION_TRANSFER / FTP_BASE_PATH: it never runs the transfer code.
+    const td = Object.values(dev.findResources('AWS::ECS::TaskDefinition'))
+      .find((r) => r.Properties.Family === 'sb-dev-linh-compare')!;
+    const env = td.Properties.ContainerDefinitions[0].Environment.map((e: { Name: string }) => e.Name);
+    expect(env).not.toContain('PRODUCTION_TRANSFER');
+
+    const prod = synth('prod', true);
+    prod.resourceCountIs('AWS::Scheduler::Schedule', 0);
+    prod.resourceCountIs('AWS::SNS::Topic', 0);
   });
 });

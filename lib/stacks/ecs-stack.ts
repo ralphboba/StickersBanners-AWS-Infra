@@ -6,6 +6,10 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as targets from 'aws-cdk-lib/aws-scheduler-targets';
 import { EnvironmentConfig } from '../config/types';
 import { trialConfig } from '../config/trial';
 
@@ -13,6 +17,10 @@ export interface EcsStackProps extends cdk.StackProps {
   readonly config: EnvironmentConfig;
   readonly vpc: ec2.IVpc;
   readonly taskRole: iam.IRole;
+  /** Security group the scheduled Linh comparison runs in (same as the pipeline's tasks). */
+  readonly securityGroup?: ec2.ISecurityGroup;
+  /** Who gets the Linh comparison email. */
+  readonly compareEmail?: string;
 }
 
 interface ServiceSpec {
@@ -46,6 +54,7 @@ export class EcsStack extends cdk.Stack {
     super(scope, id, props);
 
     const { config, vpc, taskRole } = props;
+    const logGroups: Record<string, logs.LogGroup> = {};
     // Held by default — see lib/config/trial.ts for why arming is a deploy-time
     // flag rather than an edit to the literal below.
     const trial = trialConfig(this);
@@ -88,6 +97,7 @@ export class EcsStack extends cdk.Stack {
         retention: logs.RetentionDays.ONE_WEEK,
         removalPolicy: isProd ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY,
       });
+      logGroups[spec.key] = logGroup;
 
       const taskDef = new ecs.FargateTaskDefinition(this, `${spec.id}Task`, {
         family: `${config.prefix}-${spec.key}`,
@@ -139,6 +149,64 @@ export class EcsStack extends cdk.Stack {
         value: repo.repositoryUri,
         description: spec.purpose,
         exportName: `${config.prefix}-${spec.key}-repo-uri`,
+      });
+    }
+
+    // Linh comparison (Kai, 2026-10-12): every hour, read what Linh's program
+    // put in the facility FTP folders, compare it with our finished files and
+    // email Kai the differences. Read-only on the FTP (ftp_inspect's guard),
+    // the ftp image with a different command. Emails go to an SNS topic only
+    // Kai is subscribed to; the subscription is confirmed once from his inbox.
+    if (config.linhCompareEnabled && props.securityGroup) {
+      const topic = new sns.Topic(this, 'LinhCompareTopic', {
+        topicName: `${config.prefix}-linh-compare`,
+        displayName: 'SB Linh compare',
+      });
+      topic.addSubscription(new subs.EmailSubscription(props.compareEmail ?? 'kai@stickersbanners.com'));
+
+      const compareTask = new ecs.FargateTaskDefinition(this, 'LinhCompareTask', {
+        family: `${config.prefix}-linh-compare`,
+        cpu: 512,
+        memoryLimitMiB: 1024,
+        taskRole,
+      });
+      compareTask.addContainer('LinhCompareContainer', {
+        containerName: 'compare',
+        image: ecs.ContainerImage.fromEcrRepository(this.repositories.ftp, 'latest'),
+        command: ['python', 'linh_compare.py'],
+        logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'compare', logGroup: logGroups.ftp }),
+        environment: {
+          SB_ENV: config.env,
+          PROCESSED_BUCKET: `${config.prefix}-processed-${this.account}`,
+          FINISHED_BUCKET: `${config.prefix}-finished-${this.account}`,
+          JOBS_TABLE: `${config.prefix}-jobs`,
+          COMPARE_TOPIC_ARN: topic.topicArn,
+        },
+      });
+      // A policy in this stack, attached to the shared role: granting through
+      // the topic would put the statement in the IAM stack and make a cycle.
+      new iam.Policy(this, 'LinhComparePublish', {
+        roles: [taskRole],
+        statements: [new iam.PolicyStatement({
+          actions: ['sns:Publish', 'sns:ListSubscriptionsByTopic'],
+          resources: [topic.topicArn],
+        })],
+      });
+
+      new scheduler.Schedule(this, 'LinhCompareHourly', {
+        scheduleName: `${config.prefix}-linh-compare`,
+        description: "Hourly: Linh's FTP folders vs our finished files, differences emailed to Kai",
+        schedule: scheduler.ScheduleExpression.rate(cdk.Duration.hours(1)),
+        target: new targets.EcsRunFargateTask(this.cluster, {
+          taskDefinition: compareTask,
+          // Same no-NAT layout as the pipeline's tasks (workflow-stack.ts).
+          vpcSubnets: {
+            subnetType: config.network.natGateways > 0 ? ec2.SubnetType.PRIVATE_WITH_EGRESS : ec2.SubnetType.PUBLIC,
+          },
+          securityGroups: [props.securityGroup],
+          assignPublicIp: config.network.natGateways === 0,
+          retryAttempts: 0,
+        }),
       });
     }
 

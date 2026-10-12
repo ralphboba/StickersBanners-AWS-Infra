@@ -172,6 +172,8 @@ const ecsStack = new EcsStack(app, `${config.prefix}-ecs`, {
   config,
   vpc: networkStack.vpc,
   taskRole: iamStack.ecsTaskRole,
+  securityGroup: networkStack.ecsSecurityGroup,
+  compareEmail: 'kai@stickersbanners.com',
   description: `StickersBanners ECS Fargate compute (${config.env})`,
 });
 

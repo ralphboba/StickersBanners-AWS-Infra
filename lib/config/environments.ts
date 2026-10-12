@@ -38,6 +38,9 @@ const environments: Record<DeployEnv, EnvironmentConfig> = {
     // Kai, 2026-10-07: end-to-end testing with his own test orders, moved by
     // hand to Kai-TEST-QTS, while Linh's program keeps running.
     testLaneEnabled: true,
+    // Kai, 2026-10-12: compare our files with what Linh's program put on the
+    // FTP, and email him the differences.
+    linhCompareEnabled: true,
   },
   prod: {
     env: 'prod',
