@@ -20,7 +20,7 @@ import { routeOrder } from './routing.mjs';
 
 // All SKU-based rules live in one place — see src/shared/sku-config.mjs.
 import {
-  isInchSku, isNoFinishSku, isKnownSku, isHardwareSku, fixedDimensions,
+  isInchSku, isNoFinishSku, isKnownSku, isHardwareSku, fixedDimensions, stickerSpec, stickerDpi,
 } from './sku-config.mjs';
 
 /** @typedef {'shopify'|'qts'} Variant */
@@ -205,6 +205,15 @@ export function resolveDimensions(sku, productName, rawWidth, rawHeight, variant
   // Not a legacy rule — these products postdate the legacy program.
   const fixed = fixedDimensions(sku);
   if (fixed) return { ...fixed };
+
+  // Stickers are inches, always: a 2" round arrives as "2 x 2" and would read
+  // as 2 FEET, and the 4x4 / 8x8 remaps below would turn a 4x4 bumper sticker
+  // into 46x46. Round and oval sizes come from the SKU (sku-config STICKERS).
+  const sticker = stickerSpec(sku);
+  if (sticker) {
+    const [w, h] = sticker.size ?? [parseFloat(rawWidth), parseFloat(rawHeight)];
+    return { width: w, height: h, unit: 'in' };
+  }
 
   // The variation key named the unit (readDimensions). Then every rule below is
   // the wrong tool: isInchSku is a guess at the unit, and the 8x8 / 4x4 remaps
@@ -492,10 +501,14 @@ function collectArtwork(vl, metadata, variant) {
 
 // --- per-order flags -------------------------------------------------------
 
-/** Legacy checkSpecialProduct: products the bot never auto-processes. */
-const isSpecialProduct = (name) => {
+/**
+ * Legacy checkSpecialProduct: products the bot never auto-processes. Except the
+ * stickers we make ourselves (sku-config STICKERS, Kai 2026-10-12) -- Custom
+ * Shape Kiss-Cut and any other sticker still goes to a person.
+ */
+const isSpecialProduct = (name, sku) => {
   const n = String(name ?? '').toLowerCase();
-  return n.includes('pop up display') || n.includes('sticker');
+  return n.includes('pop up display') || (n.includes('sticker') && !stickerSpec(sku));
 };
 
 /** Legacy checkSeeThru. */
@@ -571,6 +584,9 @@ export function cleanOrder(order) {
       rawWidth,
       rawHeight,
       unit,
+      // A sticker we make (sku-config STICKERS): its shape and print resolution.
+      // Resize prints it at width x height inches x dpi, cut to the shape.
+      ...(stickerSpec(sku) ? { sticker: { shape: stickerSpec(sku).shape, dpi: stickerDpi(width, height) } } : {}),
       finishingRaw: finish,
       finishingObj,
       artworkUrl: art.urls[0],
@@ -580,7 +596,7 @@ export function cleanOrder(order) {
       // whether the pipeline may touch this order at all.
       isMissingFile: art.isMissingFile,
       hasMultipleFiles: art.hasMultipleFiles,
-      hasSpecialProduct: isSpecialProduct(it.name),
+      hasSpecialProduct: isSpecialProduct(it.name, sku),
       hasSeeThru: isSeeThru(it.name),
       hasInstructions: hasInstructionsText(instructions),
       // The text itself, for the person who handles the hold on the dashboard
@@ -617,9 +633,15 @@ export function cleanOrder(order) {
 
   // See-thru decals are forced to NV and blocked from CA pickup (legacy
   // determineProduction / getState), so routing needs the flag and the method.
-  const routing = routeOrder(shipping, {
+  const routed = routeOrder(shipping, {
     seeThru: printItems.some((it) => it.hasSeeThru),
   });
+  // Stickers are printed and cut in GA, wherever the order ships (the GA
+  // office makes them today; OrderDesk's "Sticker back to GA" rule moves them
+  // there from the other facilities). The whole order goes with them.
+  const routing = printItems.some((it) => it.sticker)
+    ? { ...routed, facility: 'GA', transport: 'FTP', pickupStatus: 'pickup_ga', reason: 'sticker: printed in GA' }
+    : routed;
   const orderName = String(order.source_id ?? order.id ?? '');
   const any = (k) => printItems.some((it) => it[k]);
 

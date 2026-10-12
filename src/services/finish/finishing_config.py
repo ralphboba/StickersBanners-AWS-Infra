@@ -73,6 +73,19 @@ def final_tif_name(order_name, item_no, finishing_obj):
     return f"{order_name}-{item_no} {desc}.tif"
 
 
+def sticker_final_name(order_name, item_no, quantity, numbered):
+    """A sticker's print file, named the way the GA office names them by hand.
+
+    "S67827 qty 25.tif" for an order with one print item; "S68045 - (1) qty
+    25.tif" when there are more, numbered by the order's line (Kai, 2026-10-12:
+    "파일 이름 그대로 유지"). The quantity is always written: the operator runs
+    that many off the roll.
+    """
+    qty = int(quantity or 1)
+    number = f" - ({item_no})" if numbered else ""
+    return f"{order_name}{number} qty {qty}.tif"
+
+
 def manual_final_name(order_name, item_no, filename):
     """Name of a final file the office attached (special instructions).
 

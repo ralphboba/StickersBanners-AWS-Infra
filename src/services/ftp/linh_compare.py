@@ -64,6 +64,7 @@ VERDICT_KO = {
     'manual': '사무실이 만든 파일',
     'pending': '처리 중',
     'office': '오피스가 바꾼 주문',
+    'sticker': '스티커 (사람이 만든 파일과 비교, 참고용)',
 }
 # Kinds of difference, in the order the email lists them (worst first).
 KIND_KO = {
@@ -275,8 +276,11 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
     if our_fac and our_fac != facility:
         problem('facility', f'린 {facility} / 우리 {our_fac}')
 
-    # Print files: exact names first, then names equal apart from spacing.
-    linh_print = {f['name']: f for f in linh_files if not is_invoice(f['name'])}
+    # Print files: exact names first, then names equal apart from spacing. The
+    # .eps next to a sticker is the Mimaki cut strip the GA office makes; we
+    # do not make it (yet), so it is not compared.
+    linh_print = {f['name']: f for f in linh_files
+                  if not is_invoice(f['name']) and not f['name'].lower().endswith('.eps')}
     ours_by = {f['name']: f for f in ours_print}
     pairs = []
     for name in sorted(set(linh_print) & set(ours_by)):
@@ -331,6 +335,14 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
 
     manual = meta.get('manualFiles') is True or meta.get('staffRelease') is True
     res['files'] = len(pairs)
+    # Stickers (Kai, 2026-10-12): the GA office makes them by hand, at 400-500
+    # dpi and with names typed each time, so a difference there is information
+    # about the new sticker path, not a failure -- summary only, never alerted.
+    if any(isinstance(i.get('sticker'), dict) for i in meta.get('items') or []):
+        res['verdict'] = 'sticker'
+        res['notes'] = res['notes'] + [p['t'] for p in res['problems']]
+        res['problems'] = []
+        return res
     if res['problems']:
         res['verdict'] = 'diff'
     else:
@@ -389,7 +401,7 @@ def format_summary(entries, day):
     bad = sum(counts.get(v, 0) for v in ALERT_VERDICTS)
     subject = f'[린 비교] {day} 하루 요약 — {total}건 중 같음 {same}, 다름 {bad}'
     lines = [f'지난 24시간 동안 린 프로그램이 FTP에 보낸 주문 {total}건을 비교했어요.', '']
-    for v in ('match', 'diff', 'failed', 'missing', 'office', 'held', 'manual', 'pending'):
+    for v in ('match', 'diff', 'failed', 'missing', 'office', 'sticker', 'held', 'manual', 'pending'):
         if counts.get(v):
             lines.append(f'• {VERDICT_KO[v]}: {counts[v]}건')
     flagged = [e for e in entries if e['verdict'] in ALERT_VERDICTS]
@@ -404,6 +416,11 @@ def format_summary(entries, day):
         lines += ['', '오피스가 바꾼 주문 (우리 문제 아님, 확인용):']
         for e in office[:30]:
             lines.append(f"• {e['order']} ({e['facility']}): {' / '.join(e.get('office') or [])[:200]}")
+    stickers = [e for e in entries if e['verdict'] == 'sticker']
+    if stickers:
+        lines += ['', '스티커 (우리 파일 vs GA 오피스 파일, 참고용):']
+        for e in stickers[:30]:
+            lines.append(f"• {e['order']}: {' / '.join(e.get('notes') or ['같음'])[:200]}")
     return subject[:99], '\n'.join(lines)
 
 

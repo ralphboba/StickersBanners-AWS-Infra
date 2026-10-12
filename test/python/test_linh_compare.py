@@ -155,6 +155,19 @@ class Verdicts(unittest.TestCase):
     def test_office_made_files_are_marked(self):
         self.assertEqual(self.run_one(m=meta(manualFiles=True))['verdict'], 'manual')
 
+    def test_sticker_orders_are_reference_only_and_eps_is_ignored(self):
+        m = meta(items=[{'artworkExt': 'png', 'sticker': {'shape': 'circle', 'dpi': 1000}}], routing={'facility': 'GA'})
+        res = self.run_one(linh=[{'name': 'S1 qty 25.tif', 'size': 100}, {'name': 'S1 qty 25.eps', 'size': 9}],
+                           ours=[{'name': 'S1 qty 25.tif', 'size': 100}], m=m, fac='GA')
+        self.assertEqual(res['verdict'], 'sticker')
+        self.assertEqual(res['problems'], [])
+        self.assertFalse(needs_alert(None, res))
+        # Different from the office's file: noted, still not an alert.
+        res = self.run_one(linh=[{'name': 'S1 qty100.tif', 'size': 100}],
+                           ours=[{'name': 'S1 qty 100.tif', 'size': 120}], m=m, fac='GA')
+        self.assertEqual(res['verdict'], 'sticker')
+        self.assertTrue(res['notes'])
+
     def test_source_type_is_kept_for_the_email(self):
         res = self.run_one(m=meta(items=[{'artworkExt': 'PDF'}, {'artworkExt': 'png'}]))
         self.assertEqual(res['source'], 'pdf,png')

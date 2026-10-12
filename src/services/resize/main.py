@@ -26,6 +26,7 @@ from artwork import artwork_extension, corrected_extension
 from fetch import download
 from orientation import orientation_mismatch, source_size, swap_action
 from manual import is_manual, preview_inches
+from sticker import apply_shape, sticker_of
 
 
 class HeldForReview(RuntimeError):
@@ -211,13 +212,20 @@ def main():
                     (ordered[0] / 72.0, ordered[1] / 72.0))
                 unit = "in"
                 print(f"resize: {name} is a final file; preview only ({width:.1f}x{height:.1f} in)")
+            # A sticker prints at its own resolution, cut to its shape
+            # (sticker.py); everything else at 72 dpi, as legacy.
+            sticker = None if manual else sticker_of(item)
             process_image(
                 file_path=local,
                 width=width,
                 height=height,
                 unit=unit,
                 output_path=output,
+                dpi=sticker["dpi"] if sticker else 72,
             )
+            if sticker:
+                apply_shape(output, sticker["shape"], sticker["dpi"])
+                print(f"resize: {name} is a {sticker['shape']} sticker at {sticker['dpi']} dpi")
 
             key = f"{order_name}/{name}v1.tif"
             s3.upload_file(output, PROCESSED_BUCKET, key)

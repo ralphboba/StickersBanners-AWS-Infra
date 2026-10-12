@@ -24,7 +24,8 @@ import boto3
 from jobload import load_job
 from PIL import Image
 
-from finishing_config import build_finishing_obj, final_tif_name, manual_final_name, s3_key_of
+from finishing_config import (build_finishing_obj, final_tif_name, manual_final_name, s3_key_of,
+                              sticker_final_name)
 from grommets import GrommetsAdder
 from guides import compute_guides, guides_key
 from pole_pockets import PolePocketsAdder
@@ -159,7 +160,10 @@ def main():
             src = os.path.join(scratch, f"{item_no}v1.tif")
             s3.download_file(PROCESSED_BUCKET, src_key, src)
 
-            finishing_obj = build_finishing_obj(item)
+            # A sticker gets no finishing at all -- resize already cut it to
+            # its shape -- and the GA office's name, not the banner one.
+            sticker = isinstance(item.get("sticker"), dict)
+            finishing_obj = {"quantity": item.get("quantity", 1)} if sticker else build_finishing_obj(item)
             work = os.path.join(scratch, f"{item_no}.tif")
 
             # 1. proof thumbnail
@@ -196,7 +200,8 @@ def main():
                 )
 
             # 5. final naming: "{orderId}-{itemNo} {descSuf}[ qty N].tif"
-            final_name = final_tif_name(order_name, item_no, finishing_obj)
+            final_name = (sticker_final_name(order_name, item.get("itemNo", i), item.get("quantity", 1), len(items) > 1)
+                          if sticker else final_tif_name(order_name, item_no, finishing_obj))
             final_key = f"{order_name}/{final_name}"
             s3.upload_file(work, FINISHED_BUCKET, final_key)
             produced.append(final_key)

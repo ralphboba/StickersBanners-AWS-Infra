@@ -251,6 +251,52 @@ export function isKnownSku(sku) {
 }
 
 
+// --- 2b. Stickers we make ourselves (Kai, 2026-10-12) ----------------------
+// Legacy sends every product with "sticker" in its name to Sales by hand. The
+// round, oval and bumper stickers are regular shapes, so we make them: the
+// print file is the sticker alone, at its real size in INCHES and at sticker
+// resolution, cut to its shape -- what the GA office does in Photoshop (a
+// canvas at the size, an ellipse the size of the canvas, the art clipped to
+// it). Custom Shape Kiss-Cut (SKUDC) is NOT here and never will be: Kai, "custom
+// kiss cut은 매뉴얼로 돌려야돼 무조건" -- it stays a special product for a person.
+//
+// size: fixed print size in inches, or null when the order's W x H is the size
+// (bumper stickers: any 2-12 x 2-12 in). Every sticker prints in GA.
+export const STICKERS = {
+  'SKU-466': { shape: 'circle', size: [2, 2] },  // 2" Round
+  'SKU-467': { shape: 'circle', size: [3, 3] },  // 3" Round
+  'SKU-469': { shape: 'circle', size: [4, 4] },  // 4" Round
+  'SKU-470': { shape: 'circle', size: [5, 5] },  // 5" Round
+  'SKU-468': { shape: 'circle', size: null },    // Round/Circle Sticker (other channel), size from the order
+  'SKU-471': { shape: 'oval', size: [3, 2] },
+  'SKU-472': { shape: 'oval', size: [4, 2] },
+  'SKU-473': { shape: 'oval', size: [5, 2] },
+  'SKU-474': { shape: 'oval', size: [4, 3] },
+  'SKU-475': { shape: 'oval', size: [5, 3] },
+  'SKU-476': { shape: 'oval', size: [6, 3] },
+  'SKU-477': { shape: 'oval', size: [6, 4] },
+  'SKU-478': { shape: 'oval', size: [7, 4] },
+  'SKU-479': { shape: 'oval', size: [8, 4] },
+  SKUVS: { shape: 'rect', size: null },          // Bumper Stickers
+};
+
+/** The sticker this SKU is, or null for anything that is not one we make. */
+export function stickerSpec(sku) {
+  return STICKERS[String(sku ?? '')] || null;
+}
+
+/**
+ * Sticker print resolution (Kai, 2026-10-12): "5x5보다 작으면 다 1000으로 해",
+ * anything else 650. Banners, adhesive and see-thru stay at 72.
+ * "Smaller than 5x5" = fits inside 5x5 and is not 5x5 itself, so a 5x2 oval is
+ * 1000 and a 5" round is 650.
+ */
+export function stickerDpi(widthIn, heightIn) {
+  const w = Number(widthIn);
+  const h = Number(heightIn);
+  return w <= 5 && h <= 5 && w * h < 25 ? 1000 : 650;
+}
+
 // --- helpers (used by the intake logic) ------------------------------------
 export function isInchSku(sku, { shopify = false } = {}) {
   const s = String(sku ?? '');

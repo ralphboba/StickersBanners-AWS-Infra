@@ -67,7 +67,7 @@ def flatten_image(img: Image.Image) -> Image.Image:
     return white_bg
 
 
-def _rescale_and_save(image: Image.Image, width_px, height_px, output_path, force_rgba=False):
+def _rescale_and_save(image: Image.Image, width_px, height_px, output_path, force_rgba=False, dpi=72):
     """B. LANCZOS resize -> flatten if transparent -> TIFF 72dpi lzw.
 
     Legacy has two paths and they differ, so we mirror both exactly:
@@ -82,7 +82,7 @@ def _rescale_and_save(image: Image.Image, width_px, height_px, output_path, forc
         processed = processed.convert("RGBA")
     if check_transparency(processed):
         processed = flatten_image(processed)
-    processed.save(output_path, dpi=(72, 72), compression="tiff_lzw")
+    processed.save(output_path, dpi=(dpi, dpi), compression="tiff_lzw")
     return True
 
 
@@ -132,7 +132,7 @@ PDF_MAX_RENDER_PIXELS = 160_000_000
 
 
 def pdf_render_dpi(page_rect, width_px, height_px,
-                   dpi=PDF_RENDER_DPI, max_pixels=PDF_MAX_RENDER_PIXELS):
+                   dpi=PDF_RENDER_DPI, max_pixels=PDF_MAX_RENDER_PIXELS, at_least_output=False):
     """The dpi to rasterise a page at: `dpi`, unless that blows the pixel budget.
 
     Returns `dpi` unchanged whenever the page fits, so the common case is
@@ -144,6 +144,12 @@ def pdf_render_dpi(page_rect, width_px, height_px,
     height_in = page_rect.height / 72.0
     if width_in <= 0 or height_in <= 0:
         return dpi
+
+    # Stickers print at 650/1000 dpi, so 300 would be upscaled into the print.
+    # They render at least as dense as the file they become. Banners never
+    # ask, so their render stays at a flat 300 like Linh's.
+    if at_least_output:
+        dpi = max(dpi, math.ceil(max(width_px / width_in, height_px / height_in)))
 
     if width_in * dpi * height_in * dpi <= max_pixels:
         return dpi
@@ -216,13 +222,13 @@ def pdf_child_memory_limit(env=None):
     return int(total * PDF_CHILD_MEMORY_FRACTION) if total else None
 
 
-def _render_pdf_child(file_path, width_px, height_px, output_path, dpi, limit):
+def _render_pdf_child(file_path, width_px, height_px, output_path, dpi, limit, save_dpi=72):
     """Child process body: render at `dpi` and save, or exit 75 on memory."""
     import resource
     if limit:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     try:
-        _render_pdf(file_path, width_px, height_px, output_path, dpi)
+        _render_pdf(file_path, width_px, height_px, output_path, dpi, save_dpi)
     except MemoryError:
         os._exit(PDF_MEMORY_FAILURE)
     except Exception as exc:
@@ -233,7 +239,7 @@ def _render_pdf_child(file_path, width_px, height_px, output_path, dpi, limit):
     os._exit(0)
 
 
-def _render_pdf(file_path, width_px, height_px, output_path, dpi):
+def _render_pdf(file_path, width_px, height_px, output_path, dpi, save_dpi=72):
     doc = fitz.open(file_path)
     page = doc[0]
     page.set_cropbox(page.trimbox)  # legacy: crop to trimbox
@@ -243,19 +249,19 @@ def _render_pdf(file_path, width_px, height_px, output_path, dpi):
     # resize allocates, instead of holding them to the end of the function.
     del pix, page
     doc.close()
-    return _rescale_and_save(image, width_px, height_px, output_path, force_rgba=True)
+    return _rescale_and_save(image, width_px, height_px, output_path, force_rgba=True, dpi=save_dpi)
 
 
-def _convert_pdf(file_path, width_px, height_px, output_path):
+def _convert_pdf(file_path, width_px, height_px, output_path, save_dpi=72, at_least_output=False):
     import multiprocessing
     doc = fitz.open(file_path)
     page = doc[0]
     page.set_cropbox(page.trimbox)  # legacy: crop to trimbox
     rect = fitz.Rect(page.rect)  # a copy: the document closes below
-    dpi = pdf_render_dpi(rect, width_px, height_px)
+    dpi = pdf_render_dpi(rect, width_px, height_px, at_least_output=at_least_output)
     floor = max(width_px / (rect.width / 72.0), height_px / (rect.height / 72.0)) if rect.width and rect.height else 0
     doc.close()
-    if dpi != PDF_RENDER_DPI:
+    if dpi < PDF_RENDER_DPI:
         print(f"resize: {os.path.basename(file_path)} page is "
               f"{rect.width / 72:.1f}x{rect.height / 72:.1f} in — "
               f"rendering at {dpi} dpi instead of {PDF_RENDER_DPI} to stay "
@@ -265,7 +271,7 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
     ctx = multiprocessing.get_context("fork")
     while True:
         child = ctx.Process(target=_render_pdf_child,
-                            args=(file_path, width_px, height_px, output_path, dpi, limit))
+                            args=(file_path, width_px, height_px, output_path, dpi, limit, save_dpi))
         child.start()
         child.join()
         if child.exitcode == 0:
@@ -285,23 +291,24 @@ def _convert_pdf(file_path, width_px, height_px, output_path):
         dpi = lower
 
 
-def _convert_postscript(file_path, width_px, height_px, output_path):
+def _convert_postscript(file_path, width_px, height_px, output_path, save_dpi=72):
     """PostScript-flavoured .ai via Ghostscript (linux `gs`, was gswin64c.exe)."""
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_png = tmp.name
     try:
         subprocess.run(
-            ["gs", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r300",
+            ["gs", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", f"-r{max(300, save_dpi)}",
              f"-sOutputFile={tmp_png}", file_path],
             check=True,
         )
-        return _rescale_and_save(Image.open(tmp_png), width_px, height_px, output_path, force_rgba=True)
+        return _rescale_and_save(Image.open(tmp_png), width_px, height_px, output_path,
+                                 force_rgba=True, dpi=save_dpi)
     finally:
         if os.path.exists(tmp_png):
             os.remove(tmp_png)
 
 
-def _convert_eps(file_path, width_px, height_px, output_path):
+def _convert_eps(file_path, width_px, height_px, output_path, save_dpi=72, at_least_output=False):
     """EPS -> PDF with Ghostscript, then the ordinary PDF path.
 
     Legacy has no EPS support at all: every .eps upload was held as a missing
@@ -313,7 +320,7 @@ def _convert_eps(file_path, width_px, height_px, output_path):
     """
     with open(file_path, "rb") as f:
         if f.read(4) == b"%PDF":  # named .eps, actually a PDF
-            return _convert_pdf(file_path, width_px, height_px, output_path)
+            return _convert_pdf(file_path, width_px, height_px, output_path, save_dpi, at_least_output)
     with tempfile.TemporaryDirectory() as tmp:
         pdf = os.path.join(tmp, "eps.pdf")
         subprocess.run(
@@ -321,21 +328,21 @@ def _convert_eps(file_path, width_px, height_px, output_path):
              "-sDEVICE=pdfwrite", f"-sOutputFile={pdf}", file_path],
             check=True,
         )
-        return _convert_pdf(pdf, width_px, height_px, output_path)
+        return _convert_pdf(pdf, width_px, height_px, output_path, save_dpi, at_least_output)
 
 
-def _convert_ai(file_path, width_px, height_px, output_path):
+def _convert_ai(file_path, width_px, height_px, output_path, save_dpi=72, at_least_output=False):
     """Legacy AI detection: %PDF header -> pdf path, %!PS -> ghostscript."""
     with open(file_path, "rb") as f:
         header = f.read(5)
     if header.startswith(b"%PDF"):
-        return _convert_pdf(file_path, width_px, height_px, output_path)
+        return _convert_pdf(file_path, width_px, height_px, output_path, save_dpi, at_least_output)
     if header.startswith(b"%!PS"):
-        return _convert_postscript(file_path, width_px, height_px, output_path)
+        return _convert_postscript(file_path, width_px, height_px, output_path, save_dpi)
     raise ValueError("Unknown or unsupported AI format")
 
 
-def _convert_psd(file_path, width_px, height_px, output_path):
+def _convert_psd(file_path, width_px, height_px, output_path, save_dpi=72):
     try:
         composite = PSDImage.open(file_path).composite()
     except Exception as exc:
@@ -349,7 +356,7 @@ def _convert_psd(file_path, width_px, height_px, output_path):
               f"({type(exc).__name__}: {exc}); using its stored composite image")
         composite = Image.open(file_path)
         composite.load()
-    return _rescale_and_save(composite, width_px, height_px, output_path, force_rgba=True)
+    return _rescale_and_save(composite, width_px, height_px, output_path, force_rgba=True, dpi=save_dpi)
 
 
 def check_pdf_pages(file_path) -> int:
@@ -414,11 +421,22 @@ def _open_tiff_fallback(file_path):
     return Image.fromarray(np.ascontiguousarray(base[:, :, 0]), "L")
 
 
-def process_image(file_path, width, height, unit, output_path):
-    """C. Route by extension; returns True or raises."""
-    width_px, height_px = get_dimensions(width, height, unit)
+def process_image(file_path, width, height, unit, output_path, dpi=72):
+    """C. Route by extension; returns True or raises.
+
+    dpi is the print file's density. 72 for every banner (legacy, and the bytes
+    stay Linh's). A sticker passes its own (650/1000, sku-config STICKERS): its
+    pixels are the size times that, and vector art renders at least that dense.
+    """
+    if dpi == 72:
+        width_px, height_px = get_dimensions(width, height, unit)
+    else:
+        inches = {"in": 1, "ft": 12}.get(unit)
+        width_px, height_px = ((int(round(float(width) * inches * dpi)), int(round(float(height) * inches * dpi)))
+                               if inches else (None, None))
     if width_px is None:
         raise ValueError(f"Invalid unit {unit}")
+    sharp = dpi != 72
 
     ext = os.path.splitext(file_path)[1][1:].lower()
     if ext in RASTER_FILE_TYPES:
@@ -429,13 +447,13 @@ def process_image(file_path, width, height, unit, output_path):
                 raise
             img = _open_tiff_fallback(file_path)
         with img:
-            return _rescale_and_save(img, width_px, height_px, output_path)
+            return _rescale_and_save(img, width_px, height_px, output_path, dpi=dpi)
     if ext == "pdf":
-        return _convert_pdf(file_path, width_px, height_px, output_path)
+        return _convert_pdf(file_path, width_px, height_px, output_path, dpi, sharp)
     if ext == "eps":
-        return _convert_eps(file_path, width_px, height_px, output_path)
+        return _convert_eps(file_path, width_px, height_px, output_path, dpi, sharp)
     if ext == "ai":
-        return _convert_ai(file_path, width_px, height_px, output_path)
+        return _convert_ai(file_path, width_px, height_px, output_path, dpi, sharp)
     if ext == "psd":
-        return _convert_psd(file_path, width_px, height_px, output_path)
+        return _convert_psd(file_path, width_px, height_px, output_path, dpi)
     raise ValueError(f"Unsupported file extension: {ext}")

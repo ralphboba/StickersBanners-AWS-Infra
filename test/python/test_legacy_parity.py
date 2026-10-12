@@ -21,7 +21,7 @@ import unittest
 sys.path.insert(0, os.path.join(
     os.path.dirname(__file__), '..', '..', 'src', 'services', 'finish'))
 
-from finishing_config import build_finishing_obj, final_tif_name  # noqa: E402
+from finishing_config import build_finishing_obj, final_tif_name, sticker_final_name  # noqa: E402
 
 
 class PrintFileNames(unittest.TestCase):
@@ -109,6 +109,19 @@ class NoFinishProducts(unittest.TestCase):
         obj = build_finishing_obj({'sku': 'SKUAB', 'quantity': 1,
                                    'finishingObj': {'quantity': 1, 'grommets': {'sides': ['top']}}})
         self.assertEqual(obj, {'quantity': 1})
+
+
+class StickerNames(unittest.TestCase):
+    """The GA office's sticker names on the facility FTP (2026-10-12):
+    "S67827 qty 25.tif", "S68045 - (1) qty 25.tif"."""
+
+    def test_one_item(self):
+        self.assertEqual(sticker_final_name('S67827', 1, 25, False), 'S67827 qty 25.tif')
+        self.assertEqual(sticker_final_name('S1', 1, 1.0, False), 'S1 qty 1.tif')
+
+    def test_several_items_are_numbered(self):
+        self.assertEqual(sticker_final_name('S68045', 1, 25.0, True), 'S68045 - (1) qty 25.tif')
+        self.assertEqual(sticker_final_name('S68045', 2, 25, True), 'S68045 - (2) qty 25.tif')
 
 
 if __name__ == '__main__':

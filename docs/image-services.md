@@ -106,3 +106,30 @@ Manager thread-pool batching (Step Functions/ECS parallelism), BullMQ queues
 FastAPI/uvicorn HTTP wrappers (run-to-completion tasks), Express
 sessions/auth (Cognito), local folder management (S3), and the OrderDesk
 folder-id status map (dashboard is the single source of truth).
+
+## Stickers (Kai, 2026-10-12)
+
+Round, oval and bumper stickers are made by the pipeline; **Custom Shape
+Kiss-Cut (SKUDC) always goes to a person** (intake gate `special-product`, so
+does any order with a kiss-cut line in it).
+
+| Product | SKU | Size | Shape |
+|---|---|---|---|
+| Round | SKU-466/467/469/470 (2/3/4/5"), SKU-468 (size from order) | from the SKU | circle |
+| Oval | SKU-471..479 (3x2 … 8x4") | from the SKU | oval |
+| Bumper | SKUVS | the order's W x H, in **inches** | rectangle |
+
+- **Resolution**: smaller than 5x5 in (fits inside 5x5 and is not 5x5) →
+  1000 dpi, anything else 650 (`stickerDpi`). Banners, adhesive and see-thru
+  stay at 72.
+- **Shape**: what the GA office does in Photoshop — canvas at the size, an
+  ellipse the size of the canvas, the art clipped to it; outside is white (no
+  ink, cut away). `resize/sticker.py`. Vector art renders at least as dense as
+  the print (`pdf_render_dpi(at_least_output=True)`); banners keep a flat 300.
+- **Name**: the GA office's — `S67827 qty 25.tif`, or `S68045 - (1) qty 25.tif`
+  when the order has more than one print item. No finishing.
+- **Facility**: always GA, the whole order with it (OrderDesk's "Sticker back
+  to GA" rule).
+- **Not made yet**: the Mimaki `.eps` cut strip (copies across a ~28 in roll,
+  0.5 in apart, Mimaki register marks, cut line). The office still makes it
+  from our TIF; the Linh comparison ignores `.eps`.
