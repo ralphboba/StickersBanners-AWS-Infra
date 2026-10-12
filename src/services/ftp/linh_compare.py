@@ -438,7 +438,7 @@ def main():
         except Exception as err:
             print(f'compare: cannot read subscriptions: {err}', file=sys.stderr)
 
-    alerts, checked = [], 0
+    checked = 0
     with ftputil.FTPHost(secret('host'), secret('user'), secret('password')) as host:
         make_read_only(host)
         for fac, folder, order, mtime in list_linh_orders(host, now, lookback):
@@ -483,20 +483,23 @@ def main():
 
             res = compare_order(order, fac, linh_files, meta, ours_files, sample, now, mtime)
             checked += 1
-            alert = needs_alert(prev, res)
-            entry = {'verdict': res['verdict'], 'facility': fac, 'problems': res['problems'],
-                     'notes': res['notes'], 'source': res.get('source'), 'sig': sig,
-                     'at': int(now), 'linhAt': int(mtime), 'ourAt': int(now) if ours_files else None,
-                     'alerted': deliverable if alert else bool(prev and prev.get('alerted'))}
-            if alert:
-                alerts.append(res)
-            orders_state[order] = entry
+            orders_state[order] = {
+                'verdict': res['verdict'], 'facility': fac, 'problems': res['problems'],
+                'notes': res['notes'], 'source': res.get('source'), 'sig': sig,
+                'at': int(now), 'linhAt': int(mtime), 'ourAt': int(now) if ours_files else None,
+                'alerted': not needs_alert(prev, res) and bool(prev and prev.get('alerted'))}
             print(json.dumps({'order': order, 'facility': fac, 'verdict': res['verdict'],
                               'problems': res['problems']}, ensure_ascii=False))
 
+    # Every finding not yet sent -- this run's, and any found while the email
+    # subscription was still unconfirmed.
+    alerts = [dict(v, order=k) for k, v in orders_state.items()
+              if v['verdict'] in ALERT_VERDICTS and not v.get('alerted')]
     if alerts and deliverable:
         subject, body = format_alert(alerts)
         sns.publish(TopicArn=topic, Subject=subject, Message=body)
+        for a in alerts:
+            orders_state[a['order']]['alerted'] = True
 
     # Daily count, on the first run after 9am New York time.
     ny = new_york_now(now)
