@@ -190,7 +190,10 @@ Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않�
 ### 켜는 범위 (Kai, 2026-10-08: "라이브 말고 주문 하나에만")
 - 배포할 때 정한다. 기본은 **꺼짐**이다.
   - `--context addOnOrders=S64262`: 그 주문(쉼표로 여러 개 가능)에서만 보이고 받는다.
-  - `--context addOns=live`: 모든 주문에서 보이고 받는다.
+  - `--context addOns=live`: 모든 주문에서 보이고 받는다. **2026-10-11부터 이 상태(라이브).**
+  - **dev는 기본이 켜짐 (Kai, 2026-10-12)**: 배포 명령에 옵션이 없어도 배송 변경과 add-on은 켜진 채로 배포된다
+    (`lib/config/live-switches.ts`). 끄려면 `--context shippingChange=off` / `--context addOns=off`.
+    (다른 브랜치에서 옵션 없이 배포해 add-on이 모든 고객에게서 꺼졌던 일 때문.) prod는 이름을 주지 않으면 꺼짐.
 - 다른 주문에서는 GET 목록이 비어 있고, quote와 request를 보내도 거절된다.
 
 ### 흐름
@@ -202,11 +205,11 @@ Shopify 금액을 정확히 재현할 수 없으면 가격을 보여 주지 않�
 6. 결제 확인은 webhook과 5분 재확인이 같은 코드로 한다. 이 경우 새 배송 줄과 상품 줄이 둘 다 주문에 있어야 "결제됨"이다.
    그다음 OrderDesk에 상품 줄과 금액을 반영하고, Chat에 "S… added … · shipping +$ · +$ items + $ tax = $"를 보낸다.
 
-### 필요한 것 / 확인 안 된 것
-- **Shopify 앱에 `read_products` 권한이 필요하다.** 없으면 목록을 못 읽고, 페이지에 add-on 칸이 보이지 않는다(다른 기능은 영향 없음).
-- OrderDesk에 상품 줄을 PUT으로 추가하는 방식은 **실제 OrderDesk로는 아직 시험하지 않았다.** 테스트 주문으로 확인이 필요하다.
-- Shopify 데이터 문제:
-  - 20'x8' 단독 상품 SKU가 `SKUBS08X16`이다(→ `SKUBS08X20`이어야 함).
-  - Retractable "Stand Only"가 `SKU-545`다(→ `SKU-546`이어야 함).
-  - X-Banner와 Double X-Banner "Stand Only" SKU(`SKUXBS`, `SKUDXBS`)는 확인이 필요하다.
-  - 스탠드가 "Banner Stands" 옵션과 단독 상품으로 **중복** 노출된다.
+### 필요한 것 / 확인된 것
+- **Shopify 앱에 `read_products` 권한이 필요하다.** 없으면 목록을 못 읽고, 페이지에 add-on 칸이 보이지 않는다(다른 기능은 영향 없음). 2026-10-08 부여됨.
+- OrderDesk 상품 줄 추가: S67397로 실제 확인(2026-10-08) — 결제, Shopify 수정, OrderDesk 상품 줄·SKU·합계·메모, Chat 알림 모두 맞음.
+- SKU는 Shopify 상품에 붙은 값 그대로 OrderDesk에 들어간다 — 일반 체크아웃으로 같은 상품을 샀을 때와 같은 값. 금액 계산에는 쓰이지 않는다.
+  20'x8'(`SKUBS08X20`), Retractable Stand Only(`SKU-546`)는 Kai가 고쳤다(2026-10-08 확인).
+- 스탠드와 레드카펫은 모든 시설에 재고가 있다(Kai, 2026-10-11) — 어느 시설 주문이든 추가 가능.
+- 같은 SKU가 두 상품에 있으면 옵션이 더 많은 상품 안에서만 보인다 — 단독 스탠드 5개(8'·10'·12'·16'·20'x8')는
+  "Banner Stands" 안에만 나온다(Kai, 2026-10-11 "Banner Stands 안에있어"). 목록 6개.

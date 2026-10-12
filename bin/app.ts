@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib/core';
 import { Tags } from 'aws-cdk-lib/core';
 import { getConfig } from '../lib/config/environments';
+import { resolveLiveSwitches } from '../lib/config/live-switches';
 import { NetworkStack } from '../lib/stacks/network-stack';
 import { GithubOidcStack } from '../lib/stacks/github-oidc-stack';
 import { BillingStack } from '../lib/stacks/billing-stack';
@@ -153,14 +154,9 @@ const computeStack = new ComputeStack(app, `${config.prefix}-compute`, {
   // distribution depends on this API and could not be passed in without a cycle.
   proofPortalBase: 'https://proof.stickersbanners.com/proof-viewer',
   qtsFolderId: '665685', // OrderDesk "QTS" folder — orders ready to process
-  // `--context testOrders=S64262` arms the shipping-change writes for that
-  // order only. Omit it and every write switch stays disabled.
-  shippingChangeTestOrders: app.node.tryGetContext('testOrders') as string | undefined,
-  // `--context shippingChange=live` arms the same writes for EVERY order (go-live).
-  shippingChangeLive: app.node.tryGetContext('shippingChange') === 'live',
-  // Add-ons: --context addOnOrders=S64262 (those orders only) or
-  // --context addOns=live (every order). Neither = off.
-  addOnOrders: app.node.tryGetContext('addOns') === 'live' ? '*' : (app.node.tryGetContext('addOnOrders') as string | undefined),
+  // Shipping change + add-ons: live in dev by default, off only when a deploy
+  // says so (lib/config/live-switches.ts). prod: off unless named.
+  ...resolveLiveSwitches(config.env, (k) => app.node.tryGetContext(k)),
   upgradeReportEmail: 'kai@stickersbanners.com',
   description: `StickersBanners Lambda compute (${config.env})`,
 });

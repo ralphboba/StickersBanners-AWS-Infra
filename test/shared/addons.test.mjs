@@ -39,6 +39,14 @@ describe('the add-on list', () => {
       [['Banner Stands', ['SKUBS08X10', 'SKUBS08X20']], ['X-Banner', ['SKUXBS']], ['Red Carpet', ['SKURC0308']]]);
     assert.equal(list[0].options[0].price, 14900);
   });
+  test('a stand also sold on its own is listed once, inside Banner Stands', () => {
+    const solo = { id: 'P9', title: "10'x8' Telescopic Adjustable Stand", status: 'ACTIVE', productType: 'Stand', onlineStoreUrl: 'https://x/p9',
+      variants: { nodes: [{ id: V(9), title: '10 / 8', sku: 'SKUBS08X10', price: '149.00', availableForSale: true }] } };
+    const other = { id: 'P8', title: 'Pop Up Display Stand', status: 'ACTIVE', productType: 'Stand', onlineStoreUrl: 'https://x/p8',
+      variants: { nodes: [{ id: V(8), title: '8 / 8', sku: 'SKU-601', price: '279.00', availableForSale: true }] } };
+    assert.deepEqual(addOnsFrom([...PRODUCTS, solo, other]).map((p) => p.title),
+      ['Banner Stands', 'X-Banner', 'Red Carpet', 'Pop Up Display Stand']);
+  });
   test('drafts and products hidden from the store are left out (blocked by Kai)', () => {
     assert.ok(!list.some((p) => /Fancy|Hidden/.test(p.title)));
   });

@@ -83,6 +83,14 @@ authority: **Linh** (legacy author).
     or the customer shipping upgrade / add-ons switch off. Never
     `addOnOrders=...` for a routine deploy: on 2026-10-12 one did, and add-ons
     were limited to S67397 for 23 minutes until the other session redeployed.
+  - **Default ON in dev (Kai, 2026-10-12)** — shipping change and add-ons stay
+    live when a dev deploy does not mention them (`lib/config/live-switches.ts`);
+    only `--context shippingChange=off` / `--context addOns=off` turn them off,
+    and `testOrders` / `addOnOrders` still narrow to named orders. prod: off
+    unless named. (A deploy from the other branch without the contexts had
+    switched add-ons off for every customer.) Deploy from a checkout that also has the working
+    branch (`claude/stickerbanners-aws-cdk-fw49s2`) merged — a compute deploy
+    without it removes `sb-dev-orderdesk-move` and the test lane (2026-10-09).
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed
