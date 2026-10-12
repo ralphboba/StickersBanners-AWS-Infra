@@ -125,11 +125,12 @@ does any order with a kiss-cut line in it).
 - **Shape**: what the GA office does in Photoshop — canvas at the size, an
   ellipse the size of the canvas, the art clipped to it; outside is white (no
   ink, cut away). `resize/sticker.py`.
-- **Round = fitted to the art**: the empty (white/transparent) margin around a
+- **Fitted to the art**: the empty (white/transparent) margin around a
   round logo is cut so the logo fills the sticker, as the office does; art that
   is not round within 10% once the margin is gone is held (`bad-artwork`) for a
-  person instead of being squashed. Ovals and bumpers print as uploaded —
-  measured against 50 office files on 2026-10-12.
+  person instead of being squashed. Ovals and bumpers keep white that is a
+  logo's background, and lose a white frame round a filled design (its outline
+  is >=80% ink) -- measured against 50 office files on 2026-10-12.
 - **Colour**: CMYK, U.S. Web Coated (SWOP) v2 (`resize/profiles/`), converted
   as Photoshop does (relative colorimetric + black point compensation); CMYK
   art keeps its numbers. Proof images convert back through the profile. Vector art renders at least as dense as

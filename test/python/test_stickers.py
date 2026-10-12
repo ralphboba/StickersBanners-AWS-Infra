@@ -19,7 +19,7 @@ try:
     from converter import pdf_render_dpi, process_image
     from orientation import source_size
     from sticker import (StickerArtNotRound, apply_shape, clip_to_shape, content_box,
-                         make_round_sticker, sticker_of, to_print_cmyk)
+                         make_sticker, sticker_of, to_print_cmyk)
     HAVE_LIBS = True
 except ImportError:  # PIL / PyMuPDF not installed in this interpreter
     HAVE_LIBS = False
@@ -173,7 +173,7 @@ class RoundFitsTheArt(unittest.TestCase):
         # S66381: the logo used 65% of the file; the office's sticker is all logo.
         src = self.logo((1000, 1000), (175, 175, 825, 825))
         out = os.path.join(self.tmp, 'out.tif')
-        make_round_sticker(src, 'png', 2, 2, 1000, out, process_image, source_size)
+        make_sticker(src, 'png', 2, 2, 1000, 'circle', out, process_image, source_size)
         with Image.open(out) as im:
             self.assertEqual(im.size, (2000, 2000))
             self.assertEqual(round(im.info['dpi'][0]), 1000)
@@ -184,8 +184,33 @@ class RoundFitsTheArt(unittest.TestCase):
         # S67093: a phone screenshot, tall, black bars that are not margin.
         src = self.logo((400, 900), (0, 250, 400, 650), bg=(0, 0, 0))
         with self.assertRaises(StickerArtNotRound):
-            make_round_sticker(src, 'png', 4, 4, 1000, os.path.join(self.tmp, 'o.tif'), process_image, source_size)
+            make_sticker(src, 'png', 4, 4, 1000, 'circle', os.path.join(self.tmp, 'o.tif'), process_image, source_size)
 
+    def bumper(self, inner, bg=(255, 255, 255)):
+        im = Image.new('RGB', (1200, 400), bg)
+        from PIL import ImageDraw
+        dr = ImageDraw.Draw(im)
+        inner(dr)
+        p = os.path.join(self.tmp, 'b.png')
+        im.save(p)
+        return p
+
+    def test_bumper_frame_round_a_filled_design_is_cut(self):
+        # S65883: a maroon design in a white strip; the office's file is all maroon.
+        src = self.bumper(lambda d: d.rectangle((0, 0, 1199, 319), fill=(110, 20, 40)))
+        out = os.path.join(self.tmp, 'out.tif')
+        make_sticker(src, 'png', 12, 4, 650, 'rect', out, process_image, source_size)
+        with Image.open(out) as im:
+            self.assertEqual(im.size, (7800, 2600))
+            self.assertNotEqual(im.convert('RGB').getpixel((3900, 2590)), (255, 255, 255))
+
+    def test_bumper_logo_on_white_keeps_its_white(self):
+        # S65290: a logo on white; the office kept the white round it.
+        src = self.bumper(lambda d: d.ellipse((500, 100, 700, 300), fill=(0, 90, 40)))
+        out = os.path.join(self.tmp, 'out.tif')
+        make_sticker(src, 'png', 12, 4, 650, 'rect', out, process_image, source_size)
+        with Image.open(out) as im:
+            self.assertEqual(im.convert('RGB').getpixel((200, 1300)), (255, 255, 255))
 
 if __name__ == '__main__':
     unittest.main()

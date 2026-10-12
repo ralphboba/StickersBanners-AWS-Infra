@@ -10,9 +10,12 @@ Round stickers are fitted to the ART, not to the file: customers upload a round
 logo with an empty margin around it, and the office cuts that margin away so
 the logo fills the sticker -- otherwise it prints as a white ring inside the
 cut. Measured on 50 office files (2026-10-12): every round sticker matched
-this way; ovals and bumpers matched as uploaded, margin and all. Art that is
-not roughly round once the margin is gone (S67093: a phone screenshot with
-black bars) cannot be fitted without squashing it, so a person gets it.
+this way. Ovals and bumpers keep their white when it is the background of a
+logo (S65290, S65004, S67826 kept it), but lose it when it is only a border
+round a filled design (S65883, S65819, S68045: a coloured rectangle in a white
+frame) -- the office trims the frame. Art that is not roughly round once the
+margin is gone (S67093: a phone screenshot with black bars) cannot be fitted
+without squashing it, so a person gets it.
 
 Colour (Kai: "색깔 맞춰야지"): the office's sticker files are CMYK in Photoshop's
 default U.S. Web Coated (SWOP) v2 (31 of 58 on the FTP, 2026-10-12; the rest
@@ -55,9 +58,12 @@ def sticker_of(item):
 # Near-white or near-transparent is "empty": the margin a round logo sits in.
 EMPTY_WHITE = 240
 EMPTY_ALPHA = 16
-# Once the margin is gone, art more than 10% away from the sticker's shape is
-# held for a person rather than stretched to fit.
+# Once the margin is gone, round art more than 10% away from round is held for
+# a person rather than squashed to fit.
 SHAPE_TOLERANCE = 1.10
+# A design whose outline is this much ink is a filled shape in a frame -- the
+# frame is cut. A logo on white touches its box only here and there.
+FILLED_EDGE = 0.8
 
 
 class StickerArtNotRound(ValueError):
@@ -66,11 +72,7 @@ class StickerArtNotRound(ValueError):
 
 def content_box(image):
     """(left, top, right, bottom) of the art inside its empty margin."""
-    if image.mode == "CMYK":
-        ink = np.asarray(image).max(axis=-1) > 255 - EMPTY_WHITE
-    else:
-        rgba = np.asarray(image.convert("RGBA"))
-        ink = (rgba[..., 3] > EMPTY_ALPHA) & (rgba[..., :3].min(axis=-1) < EMPTY_WHITE)
+    ink = _ink(image)
     rows, cols = np.any(ink, axis=1), np.any(ink, axis=0)
     if not rows.any():
         return (0, 0, image.size[0], image.size[1])
@@ -79,14 +81,31 @@ def content_box(image):
     return (int(left), int(top), int(right), int(bottom))
 
 
-def make_round_sticker(source_path, ext, width_in, height_in, dpi, output_path, render, source_size):
-    """The round sticker's print file at `output_path`, fitted to the art.
+def _ink(image):
+    if image.mode == "CMYK":
+        return np.asarray(image).max(axis=-1) > 255 - EMPTY_WHITE
+    rgba = np.asarray(image.convert("RGBA"))
+    return (rgba[..., 3] > EMPTY_ALPHA) & (rgba[..., :3].min(axis=-1) < EMPTY_WHITE)
+
+
+def edge_ink(image, box):
+    """Share of the box's outline that is ink: ~1 for a filled design."""
+    ink = _ink(image.crop(box))
+    if ink.shape[0] < 3 or ink.shape[1] < 3:
+        return 1.0
+    ring = np.concatenate([ink[0], ink[-1], ink[1:-1, 0], ink[1:-1, -1]])
+    return float(ring.mean())
+
+
+def make_sticker(source_path, ext, width_in, height_in, dpi, shape, output_path, render, source_size):
+    """The sticker's print file at `output_path`, fitted to the art.
 
     render(path, width_in, height_in, unit, output, dpi=...) is converter's
     process_image and source_size(path, ext) orientation's -- passed in so this
     module stays importable without them. The art is first rendered whole, at
     its own shape and 1.6x the sticker's pixels (room for a margin of up to
-    ~40%), then its margin is cut and it is fitted to the sticker.
+    ~40%), then its margin is cut (round: always; oval/bumper: only a frame
+    round a filled design) and it is fitted to the sticker.
     """
     target = (int(round(float(width_in) * dpi)), int(round(float(height_in) * dpi)))
     size = source_size(source_path, ext)
@@ -98,12 +117,16 @@ def make_round_sticker(source_path, ext, width_in, height_in, dpi, output_path, 
     try:
         with Image.open(whole) as im:
             im.load()
-            art = im.crop(content_box(im))
+            box = content_box(im)
+            if shape == "circle" or edge_ink(im, box) >= FILLED_EDGE:
+                art = im.crop(box)
+            else:
+                art = im.copy()
             icc = im.info.get("icc_profile")
     finally:
         os.remove(whole)
     ratio = (art.size[0] / art.size[1]) / (target[0] / target[1])
-    if ratio > SHAPE_TOLERANCE or ratio < 1 / SHAPE_TOLERANCE:
+    if shape == "circle" and (ratio > SHAPE_TOLERANCE or ratio < 1 / SHAPE_TOLERANCE):
         raise StickerArtNotRound(
             f"the art is {art.size[0]}x{art.size[1]} once its empty margin is cut -- not round enough "
             f"for a {float(width_in):g}x{float(height_in):g} in round sticker without squashing it")
