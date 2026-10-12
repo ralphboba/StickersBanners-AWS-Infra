@@ -13,6 +13,7 @@ processed/{order}/{itemNo}v1.tif, writes finished/{order}/..., records
 STEP#finish in DynamoDB.
 """
 
+import io
 import json
 import os
 import shutil
@@ -22,7 +23,7 @@ import tempfile
 import boto3
 
 from jobload import load_job
-from PIL import Image
+from PIL import Image, ImageCms
 
 from finishing_config import (build_finishing_obj, final_tif_name, manual_final_name, s3_key_of,
                               sticker_final_name)
@@ -41,10 +42,18 @@ JOBS_TABLE = os.environ.get("JOBS_TABLE", "")
 UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "")
 
 
-def create_proof_file(source_path, proof_path):
-    """Legacy createProofFile: 300px thumbnail jpg (CMYK converted to RGB)."""
+def create_proof_file(source_path, proof_path, managed=False):
+    """Legacy createProofFile: 300px thumbnail jpg (CMYK converted to RGB).
+
+    managed: convert CMYK through the file's own profile (a sticker's SWOP v2)
+    rather than legacy's plain convert, which oversaturates it. Banners keep
+    legacy's bytes.
+    """
     with Image.open(source_path) as img:
-        if img.mode == "CMYK":
+        if img.mode == "CMYK" and managed and img.info.get("icc_profile"):
+            img = ImageCms.profileToProfile(img, ImageCms.ImageCmsProfile(io.BytesIO(img.info["icc_profile"])),
+                                            ImageCms.createProfile("sRGB"), outputMode="RGB")
+        elif img.mode == "CMYK":
             img = img.convert("RGB")
         img.thumbnail((300, 300), Image.LANCZOS)
         img.save(proof_path, "PNG")
@@ -168,7 +177,7 @@ def main():
 
             # 1. proof thumbnail
             proof = os.path.join(scratch, f"{item_no}.jpg")
-            create_proof_file(src, proof)
+            create_proof_file(src, proof, managed=isinstance(item.get("sticker"), dict))
             proof_key = f"{order_name}/{item_no}.jpg"
             s3.upload_file(proof, FINISHED_BUCKET, proof_key)
             upload_guides(order_name, item_no, src, finishing_obj)

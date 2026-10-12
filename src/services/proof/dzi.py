@@ -10,10 +10,11 @@ Local-disk paths from the legacy (ORDER_PATH/DZI_PATH) become explicit file /
 directory arguments; S3 plumbing lives in main.py.
 """
 
+import io
 import os
 
 import pyvips
-from PIL import Image
+from PIL import Image, ImageCms
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -21,14 +22,31 @@ Image.MAX_IMAGE_PIXELS = None
 def create_dzi(source_path, output_base):
     """pyvips dzsave -> {output_base}.dzi + {output_base}_files/ pyramid."""
     image = pyvips.Image.new_from_file(source_path, access="sequential")
+    if image.interpretation == "cmyk":
+        # A CMYK print file (stickers, 2026-10-12) would tile as CMYK jpgs the
+        # browser shows wrong; convert through its own profile.
+        image = image.icc_transform("srgb") if "icc-profile-data" in image.get_fields() else image.colourspace("srgb")
     image.dzsave(output_base, tile_size=256, overlap=1, suffix=".jpg", layout="dz")
     return True
+
+
+def to_screen_rgb(img):
+    """CMYK -> RGB for a screen: through the file's own profile when it has one
+    (a sticker's SWOP v2), else the plain conversion legacy used."""
+    icc = img.info.get("icc_profile")
+    if icc:
+        try:
+            return ImageCms.profileToProfile(img, ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+                                             ImageCms.createProfile("sRGB"), outputMode="RGB")
+        except Exception:
+            pass
+    return img.convert("RGB")
 
 
 def _derivative(source_path, output_path, max_px):
     with Image.open(source_path) as img:
         if img.mode == "CMYK":
-            img = img.convert("RGB")
+            img = to_screen_rgb(img)
         img.thumbnail((max_px, max_px), Image.LANCZOS)
         img.save(output_path, "PNG")  # legacy saved .jpg-named files as PNG data
     return True

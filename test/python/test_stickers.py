@@ -17,7 +17,7 @@ try:
     from PIL import Image
     import fitz  # noqa: F401
     from converter import pdf_render_dpi, process_image
-    from sticker import apply_shape, clip_to_shape, sticker_of
+    from sticker import apply_shape, clip_to_shape, sticker_of, to_print_cmyk
     HAVE_LIBS = True
 except ImportError:  # PIL / PyMuPDF not installed in this interpreter
     HAVE_LIBS = False
@@ -107,13 +107,44 @@ class Shapes(unittest.TestCase):
         src = Image.new('RGB', (600, 200), (10, 20, 30))
         self.assertIs(clip_to_shape(src, 'rect'), src)
 
-    def test_apply_shape_keeps_the_dpi(self):
+    def test_apply_shape_makes_the_print_file(self):
         path = os.path.join(tempfile.mkdtemp(), 's.tif')
         Image.new('RGB', (2000, 2000), (10, 20, 30)).save(path, dpi=(1000, 1000), compression='tiff_lzw')
         apply_shape(path, 'circle', 1000)
         with Image.open(path) as im:
             self.assertEqual(round(im.info['dpi'][0]), 1000)
-            self.assertEqual(im.getpixel((0, 0)), (255, 255, 255))
+            self.assertEqual(im.mode, 'CMYK')
+            self.assertEqual(im.getpixel((0, 0)), (0, 0, 0, 0))  # no ink outside
+            self.assertIn(b'SWOP', im.info['icc_profile'])
+
+
+@unittest.skipUnless(HAVE_LIBS, 'needs Pillow and PyMuPDF')
+class Colour(unittest.TestCase):
+    """CMYK in U.S. Web Coated (SWOP) v2, as the GA office's Photoshop makes it."""
+
+    def test_rgb_becomes_swop_cmyk_with_the_profile(self):
+        cmyk, icc = to_print_cmyk(Image.new('RGB', (4, 4), (255, 255, 255)))
+        self.assertEqual(cmyk.mode, 'CMYK')
+        self.assertEqual(cmyk.getpixel((0, 0)), (0, 0, 0, 0))  # paper white = no ink
+        self.assertIn(b'U.S. Web Coated (SWOP) v2', icc)
+
+    def test_known_colours_land_where_photoshop_puts_them(self):
+        # The 2" round S66840's star yellow and ring blue, measured in the
+        # office's own SWOP file: rgb (252,175,28) / (104,158,195) after
+        # conversion back to sRGB. Ours must come back within a few levels.
+        from PIL import ImageCms
+        import io
+        for rgb in [(251, 175, 27), (107, 159, 195), (4, 51, 86)]:
+            cmyk, icc = to_print_cmyk(Image.new('RGB', (1, 1), rgb))
+            back = ImageCms.profileToProfile(cmyk, ImageCms.ImageCmsProfile(io.BytesIO(icc)),
+                                             ImageCms.createProfile('sRGB'), outputMode='RGB')
+            for a, b in zip(back.getpixel((0, 0)), rgb):
+                self.assertLessEqual(abs(a - b), 24)
+
+    def test_cmyk_art_keeps_its_numbers(self):
+        src = Image.new('CMYK', (2, 2), (0, 100, 100, 0))
+        cmyk, _ = to_print_cmyk(src)
+        self.assertEqual(cmyk.getpixel((0, 0)), (0, 100, 100, 0))
 
 
 if __name__ == '__main__':
