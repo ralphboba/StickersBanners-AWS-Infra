@@ -26,7 +26,7 @@ from artwork import artwork_extension, corrected_extension
 from fetch import download
 from orientation import orientation_mismatch, source_size, swap_action
 from manual import is_manual, preview_inches
-from sticker import apply_shape, sticker_of
+from sticker import StickerArtNotRound, apply_shape, make_round_sticker, sticker_of
 
 
 class HeldForReview(RuntimeError):
@@ -215,14 +215,22 @@ def main():
             # A sticker prints at its own resolution, cut to its shape
             # (sticker.py); everything else at 72 dpi, as legacy.
             sticker = None if manual else sticker_of(item)
-            process_image(
-                file_path=local,
-                width=width,
-                height=height,
-                unit=unit,
-                output_path=output,
-                dpi=sticker["dpi"] if sticker else 72,
-            )
+            if sticker and sticker["shape"] == "circle":
+                # Fitted to the art, its empty margin cut (sticker.py).
+                try:
+                    make_round_sticker(local, os.path.splitext(local)[1].lstrip("."), width, height,
+                                       sticker["dpi"], output, process_image, source_size)
+                except StickerArtNotRound as exc:
+                    raise UnusableArtwork(f"Item {item_no}: {exc}") from exc
+            else:
+                process_image(
+                    file_path=local,
+                    width=width,
+                    height=height,
+                    unit=unit,
+                    output_path=output,
+                    dpi=sticker["dpi"] if sticker else 72,
+                )
             if sticker:
                 apply_shape(output, sticker["shape"], sticker["dpi"])
                 print(f"resize: {name} is a {sticker['shape']} sticker at {sticker['dpi']} dpi")

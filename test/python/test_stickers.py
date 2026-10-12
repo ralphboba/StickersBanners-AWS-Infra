@@ -17,7 +17,9 @@ try:
     from PIL import Image
     import fitz  # noqa: F401
     from converter import pdf_render_dpi, process_image
-    from sticker import apply_shape, clip_to_shape, sticker_of, to_print_cmyk
+    from orientation import source_size
+    from sticker import (StickerArtNotRound, apply_shape, clip_to_shape, content_box,
+                         make_round_sticker, sticker_of, to_print_cmyk)
     HAVE_LIBS = True
 except ImportError:  # PIL / PyMuPDF not installed in this interpreter
     HAVE_LIBS = False
@@ -145,6 +147,44 @@ class Colour(unittest.TestCase):
         src = Image.new('CMYK', (2, 2), (0, 100, 100, 0))
         cmyk, _ = to_print_cmyk(src)
         self.assertEqual(cmyk.getpixel((0, 0)), (0, 100, 100, 0))
+
+@unittest.skipUnless(HAVE_LIBS, 'needs Pillow and PyMuPDF')
+class RoundFitsTheArt(unittest.TestCase):
+    """A round logo in a white margin fills the sticker, as the office does it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def logo(self, size, box, colour=(200, 30, 30), mode='RGB', bg=(255, 255, 255)):
+        im = Image.new(mode, size, bg)
+        from PIL import ImageDraw
+        ImageDraw.Draw(im).ellipse(box, fill=colour)
+        p = os.path.join(self.tmp, 'art.png')
+        im.save(p)
+        return p
+
+    def test_content_box_ignores_white_and_transparent(self):
+        im = Image.new('RGBA', (100, 100), (255, 255, 255, 0))
+        im.paste((0, 0, 255, 255), (20, 30, 60, 90))
+        self.assertEqual(content_box(im), (20, 30, 60, 90))
+        self.assertEqual(content_box(Image.new('RGB', (10, 10), 'white')), (0, 0, 10, 10))
+
+    def test_margin_is_cut_so_the_logo_fills_the_sticker(self):
+        # S66381: the logo used 65% of the file; the office's sticker is all logo.
+        src = self.logo((1000, 1000), (175, 175, 825, 825))
+        out = os.path.join(self.tmp, 'out.tif')
+        make_round_sticker(src, 'png', 2, 2, 1000, out, process_image, source_size)
+        with Image.open(out) as im:
+            self.assertEqual(im.size, (2000, 2000))
+            self.assertEqual(round(im.info['dpi'][0]), 1000)
+            # The logo now touches the edge midpoints, not 350 px inside them.
+            self.assertNotEqual(im.convert('RGB').getpixel((1000, 8)), (255, 255, 255))
+
+    def test_art_that_is_not_round_goes_to_a_person(self):
+        # S67093: a phone screenshot, tall, black bars that are not margin.
+        src = self.logo((400, 900), (0, 250, 400, 650), bg=(0, 0, 0))
+        with self.assertRaises(StickerArtNotRound):
+            make_round_sticker(src, 'png', 4, 4, 1000, os.path.join(self.tmp, 'o.tif'), process_image, source_size)
 
 
 if __name__ == '__main__':

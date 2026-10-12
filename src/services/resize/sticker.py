@@ -6,6 +6,14 @@ the art clipped to it. Outside the shape is white -- no ink, and nothing there
 is kept: the cutter cuts along the shape. Round and oval are clipped; a bumper
 sticker is a rectangle and stays as resized.
 
+Round stickers are fitted to the ART, not to the file: customers upload a round
+logo with an empty margin around it, and the office cuts that margin away so
+the logo fills the sticker -- otherwise it prints as a white ring inside the
+cut. Measured on 50 office files (2026-10-12): every round sticker matched
+this way; ovals and bumpers matched as uploaded, margin and all. Art that is
+not roughly round once the margin is gone (S67093: a phone screenshot with
+black bars) cannot be fitted without squashing it, so a person gets it.
+
 Colour (Kai: "색깔 맞춰야지"): the office's sticker files are CMYK in Photoshop's
 default U.S. Web Coated (SWOP) v2 (31 of 58 on the FTP, 2026-10-12; the rest
 were left RGB). So the print file is converted the way Photoshop converts --
@@ -20,6 +28,7 @@ item["sticker"] = {"shape": "circle"|"oval"|"rect", "dpi": 650|1000}.
 import io
 import os
 
+import numpy as np
 from PIL import Image, ImageCms, ImageDraw
 
 Image.MAX_IMAGE_PIXELS = None
@@ -41,6 +50,66 @@ def sticker_of(item):
     except (TypeError, ValueError):
         return None
     return {"shape": spec["shape"], "dpi": dpi} if dpi > 0 else None
+
+
+# Near-white or near-transparent is "empty": the margin a round logo sits in.
+EMPTY_WHITE = 240
+EMPTY_ALPHA = 16
+# Once the margin is gone, art more than 10% away from the sticker's shape is
+# held for a person rather than stretched to fit.
+SHAPE_TOLERANCE = 1.10
+
+
+class StickerArtNotRound(ValueError):
+    """The art, without its margin, is not the sticker's shape."""
+
+
+def content_box(image):
+    """(left, top, right, bottom) of the art inside its empty margin."""
+    if image.mode == "CMYK":
+        ink = np.asarray(image).max(axis=-1) > 255 - EMPTY_WHITE
+    else:
+        rgba = np.asarray(image.convert("RGBA"))
+        ink = (rgba[..., 3] > EMPTY_ALPHA) & (rgba[..., :3].min(axis=-1) < EMPTY_WHITE)
+    rows, cols = np.any(ink, axis=1), np.any(ink, axis=0)
+    if not rows.any():
+        return (0, 0, image.size[0], image.size[1])
+    top, bottom = np.argmax(rows), len(rows) - np.argmax(rows[::-1])
+    left, right = np.argmax(cols), len(cols) - np.argmax(cols[::-1])
+    return (int(left), int(top), int(right), int(bottom))
+
+
+def make_round_sticker(source_path, ext, width_in, height_in, dpi, output_path, render, source_size):
+    """The round sticker's print file at `output_path`, fitted to the art.
+
+    render(path, width_in, height_in, unit, output, dpi=...) is converter's
+    process_image and source_size(path, ext) orientation's -- passed in so this
+    module stays importable without them. The art is first rendered whole, at
+    its own shape and 1.6x the sticker's pixels (room for a margin of up to
+    ~40%), then its margin is cut and it is fitted to the sticker.
+    """
+    target = (int(round(float(width_in) * dpi)), int(round(float(height_in) * dpi)))
+    size = source_size(source_path, ext)
+    aspect = (size[0] / size[1]) if size and size[0] and size[1] else target[0] / target[1]
+    side = int(max(target) * 1.6)
+    whole_px = (side, max(1, round(side / aspect))) if aspect >= 1 else (max(1, round(side * aspect)), side)
+    whole = output_path + ".whole.tif"
+    render(source_path, whole_px[0] / dpi, whole_px[1] / dpi, "in", whole, dpi=dpi)
+    try:
+        with Image.open(whole) as im:
+            im.load()
+            art = im.crop(content_box(im))
+            icc = im.info.get("icc_profile")
+    finally:
+        os.remove(whole)
+    ratio = (art.size[0] / art.size[1]) / (target[0] / target[1])
+    if ratio > SHAPE_TOLERANCE or ratio < 1 / SHAPE_TOLERANCE:
+        raise StickerArtNotRound(
+            f"the art is {art.size[0]}x{art.size[1]} once its empty margin is cut -- not round enough "
+            f"for a {float(width_in):g}x{float(height_in):g} in round sticker without squashing it")
+    fitted = art.resize(target, Image.LANCZOS)
+    kwargs = {"icc_profile": icc} if icc else {}
+    fitted.save(output_path, dpi=(dpi, dpi), compression="tiff_lzw", **kwargs)
 
 
 def clip_to_shape(image, shape):

@@ -124,7 +124,15 @@ does any order with a kiss-cut line in it).
   stay at 72.
 - **Shape**: what the GA office does in Photoshop — canvas at the size, an
   ellipse the size of the canvas, the art clipped to it; outside is white (no
-  ink, cut away). `resize/sticker.py`. Vector art renders at least as dense as
+  ink, cut away). `resize/sticker.py`.
+- **Round = fitted to the art**: the empty (white/transparent) margin around a
+  round logo is cut so the logo fills the sticker, as the office does; art that
+  is not round within 10% once the margin is gone is held (`bad-artwork`) for a
+  person instead of being squashed. Ovals and bumpers print as uploaded —
+  measured against 50 office files on 2026-10-12.
+- **Colour**: CMYK, U.S. Web Coated (SWOP) v2 (`resize/profiles/`), converted
+  as Photoshop does (relative colorimetric + black point compensation); CMYK
+  art keeps its numbers. Proof images convert back through the profile. Vector art renders at least as dense as
   the print (`pdf_render_dpi(at_least_output=True)`); banners keep a flat 300.
 - **Name**: the GA office's — `S67827 qty 25.tif`, or `S68045 - (1) qty 25.tif`
   when the order has more than one print item. No finishing.
