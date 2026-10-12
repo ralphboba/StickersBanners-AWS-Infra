@@ -181,6 +181,9 @@ export class EcsStack extends cdk.Stack {
           FINISHED_BUCKET: `${config.prefix}-finished-${this.account}`,
           JOBS_TABLE: `${config.prefix}-jobs`,
           COMPARE_TOPIC_ARN: topic.topicArn,
+          // Kai, 2026-10-12: emails start the next morning at 9 (New York).
+          // Findings before then are kept and go out on the first run after.
+          COMPARE_EMAIL_FROM: '2026-10-12T09:00:00-04:00',
         },
       });
       // A policy in this stack, attached to the shared role: granting through

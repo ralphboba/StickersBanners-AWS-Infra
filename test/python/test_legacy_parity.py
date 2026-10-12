@@ -21,7 +21,7 @@ import unittest
 sys.path.insert(0, os.path.join(
     os.path.dirname(__file__), '..', '..', 'src', 'services', 'finish'))
 
-from finishing_config import final_tif_name  # noqa: E402
+from finishing_config import build_finishing_obj, final_tif_name  # noqa: E402
 
 
 class PrintFileNames(unittest.TestCase):
@@ -93,6 +93,22 @@ class ProofFolderCasing(unittest.TestCase):
 
     def test_the_upload_uses_the_constant_rather_than_a_literal(self):
         self.assertIn('remote_path(PROOF_DIR,', self.text)
+
+
+
+class NoFinishProducts(unittest.TestCase):
+    """S67901/S67902 on the facility FTP (2026-10-12): SKUAB, "No Hem & No
+    Grommets" -> "S67901-1-1 CO.tif". No finishing on the image, suffix kept."""
+
+    def test_adhesive_banner_keeps_co(self):
+        obj = build_finishing_obj({'sku': 'SKUAB', 'quantity': 1, 'finishingObj': {'quantity': 1, 'descSuf': 'CO'}})
+        self.assertEqual(obj, {'quantity': 1, 'descSuf': 'CO'})
+        self.assertEqual(final_tif_name('S67901', '1-1', obj), 'S67901-1-1 CO.tif')
+
+    def test_adhesive_banner_never_gets_grommets(self):
+        obj = build_finishing_obj({'sku': 'SKUAB', 'quantity': 1,
+                                   'finishingObj': {'quantity': 1, 'grommets': {'sides': ['top']}}})
+        self.assertEqual(obj, {'quantity': 1})
 
 
 if __name__ == '__main__':

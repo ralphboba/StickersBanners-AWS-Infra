@@ -544,9 +544,13 @@ export function cleanOrder(order) {
 
     const art = collectArtwork(vl, it.metadata, variant);
 
+    // No-finish products (adhesive banners, ...) get no grommets or pockets,
+    // but their FILE NAME still carries the suffix: Linh's S67901/S67902
+    // (SKUAB, "No Hem & No Grommets") reached the FTP as "S67901-1-1 CO.tif".
     const noFinish = isNoFinishSku(sku);
+    const noFinishSuf = noFinish ? getFinishMode(finish, { variant, productName: it.name }).descSuf : undefined;
     const finishingObj = noFinish
-      ? { quantity }
+      ? { quantity, ...(noFinishSuf ? { descSuf: noFinishSuf } : {}) }
       : getFinishObj(finish, width, height, unit, quantity, { variant, productName: it.name });
 
     return {

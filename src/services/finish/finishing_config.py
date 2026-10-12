@@ -27,7 +27,13 @@ def build_finishing_obj(item):
     Always carries quantity (legacy appended "qty N" for quantity > 1).
     """
     if item.get("sku") in NOFINISHSKU:
-        return {"quantity": item.get("quantity", 1)}
+        # No finishing on the image, but the name suffix stays: Linh's files for
+        # SKUAB "No Hem & No Grommets" are "S67901-1-1 CO.tif" (2026-10-12).
+        obj = {"quantity": item.get("quantity", 1)}
+        suf = (item.get("finishingObj") or {}).get("descSuf")
+        if suf:
+            obj["descSuf"] = suf
+        return obj
 
     if isinstance(item.get("finishingObj"), dict):
         obj = dict(item["finishingObj"])

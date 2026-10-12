@@ -360,3 +360,17 @@ test('a line with no id is left out of renameDict rather than renamed wrongly', 
   delete o.order_items[0].id;
   assert.deepEqual(cleanOrder(o).renameDict, {});
 });
+
+// Linh's S67901/S67902 (2026-10-12): adhesive banners get no finishing, but
+// "No Hem & No Grommets" still names the file "... CO.tif".
+test('a no-finish product keeps the name suffix and nothing else', () => {
+  const ab = (finish) => cleanOrder({ source_id: 'S1', order_items: [{ id: 1, name: 'Adhesive Banners / Window Decals',
+    code: 'SKUAB', quantity: 1, variation_list: { SKU: 'SKUAB', WIDTH: '2', HEIGHT: '2', 'FINISHING OPTIONS': finish,
+      'UPLOADED FILE': 'https://x/a.png' } }] }).items[0].finishingObj;
+  assert.deepEqual(ab('No Hem & No Grommets'), { quantity: 1, descSuf: 'CO' });
+  assert.deepEqual(ab('Hem Only'), { quantity: 1, descSuf: 'HO' });
+  // Grommets / pole pockets are still not applied to these products: only the
+  // suffix travels (the finish step plain-copies {quantity, descSuf}).
+  assert.deepEqual(ab('Hem & Grommets'), { quantity: 1 });
+  assert.deepEqual(ab('Pole Pockets (Top Only)'), { quantity: 1, descSuf: 'PPTO' });
+});

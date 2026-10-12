@@ -105,11 +105,11 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(res['verdict'], 'match')
         self.assertEqual(res['problems'], [])
 
-    def test_qty_double_space_is_a_name_difference(self):
+    def test_qty_double_space_is_the_same_file(self):
+        # Linh's "  qty 2" has two spaces, ours one; Kai keeps ours (2026-10-12).
         res = self.run_one(linh=[{'name': 'S1-1-1  qty 2.tif', 'size': 100}],
                            ours=[{'name': 'S1-1-1 qty 2.tif', 'size': 100}])
-        self.assertEqual(res['verdict'], 'diff')
-        self.assertEqual(kinds(res), ['name'])
+        self.assertEqual(res['verdict'], 'match')
 
     def test_finishing_suffix_we_did_not_make(self):
         res = self.run_one(linh=[{'name': 'S1-1-1 CO.tif', 'size': 100}],
@@ -189,12 +189,12 @@ class Alerts(unittest.TestCase):
         self.assertIn('원본이 PDF인 주문: 1건', body)
 
     def test_daily_summary(self):
-        entries = [dict(self.res(order='S1'), problems=[{'k': 'name', 't': 'x'}]),
+        entries = [dict(self.res(order='S1'), problems=[{'k': 'file', 't': 'x'}]),
                    self.res(order='S2', verdict='match', problems=[]),
                    self.res(order='S3', verdict='held', problems=[])]
         subject, body = format_summary(entries, '10/12')
         self.assertIn('3건 중 같음 1, 다름 1', subject)
-        self.assertIn('파일 이름만 다름 1건: S1', body)
+        self.assertIn('파일 구성이 다름 (마감 표시/아이템) 1건: S1', body)
 
 
 def od(width='8', height='8', finishing='Pole Pockets (Top Only)', qty=1, url='https://x/964.jpg',
@@ -243,13 +243,10 @@ class Office(unittest.TestCase):
         self.assertEqual(office_changes(self.ours, od(folder='3516', prev='43256'))[0][:22], 'OrderDesk에서 NJ 폴더로 옮겨짐')
         self.assertEqual(office_changes(self.ours, od(folder='73068')), [])
 
-    def test_office_explains_content_but_never_a_spacing_bug(self):
+    def test_an_office_edit_is_not_our_failure(self):
         content = {'verdict': 'diff', 'notes': [], 'problems': [{'k': 'content', 't': 'x'}]}
         self.assertEqual(apply_office(content, ['아이템 1: 가로 바뀜'])['verdict'], 'office')
-        name = {'verdict': 'diff', 'notes': [], 'problems': [{'k': 'name', 't': 'x'}, {'k': 'content', 't': 'y'}]}
-        out = apply_office(name, ['아이템 1: 가로 바뀜'])
-        self.assertEqual(out['verdict'], 'diff')
-        self.assertIn('오피스 수정도 있음', out['notes'][0])
+        self.assertEqual(apply_office(dict(content, verdict='diff'), [])['verdict'], 'diff')
         self.assertFalse(needs_alert(None, {'verdict': 'office', 'problems': []}))
 
 

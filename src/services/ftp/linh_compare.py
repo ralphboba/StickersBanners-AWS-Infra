@@ -51,7 +51,7 @@ SETTLE_SECONDS = 10 * 60
 PENDING_GRACE_SECONDS = 3 * 3600
 KEEP_STATE_DAYS = 14
 # Bump when verdict rules change, so already-judged orders are judged again.
-STATE_VERSION = 2
+STATE_VERSION = 3
 STATE_KEY = os.environ.get('COMPARE_STATE_KEY', '_linh-compare/auto/state.json')
 
 ALERT_VERDICTS = ('diff', 'failed', 'missing')
@@ -72,7 +72,6 @@ KIND_KO = {
     'late': '린은 보냈는데 우리 파일이 아직 없음',
     'facility': '공장이 다름',
     'file': '파일 구성이 다름 (마감 표시/아이템)',
-    'name': '파일 이름만 다름',
     'content': '파일 내용이 다름',
     'invoice': '인보이스 썸네일만 다름',
 }
@@ -150,9 +149,6 @@ FACILITY_FOLDERS = {
     '674352': 'NV', '674353': 'NV', '674908': 'NV',
     '42928': 'CA', '79040': 'CA', '82463': 'CA',
 }
-# Differences an office edit can explain. A file NAME that differs only in
-# spacing cannot: that is always ours, whatever the office did.
-OFFICE_EXPLAINS = {'content', 'file', 'facility', 'failed', 'late', 'invoice'}
 
 
 def _norm(v):
@@ -229,10 +225,7 @@ def apply_office(res, changes):
     if not changes or res['verdict'] not in ('diff', 'failed'):
         return res
     res['office'] = changes
-    if all(p['k'] in OFFICE_EXPLAINS for p in res['problems']):
-        res['verdict'] = 'office'
-    else:
-        res['notes'].append('오피스 수정도 있음: ' + ' / '.join(changes))
+    res['verdict'] = 'office'
     return res
 
 
@@ -288,12 +281,13 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
     pairs = []
     for name in sorted(set(linh_print) & set(ours_by)):
         pairs.append((linh_print.pop(name), ours_by.pop(name)))
+    # Names equal apart from spacing are the same file: Linh's "  qty 2" has
+    # two spaces, ours one, and Kai is fine with ours (2026-10-12).
     ours_norm = {norm_name(n): f for n, f in ours_by.items()}
     for name in sorted(linh_print):
         o = ours_norm.pop(norm_name(name), None)
         if o:
             ours_by.pop(o['name'], None)
-            problem('name', f'린 "{name}" / 우리 "{o["name"]}"')
             pairs.append((linh_print[name], o))
         else:
             problem('file', f'린에만 있음 "{name}"')
@@ -560,7 +554,17 @@ def main():
     # Nothing counts as sent until Kai has confirmed the email subscription:
     # SNS drops messages to a pending one, and the findings should wait for it.
     deliverable = False
-    if topic:
+    # Kai, 2026-10-12: "이메일은 내일 아침 9시부터 시작해". Until then findings
+    # are recorded but held; the first run after it sends them.
+    start = os.environ.get('COMPARE_EMAIL_FROM', '').strip()
+    held_until = None
+    if start:
+        try:
+            if now < datetime.fromisoformat(start).timestamp():
+                held_until = start
+        except ValueError:
+            print(f'compare: bad COMPARE_EMAIL_FROM {start!r}', file=sys.stderr)
+    if topic and not held_until:
         try:
             subs = sns.list_subscriptions_by_topic(TopicArn=topic).get('Subscriptions', [])
             deliverable = any(x.get('SubscriptionArn', '').startswith('arn:') for x in subs)
@@ -653,7 +657,8 @@ def main():
     state['lastRun'] = int(now)
     s3.put_object(Bucket=state_bucket, Key=STATE_KEY, ContentType='application/json',
                   Body=json.dumps(state, ensure_ascii=False).encode())
-    print(json.dumps({'checked': checked, 'alerts': len(alerts), 'tracked': len(state['orders'])}))
+    print(json.dumps({'checked': checked, 'alerts': len(alerts), 'tracked': len(state['orders']),
+                      'emailHeldUntil': held_until, 'deliverable': deliverable}))
 
 
 if __name__ == '__main__':
