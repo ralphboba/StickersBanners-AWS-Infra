@@ -77,6 +77,12 @@ authority: **Linh** (legacy author).
     `--context addOnOrders=S64262` (those orders only, while testing) or
     `--context addOns=live` (every order). They use the same write switches
     as the shipping change (`docs/shipping-change-spec.md` §8).
+    **LIVE for every order since 2026-10-11** (Kai deployed `addOns=live`).
+    Every `sb-dev-compute` deploy MUST carry BOTH
+    `--context shippingChange=live --context addOns=live` (Kai, 2026-10-12),
+    or the customer shipping upgrade / add-ons switch off. Never
+    `addOnOrders=...` for a routine deploy: on 2026-10-12 one did, and add-ons
+    were limited to S67397 for 23 minutes until the other session redeployed.
 - **`ZENDESK_SENDS` stays `disabled`.** It arms the only code that contacts a
   real customer (`src/shared/zendesk.mjs`). Held, the ticket is composed in full
   and logged ("WOULD HAVE BEEN SENT") with the real subject, body and signed
