@@ -140,6 +140,21 @@ does any order with a kiss-cut line in it).
   when the order has more than one print item. No finishing.
 - **Facility**: always GA, the whole order with it (OrderDesk's "Sticker back
   to GA" rule).
-- **Not made yet**: the Mimaki `.eps` cut strip (copies across a ~28 in roll,
-  0.5 in apart, Mimaki register marks, cut line). The office still makes it
-  from our TIF; the Linh comparison ignores `.eps`.
+- **Cut sheet EPS** (stickers only, Kai 2026-10-13: TIF and EPS both):
+  finish makes `S68142 qty 25.eps` next to `S68142 qty 25.tif`; the transfer
+  sends both to the GA folder. `finish/sticker_sheet.py`, laid out as the GA
+  office does (measured from 52 of its FineCut files; 49 identical, the other
+  3 only by the office's hand-placed gaps):
+  - short side across the roll (a 3x2 oval or a 10x3 bumper stands);
+  - 0.5 in round the stickers and exactly 0.5 in between; as many a row as
+    fit in 28 in, the row only as wide as its stickers (3 in rounds: 7, 25 in);
+  - every row full (a short last row is filled up), all rows in one file,
+    0.5 in between rows;
+  - each row's four Mimaki register marks (spot colour "Mimaki Register
+    Mark", 2 pt, 10 mm); FineCut's own tag on them is not written (not needed
+    yet, Kai);
+  - no printed box or cut line;
+  - 2 pt bleed of the edge colour along the shape (taken 8 px inside, so a
+    pale outermost pixel line in the customer's file does not print).
+  The Linh comparison leaves `.eps` out on both sides (the office's is one
+  row; ours is every row).

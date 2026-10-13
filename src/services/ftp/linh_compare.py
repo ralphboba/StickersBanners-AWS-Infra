@@ -251,7 +251,10 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
 
     status = meta.get('status') or ''
     hold = (meta.get('hold') or {}).get('reason')
-    ours_print = [f for f in ours_files if not is_invoice(f['name'])]
+    # The .eps next to a sticker is the cut sheet (ours: finish/sticker_sheet.py,
+    # all rows in one file; the office's: one row) -- laid out differently on
+    # purpose, so it is not compared on either side.
+    ours_print = [f for f in ours_files if not is_invoice(f['name']) and not f['name'].lower().endswith('.eps')]
     exts = sorted({str(i.get('artworkExt') or '?').lower() for i in meta.get('items') or []})
     res['source'] = ','.join(exts)
 
@@ -277,8 +280,7 @@ def compare_order(order, facility, linh_files, meta, ours_files, sample, now, fo
         problem('facility', f'린 {facility} / 우리 {our_fac}')
 
     # Print files: exact names first, then names equal apart from spacing. The
-    # .eps next to a sticker is the Mimaki cut strip the GA office makes; we
-    # do not make it (yet), so it is not compared.
+    # .eps cut sheets are left out (see ours_print above).
     linh_print = {f['name']: f for f in linh_files
                   if not is_invoice(f['name']) and not f['name'].lower().endswith('.eps')}
     ours_by = {f['name']: f for f in ours_print}

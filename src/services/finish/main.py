@@ -27,6 +27,7 @@ from PIL import Image, ImageCms
 
 from finishing_config import (build_finishing_obj, final_tif_name, manual_final_name, s3_key_of,
                               sticker_final_name)
+from sticker_sheet import make_sheet, sheet_name
 from grommets import GrommetsAdder
 from guides import compute_guides, guides_key
 from pole_pockets import PolePocketsAdder
@@ -215,6 +216,17 @@ def main():
             s3.upload_file(work, FINISHED_BUCKET, final_key)
             produced.append(final_key)
             print(f"finish: uploaded s3://{FINISHED_BUCKET}/{final_key}")
+
+            # 6. stickers only: the cut sheet the GA operator opens in FineCut,
+            # next to the TIF and named like it (sticker_sheet.py).
+            if sticker:
+                sheet = os.path.join(scratch, f"{item_no}.eps")
+                laid = make_sheet(work, item["sticker"].get("shape"), item.get("quantity", 1), sheet)
+                sheet_key = f"{order_name}/{sheet_name(final_name)}"
+                s3.upload_file(sheet, FINISHED_BUCKET, sheet_key)
+                os.remove(sheet)
+                produced.append(sheet_key)
+                print(f"finish: uploaded s3://{FINISHED_BUCKET}/{sheet_key} {json.dumps(laid)}")
 
     record_step(order_name, "done", detail=json.dumps(produced))
     print(json.dumps({"orderName": order_name, "produced": produced}))
