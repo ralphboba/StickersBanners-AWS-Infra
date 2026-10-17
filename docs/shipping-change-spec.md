@@ -24,6 +24,11 @@
 - 옵션은 **미리 선택하지 않는다.** 결제 대기 중인 변경이 있어도 옵션을 다시 전부 보여 준다 (2026-10-04).
 - 더 빠른 서비스는 **전부** 보여 준다(한 칸만이 아니다) (2026-10-01). Ground도 사다리에 포함한다 (2026-09-28).
 - 픽업 주문은 **주소를 먼저 입력**받고, 그 주소 기준 옵션을 보여 준다. 체크아웃과 같은 순서다 (2026-10-05).
+- **FedEx Overnight (Saturday)** 는 **목요일 오후 2시 ~ 금요일 오후 4시(뉴욕 시간)** 에만 맨 위 옵션으로 보인다 (2026-10-17).
+  - 체크아웃의 Saturday 표시 시간(목 2시 ~ 금 6시, Delivery customization)보다 일찍, 금요일 4시에 끝낸다.
+  - 1-Day 주문도 이 시간에는 Saturday로 올릴 수 있다. 픽업 → 배송 전환에는 넣지 않는다.
+  - 가격·세금은 다른 옵션과 같이 Shopify 체크아웃 금액. Shopify가 그 주소에 Saturday 요금을 안 주면 옵션도 없다.
+  - 금요일 4시가 지나서 결제되면 OrderDesk에 반영하지 않고 Chat에 "NOT applied. Refund or handle by hand"를 보낸다.
 
 **돈**
 - 배송비와 세금은 **Shopify가 계산한 금액**만 쓴다. 코드 안에 요금표를 두지 않는다.
@@ -61,6 +66,7 @@
 
 ### 2-3. 무엇을 보여 주나
 - **배송 주문:** 지금보다 빠른 서비스 전부. 사다리는 FedEx Ground → FedEx 3-Days → FedEx 2-Days → FedEx 1-Day.
+  목 2시 ~ 금 4시(뉴욕)에는 맨 위에 FedEx Overnight (Saturday)가 더 붙는다 (`order-stage.mjs` `saturdayWindowOpen`).
 - **픽업 주문** ("Warehouse" 또는 "pickup"이 들어간 배송): 주소 입력 → 그 주소 기준 Ground, 3-Days, 2-Days, 1-Day 전부.
 - 먼저 옵션 이름만 바로 뜨고("Calculating…"), 몇 초 뒤 가격이 채워진다.
 
@@ -110,7 +116,7 @@
 모든 문구 끝에 " If you have any questions, please contact our team."이 붙는다.
 - Completed Orders (배송 주문) → "Your order has been shipped and is on its way to your address."
 - Completed Orders (픽업 주문) → "Your order has been completed."
-- 이미 FedEx 1-Day → "This order is already on our fastest service."
+- 이미 FedEx 1-Day → "This order is already on our fastest service." (Saturday 시간에는 Saturday가 옵션으로 나온다)
 - 사다리 밖 배송(Saturday Overnight, 알 수 없는 이름) → "This order's shipping cannot be upgraded online."
 - B2Sign 상품 → "This order is made by one of our partners, so changes go through our team."
 - 스티커 상품 → "Sticker orders ship on their own schedule, so the shipping can't be changed online."

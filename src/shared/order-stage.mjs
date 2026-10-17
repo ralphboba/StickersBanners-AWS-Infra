@@ -36,7 +36,8 @@ export const STEPS = ['Order received', 'Proof approved', 'In production', 'Read
 // ── the upgrade ladder (Kai, 2026-09-14) ───────────────────────────────────
 // One notch, and one notch only. A customer on 3-Day may buy 2-Day; on 2-Day
 // may buy 1-Day; on 1-Day there is nothing left to sell. Saturday Overnight is
-// not on the ladder and is never offered self-service.
+// not on the ladder; since 2026-10-17 it is offered on top of it, in its window
+// only (SATURDAY_SERVICE below).
 //
 // The facility NEVER changes. Legacy intake routing pulls express orders to NV
 // (routing.mjs, the 3-6pm cutoff), but that is a decision made before any work
@@ -102,6 +103,26 @@ const SERVICE = {
   d1: 'FedEx 1-Day',
 };
 
+// ── Saturday (Kai, 2026-10-17) ─────────────────────────────────────────────
+// Offered on top of the ladder, but only from Thursday 2:00 PM to Friday
+// 4:00 PM store time (America/New_York). Checkout shows it Thursday 2 PM to
+// Friday 6 PM (the "Saturday" delivery customization); Kai ended the online
+// change at 4 PM. The name is the store's own, so Order Desk gets the same
+// text a checkout order carries. Whether the address can have it is left to
+// checkout: no rate from Shopify, no option.
+export const SATURDAY_SERVICE = 'FedEx Overnight (Saturday)';
+
+/** Thursday 14:00 – Friday 16:00, New York time. */
+export function saturdayWindowOpen(nowMs = Date.now()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+  }).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]));
+  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+  if (parts.weekday === 'Thu') return minutes >= 14 * 60;
+  if (parts.weekday === 'Fri') return minutes < 16 * 60;
+  return false;
+}
+
 // One rung at a time, starting at Ground.
 //
 // Ground was taken off after Danny said express only (2026-09-24) and put back
@@ -150,7 +171,7 @@ export function nextService(shippingMethod) {
  * @param {{ folderId: string|number, shippingMethod?: string,
  *           shipping?: object, items?: Array<object> }} order
  */
-export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
+export function orderStage({ folderId, shippingMethod, shipping, items, saturdayOpen = false } = {}) {
   const folder = folderById(folderId);
   const copy = folder ? STAGE_COPY[folder.stage] : null;
 
@@ -207,7 +228,12 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
   // become a delivery, but a Ground order is already manifested for the Ground
   // collection and cannot be pulled back out of it (Kai, 2026-09-28).
   else if (!ladder) blockedBy = 'service_not_upgradable';
-  else if (ladder.top) blockedBy = 'already_fastest';
+  else if (ladder.top && !saturdayOpen) blockedBy = 'already_fastest';
+
+  // In the Saturday window it is the fastest option, 1-Day orders included.
+  const options = blockedBy === null
+    ? [...ladder.options, ...(saturdayOpen ? [SATURDAY_SERVICE] : [])]
+    : [];
 
   return {
     stage,
@@ -221,8 +247,8 @@ export function orderStage({ folderId, shippingMethod, shipping, items } = {}) {
     convertTo: [],
     blockedBy,
     currentService: ladder?.from ?? (shippingMethod ?? null),
-    upgradeTo: blockedBy === null ? ladder.to : null,
+    upgradeTo: blockedBy === null ? options[0] : null,
     // Every faster service the customer may pick; upgradeTo is the first.
-    upgradeOptions: blockedBy === null ? [...ladder.options] : [],
+    upgradeOptions: options,
   };
 }

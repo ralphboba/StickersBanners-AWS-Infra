@@ -15,6 +15,7 @@ import { fetchOrderForPricing, quoteShippingChange, quoteOrderChange } from '../
 import { fetchAddOnCatalog } from '../../shared/addon-catalog.mjs';
 import { commitShippingChange, sendBalanceInvoice, setOrderShippingAddress } from '../../shared/shopify-order-edit.mjs';
 import { makeHandler } from '../order-status-api/routes.mjs';
+import { saturdayWindowOpen } from '../../shared/order-stage.mjs';
 import { makeOrderRowLoader } from '../../shared/order-row.mjs';
 import { logItem } from '../../shared/upgrade-log.mjs';
 
@@ -76,6 +77,7 @@ const routes = makeHandler({
   setShippingAddress: async (args) => setOrderShippingAddress({ ...(await creds()), ...args }),
   sendInvoice: async (args) => sendBalanceInvoice({ ...(await creds()), ...args }),
   now: () => Date.now(),
+  saturdayOpen: () => saturdayWindowOpen(),
 });
 
 // { warmup: true } from the 5-minute schedule: load the Shopify token so the

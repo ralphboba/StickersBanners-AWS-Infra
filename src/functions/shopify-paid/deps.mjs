@@ -18,6 +18,7 @@ import { getSecret } from '../../shared/secrets.mjs';
 import { applyShippingUpgrade } from '../../shared/orderdesk-write.mjs';
 import { orderDeskFetch, orderDeskHeaders, ORDERDESK_API } from '../../shared/orderdesk-fetch.mjs';
 import { stillAllowed } from '../../shared/paid-recheck.mjs';
+import { saturdayWindowOpen } from '../../shared/order-stage.mjs';
 import { notifyChat } from '../../shared/gchat.mjs';
 import { chatFacilityOf } from '../../shared/orderdesk-folders.mjs';
 import { centsToDollars } from '../../shared/money.mjs';
@@ -91,7 +92,7 @@ export const paidDeps = {
     if (!res.ok) throw new Error(`OrderDesk GET ${res.status}`);   // 500 -> Shopify retries
     const od = (await res.json())?.order;
     // The facility from the folder the order is in NOW picks the Chat space.
-    return { ...stillAllowed(od, change), facility: od ? chatFacilityOf(od.folder_id, od.folder_name) : null };
+    return { ...stillAllowed(od, change, { saturdayOpen: saturdayWindowOpen() }), facility: od ? chatFacilityOf(od.folder_id, od.folder_name) : null };
   },
   applyOrderDesk: async (change) => {
     const [storeId, apiKey] = await Promise.all([getSecret('orderdesk', 'store-id'), getSecret('orderdesk', 'api-key')]);

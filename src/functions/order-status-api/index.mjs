@@ -25,6 +25,7 @@ import { fetchAddOnCatalog } from '../../shared/addon-catalog.mjs';
 import { getSecret } from '../../shared/secrets.mjs';
 import { makeShopifyCredentials } from '../../shared/shopify-auth.mjs';
 import { makeHandler } from './routes.mjs';
+import { saturdayWindowOpen } from '../../shared/order-stage.mjs';
 import { makeOrderRowLoader } from '../../shared/order-row.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -92,7 +93,7 @@ async function loadPending(orderName) {
 }
 
 const routes = makeHandler({ loadRow, loadShopifyOrder, quote, estimates, loadPending, loadAddOns, quoteAddOns,
-  addOnOrders: process.env.ADDON_ORDERS ?? '' });
+  addOnOrders: process.env.ADDON_ORDERS ?? '', saturdayOpen: () => saturdayWindowOpen() });
 
 // { warmup: true } from the 5-minute schedule: load the Shopify token so the
 // next customer does not wait for it, and return. Nothing else is touched.

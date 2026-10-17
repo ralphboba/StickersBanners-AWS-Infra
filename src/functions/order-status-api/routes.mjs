@@ -118,12 +118,15 @@ async function authorised(deps, orderName, presentedUrl) {
   return { row };
 }
 
-function stageFor(row) {
+function stageFor(row, deps = {}) {
   return orderStage({
     folderId: row.folderId,
     shippingMethod: row.shipping?.method ?? null,
     shipping: row.shipping,
     items: row.items,
+    // Saturday is offered only in its window (order-stage.mjs); index.mjs
+    // supplies the clock, so tests without it never see Saturday.
+    saturdayOpen: Boolean(deps.saturdayOpen?.()),
   });
 }
 
@@ -214,7 +217,7 @@ async function status(deps, authorised, event) {
   const { row } = got;
 
   const currentMethod = row.shipping?.method ?? null;
-  const stage = stageFor(row);
+  const stage = stageFor(row, deps);
 
   // ── the quick view (?lite=1) ───────────────────────────────────────────
   // No order pricing: the order, its progress and the names of the faster
@@ -364,7 +367,7 @@ async function quoteDelivery(deps, authorised, event) {
 
   // Re-decide from the current row rather than trusting what the page showed:
   // the warehouse may have moved the order since the page was opened.
-  const stage = stageFor(row);
+  const stage = stageFor(row, deps);
   if (!stage.canConvert) {
     return json(409, { error: 'not_convertible', reason: BLOCKED_COPY[stage.blockedBy] ?? null });
   }
@@ -456,7 +459,7 @@ async function requestChange(deps, authorised, event) {
   const expected = toCents(body.expectedTotal);
   if (expected === null || expected <= 0) return json(400, { error: 'expected_total_missing' });
 
-  const stage = stageFor(row);
+  const stage = stageFor(row, deps);
   if (!offeredServices(stage).includes(service)) {
     return json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY });
   }
@@ -660,7 +663,7 @@ async function quoteUpgradesDroppingAddOns(deps, orderName, options, before, pen
 /** Price the selection. Shared by the quote and the request, so they cannot differ. */
 async function priceAddOnChange(deps, row, orderName, body) {
   if (!addOnsEnabledFor(deps, orderName)) return { response: json(409, { error: 'addon_not_offered', reason: ADDON_GONE_COPY }) };
-  const stage = stageFor(row);
+  const stage = stageFor(row, deps);
   if (!addOnsOpen(stage)) {
     return { response: json(409, { error: 'not_offered', reason: BLOCKED_COPY[stage.blockedBy] ?? UNPRICEABLE_COPY }) };
   }
